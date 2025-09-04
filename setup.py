@@ -4,8 +4,8 @@ setup(
     name='pyBrainAnalyzIR',
     packages=find_packages(['pyBrainAnalyzIR']),
     version='0.1.0',
-    description='My first Python library',
-    author='Me',
+    description='Brain AnalyzIR Wrapper for Cedalion',
+    author='T Huppert',
     install_requires=[],
     setup_requires=['pytest-runner'],
 )
