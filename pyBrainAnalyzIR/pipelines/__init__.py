@@ -1,0 +1,2 @@
+import pyBrainAnalyzIR.pipelines.pipeline
+import pyBrainAnalyzIR.pipelines.modules

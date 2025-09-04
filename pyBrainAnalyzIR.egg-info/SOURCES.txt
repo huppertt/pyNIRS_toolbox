@@ -1,0 +1,7 @@
+README.md
+setup.py
+pyBrainAnalyzIR.egg-info/PKG-INFO
+pyBrainAnalyzIR.egg-info/SOURCES.txt
+pyBrainAnalyzIR.egg-info/dependency_links.txt
+pyBrainAnalyzIR.egg-info/top_level.txt
+tests/test_basefunctions.py

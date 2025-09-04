@@ -1,0 +1,3 @@
+import pyBrainAnalyzIR.testing.simData
+import pyBrainAnalyzIR.testing.simEvents
+import pyBrainAnalyzIR.testing.channelROC
