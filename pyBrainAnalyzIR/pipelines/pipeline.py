@@ -1,6 +1,10 @@
 import cedalion
 import cedalion.dataclasses
 import cedalion.dataclasses.recording
+from pprint import pprint
+import pyBrainAnalyzIR.dataclasses.dataset  
+
+
 
 def PipelineList(steps):
     job = None
@@ -9,15 +13,20 @@ def PipelineList(steps):
     
     return job
 
+BOLD = '\033[1m'
+BOLDEND = '\033[0m'
+ITALICS='\x1B[3m'
+ITALICSEND='\x1B[0m'
 
 
 class cedalion_module:
     def __init__(self,previous_job=None):
         self.name = "default pipeline"
-        self._cite=None
+        self._cite=None # Citation String for the module, if applicable
         self.options={'some_option':True}
         self.inputName='amp'
         self.outputName='od'
+        self.description=None #"Write a description of what the module does"
 
         self.previous_job = previous_job
 
@@ -53,6 +62,31 @@ class cedalion_module:
         # Do the actual job
         return rec
     
+    def show(self):
+        
+        if(self.previous_job is None):
+            print(f"{BOLD}{self.name}:{BOLDEND}")
+            if(self._cite.__class__== self.run.__class__):
+                _cite=self._cite()
+            else:
+                _cite=self._cite
+            if(_cite is not None):
+                print(f"\tCitation: {ITALICS}{_cite}:{ITALICSEND}\n")
+            print("Options:")
+            pprint(self.options,sort_dicts=False)
+        else:
+            self.previous_job.show()
+            print(f"{BOLD}{self.name}:{BOLDEND}")
+            if(self._cite.__class__== self.run.__class__):
+                _cite=self._cite()
+            else:
+                _cite=self._cite
+            if(_cite is not None):
+                print(f"\tCitation: {ITALICS}{_cite}:{ITALICSEND}\n")
+            print("Options:")
+            pprint(self.options,sort_dicts=False)
+        return
+
     def get_all_options(self):
         if(self.previous_job is None):
             options=dict()
@@ -76,13 +110,21 @@ class cedalion_module:
     def citation(self):
         if(self.previous_job is None):
             citation=[]
-            if(self._cite is not None):
-                citation.append(f"{self.name} : {self._cite}")
+            if(self._cite.__class__== self.run.__class__):
+                _cite=self._cite()
+            else:
+                _cite=self._cite
+            if(_cite is not None):
+                citation.append(f"{self.name} : {_cite}")
             return citation
         else:
             citation=self.previous_job.citation()
-            if(self._cite is not None):
-                citation.append(f"{self.name} : {self._cite}")
+            if(self._cite.__class__== self.run.__class__):
+                _cite=self._cite()
+            else:
+                _cite=self._cite
+            if(_cite is not None):
+                citation.append(f"{self.name} : {_cite}")
             return citation
 
 

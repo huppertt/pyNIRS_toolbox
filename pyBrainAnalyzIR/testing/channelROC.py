@@ -31,9 +31,9 @@ class ChannelROC:
             rec,truth=self.data_simulation_function(**self.data_simulation_args)
             rec=self.pipeline.run(rec)
             
-            pvals=rec['stats'].sm.__getattr__('pvalues')
-            val=pvals[:,:,pvals.regressor=='HRF A'].to_numpy().squeeze()
-            self._pvals.append(val)
+            pvals=rec['stats'].get_pvalues()
+            val=pvals[pvals.conditions=='HRF A'].to_numpy()
+            self._pvals.append(val.reshape(truth.data.shape))
             self._truth.append(truth.data)
             self.iterations+=1
         return

@@ -14,6 +14,7 @@ import pyBrainAnalyzIR.pipelines
 import pyBrainAnalyzIR.pipelines.modules
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
 import pyBrainAnalyzIR.testing.simEvents 
+import pyBrainAnalyzIR.dataclasses.dataset as dataset
 
 import copy
 
@@ -376,3 +377,18 @@ def simMotionArtifact(data,spikes_per_minute=2, shifts_per_minute=0.5, motionMas
 
     data.data=np.reshape(dd,shp)
     return data
+
+def simdataset(num_files=5,noise=None,stim=None,snr=0.5,
+         channels=None,basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
+         modifiers=None):
+    
+     dset=dataset.DataSet()
+     dset.description='Simulated data'
+    
+     for _ in range(0,num_files):
+          data,truth=Data(noise=noise,stim=stim,snr=snr,
+               channels=channels,basis=basis,modifiers=None)
+          channels=truth*1
+          dset.import_data(data)
+
+     return dset,truth
