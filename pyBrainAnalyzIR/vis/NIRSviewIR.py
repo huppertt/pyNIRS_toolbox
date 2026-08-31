@@ -21,7 +21,6 @@ import argparse
 import io
 import sys
 import copy
-import json
 import pickle
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
@@ -45,20 +44,15 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
-    QGroupBox,
     QHeaderView,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QStatusBar,
     QTableView,
@@ -826,9 +820,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._populate_file_table()
         self.file_list.blockSignals(False)
         if recordings:
-            row = preferred_row
-            if row < 0:
-                row = 0
+            row = max(preferred_row, 0)
             row = min(row, len(recordings) - 1)
             self.file_list.setCurrentCell(row, 0)
             self._on_file_changed(row)
@@ -982,7 +974,7 @@ class NIRSviewIRWindow(QMainWindow):
         for chan in data.channel:
             sdstr = to_string(chan)
             source = sdstr[: sdstr.find("D")]
-            detector = sdstr[sdstr.find("D") :]
+            detector = sdstr[sdstr.find("D"):]
             srcpos = geo2d[geo2d.label == source].to_numpy()
             detpos = geo2d[geo2d.label == detector].to_numpy()
             ll, = self.ax_probe.plot(
@@ -1153,9 +1145,9 @@ class NIRSviewIRWindow(QMainWindow):
         self._stats_model.clear()
         self._stats_model.setHorizontalHeaderLabels(list(df.columns))
         cols = list(df.columns)
-        for r_idx, row in df.iterrows():
+        for _r_idx, row in df.iterrows():
             items = []
-            for c_idx, col in enumerate(cols):
+            for col in cols:
                 val = row[col]
                 if isinstance(val, float):
                     item = QStandardItem()
@@ -1196,7 +1188,6 @@ class NIRSviewIRWindow(QMainWindow):
             type_mask = df["Type"].astype(str).isin(self._stats_type_filter)
         subset_mask = cond_mask & type_mask
 
-        p_full = df["P-values"].values.copy()
         q_new = df["Q-values"].values.copy()  # default: keep original q
 
         global_fdr = self._global_fdr_checkbox.isChecked()

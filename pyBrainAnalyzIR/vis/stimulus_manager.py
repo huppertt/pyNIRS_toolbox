@@ -1691,9 +1691,9 @@ class StimulusManagerWindow(QMainWindow):
         n_cols = min(int(np.ceil(t_end / dt)) + 1, 200000)
         matrix = np.zeros((len(keys), n_cols), dtype=float)
 
-        for i in range(len(onset)):
-            start = max(int(round(onset[i] / dt)), 0)
-            stop = max(int(round((onset[i] + duration[i]) / dt)), start + 1)
+        for i, onset_i in enumerate(onset):
+            start = max(int(round(onset_i / dt)), 0)
+            stop = max(int(round((onset_i + duration[i]) / dt)), start + 1)
             matrix[row_of[(files[i], types[i])], start:min(stop, n_cols)] += amplitude[i]
 
         labels = [f"{f} : {t}" for f, t in keys]

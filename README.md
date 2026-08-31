@@ -1,5 +1,9 @@
 # pyBrainAnalyzIR / pyNIRS Toolbox
 
+[![Tests](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/tests.yml/badge.svg)](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/tests.yml)
+[![Pylint](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/pylint.yml/badge.svg)](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/pylint.yml)
+[![Flake8](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/flake8.yml/badge.svg)](https://github.com/huppertt/pyNIRS_toolbox/actions/workflows/flake8.yml)
+
 A Python wrapper for the Cedalion fNIRS analysis framework, providing high-level pipelines, GUI tools, and statistical models for functional near-infrared spectroscopy data.
 
 ## Package Information
@@ -34,6 +38,42 @@ pip install -e .
 - PySide6
 - cedalion
 - numpy, scipy, pandas, xarray, matplotlib
+
+## Development
+
+Install the development/CI tooling with:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### Running the tests
+
+```bash
+pytest
+```
+
+The test suite lives in [`tests/`](tests) and covers the option-variable data
+classes, every pipeline module, the GLM and ROC analyses, and the group-level
+mixed-effects models.
+
+`cedalion` is not available on PyPI, so the tests that depend on it are
+skipped automatically when it is not installed (the option-variable tests run
+everywhere). To run the full suite locally, install `cedalion` from source
+first.
+
+Qt-based GUI tests run head-less; set `QT_QPA_PLATFORM=offscreen` and
+`MPLBACKEND=Agg` if your environment does not do so already.
+
+### Linting
+
+```bash
+flake8 pyBrainAnalyzIR tests   # style, configured in setup.cfg
+pylint pyBrainAnalyzIR tests   # static analysis, configured in .pylintrc
+```
+
+All three checks run automatically on every push and pull request to `main`
+via GitHub Actions (see the badges at the top of this file).
 
 ## Citation
 

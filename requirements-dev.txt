@@ -1,0 +1,18 @@
+# Development / CI dependencies.
+#
+# NOTE: cedalion is not published on PyPI and is installed from source, so it
+# is deliberately absent here.  The test-suite skips the tests that need it
+# (see tests/conftest.py), which keeps CI fast while still covering the pure
+# python parts of the package such as the option-variable data classes.
+pytest>=7.0
+flake8>=6.0
+pylint>=3.0
+
+# Scientific stack used by the parts of the package that can be imported
+# without cedalion.
+numpy
+pandas
+scipy
+xarray
+matplotlib
+statsmodels

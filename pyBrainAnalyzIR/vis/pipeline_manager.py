@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import enum
 import importlib
 import inspect
 import json
@@ -24,14 +25,19 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
+    QSpinBox,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -42,6 +48,17 @@ from PySide6.QtWidgets import (
 import pyBrainAnalyzIR.pipelines.modules as module_namespace
 from pyBrainAnalyzIR.pipelines.default_pipelines import default_pipelines as default_pipeline_enum
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
+from pyBrainAnalyzIR.dataclasses.options_variables import (
+    OptionsDict,
+    OptionVariable,
+    BooleanOption,
+    ChoiceOption,
+    EnumOption,
+    NumericOption,
+    QuantityOption,
+    StringOption,
+    option_value,
+)
 
 
 @dataclass
@@ -59,6 +76,17 @@ def _get_citation(module: cedalion_module) -> Optional[str]:
     return str(cite)
 
 
+def _iter_option_objects(options: Any):
+    """Yield ``(key, option_object_or_value)`` pairs for a module options dict."""
+    if not isinstance(options, dict):
+        return
+    for key in options.keys():
+        if isinstance(options, OptionsDict):
+            yield key, options.option(key)
+        else:
+            yield key, dict.__getitem__(options, key)
+
+
 def _module_option_lines(options: Optional[Dict[str, Any]]) -> str:
     if options is None:
         return "<none>"
@@ -66,7 +94,17 @@ def _module_option_lines(options: Optional[Dict[str, Any]]) -> str:
         return str(options)
     if not options:
         return "<empty>"
-    return "\n".join(f"- {key}: {repr(value)}" for key, value in options.items())
+
+    lines = []
+    for key, opt in _iter_option_objects(options):
+        if isinstance(opt, OptionVariable):
+            lines.append(f"- {key}: {opt} (default: {opt.default})")
+            detail = opt.description or opt.help
+            if detail:
+                lines.append(f"    {detail}")
+        else:
+            lines.append(f"- {key}: {repr(opt)}")
+    return "\n".join(lines)
 
 
 def _discover_modules() -> List[ModuleSpec]:
@@ -104,11 +142,72 @@ def _discover_modules() -> List[ModuleSpec]:
 
 
 def _display_value(value: Any) -> str:
+    """Text shown in the value column of the options table."""
+    if isinstance(value, OptionVariable):
+        return str(value)
     return repr(value)
 
 
+def _format_default(opt: Any) -> str:
+    """Text shown in the default column of the options table."""
+    if not isinstance(opt, OptionVariable):
+        return ""
+    default = opt.default
+    if isinstance(default, enum.Enum):
+        return default.name
+    if default is None or isinstance(default, (bool, int, float, str)):
+        return str(default)
+    if type(default).__repr__ is object.__repr__:
+        return f"<{type(default).__name__}>"
+    return str(default)
+
+
+def _option_tooltip(key: str, opt: Any) -> str:
+    """Rich tooltip describing an option, shown on hover in the table."""
+    if not isinstance(opt, OptionVariable):
+        return f"{key}: {opt!r}"
+
+    parts = [f"{key}"]
+    if opt.description:
+        parts.append(opt.description)
+    if opt.help:
+        parts.append(opt.help)
+    parts.append(f"default: {opt.default}")
+    parts.append(f"type: {type(opt).__name__}")
+
+    if isinstance(opt, EnumOption):
+        parts.append("allowed: " + ", ".join(m.name for m in opt.choices))
+    elif isinstance(opt, ChoiceOption):
+        parts.append("allowed: " + ", ".join(repr(c) for c in opt.choices))
+    elif isinstance(opt, StringOption) and opt.allowed is not None:
+        parts.append("allowed: " + ", ".join(opt.allowed))
+    elif isinstance(opt, BooleanOption):
+        parts.append("allowed: True, False")
+    else:
+        minimum = getattr(opt, "minimum", None)
+        maximum = getattr(opt, "maximum", None)
+        if minimum is not None or maximum is not None:
+            lo = "-inf" if minimum is None else str(minimum)
+            hi = "inf" if maximum is None else str(maximum)
+            bound = "[]" if getattr(opt, "inclusive", True) else "()"
+            parts.append(f"range: {bound[0]}{lo}, {hi}{bound[1]}")
+    units = getattr(opt, "units", None)
+    if units is not None:
+        parts.append(f"units: {units}")
+
+    return "\n".join(parts)
+
+
 def _coerce_option_value(text: str, previous_value: Any) -> Any:
+    """Convert the text typed in the table into a value for the option.
+
+    When *previous_value* is an :class:`OptionVariable`, the option's own type
+    drives the parsing and its ``validate`` method has the final say.
+    """
     stripped = text.strip()
+
+    if isinstance(previous_value, OptionVariable):
+        return _coerce_for_option(stripped, previous_value)
 
     if stripped == "":
         return None
@@ -144,24 +243,94 @@ def _coerce_option_value(text: str, previous_value: Any) -> Any:
         return stripped
 
 
+def _coerce_for_option(text: str, opt: OptionVariable) -> Any:
+    """Parse *text* into a candidate value for the option *opt*."""
+    if isinstance(opt, EnumOption):
+        return text  # EnumOption accepts the member name directly
+
+    if isinstance(opt, BooleanOption):
+        lowered = text.lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+        raise ValueError("Expected a boolean value.")
+
+    if isinstance(opt, StringOption):
+        if text == "" and opt.allow_none:
+            return None
+        return text
+
+    if text == "":
+        return None
+
+    if isinstance(opt, QuantityOption):
+        # a bare number is interpreted in the option's own units; anything else
+        # is parsed as a full quantity, e.g. "500 mHz"
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        try:
+            import cedalion
+
+            return cedalion.units.Quantity(text)
+        except Exception:
+            return text
+
+    # everything else: try a literal, fall back to the raw text and let the
+    # option's validate() produce the error message.
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+
+
+class _KeepDefault:
+    """Sentinel: the stored value could not be restored, keep the default."""
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return "<keep default>"
+
+
+_KEEP_DEFAULT = _KeepDefault()
+
+
 def _option_value_to_json(value: Any) -> Any:
     """Serialize a single option value to a JSON-safe form."""
+    value = option_value(value)
+    if isinstance(value, enum.Enum):
+        return {"__enum__": True, "name": value.name}
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     # Pint quantities: store magnitude + unit string
     if hasattr(value, "units") and hasattr(value, "magnitude"):
         return {"__pint__": True, "magnitude": float(value.magnitude), "units": str(value.units)}
-    # Try repr as fallback — at load time we'll eval it
-    return {"__repr__": repr(value)}
+    if isinstance(value, (list, tuple)):
+        return [_option_value_to_json(v) for v in value]
+    if isinstance(value, dict):
+        return {"__dict__": {str(k): _option_value_to_json(v) for k, v in value.items()}}
+    # Arbitrary objects (e.g. GLM basis functions) cannot be reconstructed
+    # reliably; mark them so the module default is kept on load.
+    return {"__object__": True, "class": type(value).__name__, "repr": repr(value)}
 
 
 def _option_value_from_json(raw: Any) -> Any:
     """Reverse of _option_value_to_json."""
+    if isinstance(raw, list):
+        return [_option_value_from_json(v) for v in raw]
     if not isinstance(raw, dict):
         return raw
+    if raw.get("__enum__"):
+        return raw["name"]  # EnumOption resolves the member name on assignment
     if raw.get("__pint__"):
         import cedalion
         return raw["magnitude"] * getattr(cedalion.units, raw["units"], cedalion.units.dimensionless)
+    if raw.get("__object__"):
+        # not restorable -- signal the caller to keep the module default
+        return _KEEP_DEFAULT
+    if "__dict__" in raw:
+        return {k: _option_value_from_json(v) for k, v in raw["__dict__"].items()}
     if "__repr__" in raw:
         try:
             return ast.literal_eval(raw["__repr__"])
@@ -177,8 +346,8 @@ def pipeline_to_json(modules: List[cedalion_module]) -> str:
         options_raw: Dict[str, Any] = {}
         opts = getattr(module, "options", None)
         if isinstance(opts, dict):
-            for k, v in opts.items():
-                options_raw[k] = _option_value_to_json(v)
+            for k in opts.keys():
+                options_raw[k] = _option_value_to_json(opts[k])
         steps.append({
             "class": module.__class__.__name__,
             "module": module.__class__.__module__,
@@ -204,10 +373,156 @@ def pipeline_from_json(json_str: str) -> List[cedalion_module]:
         raw_opts = step.get("options", {})
         if isinstance(instance.options, dict):
             for k, v_raw in raw_opts.items():
-                if k in instance.options:
-                    instance.options[k] = _option_value_from_json(v_raw)
+                if k not in instance.options:
+                    continue
+                value = _option_value_from_json(v_raw)
+                if value is _KEEP_DEFAULT:
+                    continue
+                # assigning through OptionsDict re-validates the value
+                instance.options[k] = value
         modules.append(instance)
     return modules
+
+
+# ---------------------------------------------------------------------------
+# Editors for the options table
+# ---------------------------------------------------------------------------
+
+# integers larger than this are clamped -- QSpinBox is limited to 32-bit values
+_SPIN_INT_MAX = 2 ** 31 - 1
+
+
+def _bool_choices(opt: Any) -> List[Tuple[str, Any]]:
+    return [("True", True), ("False", False)]
+
+
+def _enum_choices(opt: EnumOption) -> List[Tuple[str, Any]]:
+    return [(member.name, member) for member in opt.choices]
+
+
+def _choice_choices(opt: ChoiceOption) -> List[Tuple[str, Any]]:
+    return [("None" if c is None else str(c), c) for c in opt.choices]
+
+
+def _string_choices(opt: StringOption) -> List[Tuple[str, Any]]:
+    return [(a, a) for a in (opt.allowed or [])]
+
+
+def _combo_choices(opt: Any) -> Optional[List[Tuple[str, Any]]]:
+    """Return ``(label, value)`` pairs when the option has a fixed choice set."""
+    if isinstance(opt, EnumOption):
+        return _enum_choices(opt)
+    if isinstance(opt, BooleanOption):
+        return _bool_choices(opt)
+    if isinstance(opt, ChoiceOption):
+        return _choice_choices(opt)
+    if isinstance(opt, StringOption) and opt.allowed:
+        return _string_choices(opt)
+    return None
+
+
+def _is_integer_option(opt: Any) -> bool:
+    return isinstance(opt, NumericOption) and opt.integer_only
+
+
+def _is_float_option(opt: Any) -> bool:
+    return isinstance(opt, NumericOption) and not opt.integer_only
+
+
+class OptionEditorDelegate(QStyledItemDelegate):
+    """Provides a type-appropriate editor for each option in the table.
+
+    * enum / restricted-string / choice options -> drop-down menu
+    * boolean options                           -> check box
+    * integer options                           -> spin box
+    * floating point options                    -> double spin box
+    * anything else                             -> plain text editor
+    """
+
+    def __init__(self, dialog: "PipelineManagerDialog"):
+        super().__init__(dialog)
+        self._dialog = dialog
+
+    # -- helpers ---------------------------------------------------------
+    def _option_for_index(self, index) -> Any:
+        return self._dialog.option_for_row(index.row())
+
+    # -- QStyledItemDelegate ---------------------------------------------
+    def createEditor(self, parent, option, index):
+        opt = self._option_for_index(index)
+
+        choices = _combo_choices(opt)
+        if choices is not None and not isinstance(opt, BooleanOption):
+            editor = QComboBox(parent)
+            for label, value in choices:
+                editor.addItem(label, value)
+            return editor
+
+        if _is_integer_option(opt):
+            editor = QSpinBox(parent)
+            minimum = opt.minimum
+            maximum = opt.maximum
+            lo = -_SPIN_INT_MAX if minimum is None else int(minimum)
+            hi = _SPIN_INT_MAX if maximum is None else int(maximum)
+            if not opt.inclusive:
+                if minimum is not None:
+                    lo += 1
+                if maximum is not None:
+                    hi -= 1
+            editor.setRange(max(lo, -_SPIN_INT_MAX), min(hi, _SPIN_INT_MAX))
+            return editor
+
+        if _is_float_option(opt):
+            editor = QDoubleSpinBox(parent)
+            editor.setDecimals(6)
+            editor.setSingleStep(0.1)
+            lo = -1e12 if opt.minimum is None else float(opt.minimum)
+            hi = 1e12 if opt.maximum is None else float(opt.maximum)
+            editor.setRange(lo, hi)
+            return editor
+
+        return QLineEdit(parent)
+
+    def setEditorData(self, editor, index) -> None:
+        opt = self._option_for_index(index)
+        value = opt.value if isinstance(opt, OptionVariable) else opt
+
+        if isinstance(editor, QComboBox):
+            for i in range(editor.count()):
+                if editor.itemData(i) == value:
+                    editor.setCurrentIndex(i)
+                    return
+            editor.setCurrentIndex(0)
+            return
+
+        if isinstance(editor, QSpinBox):
+            try:
+                editor.setValue(int(value))
+            except (TypeError, ValueError):
+                editor.setValue(editor.minimum())
+            return
+
+        if isinstance(editor, QDoubleSpinBox):
+            try:
+                editor.setValue(float(value))
+            except (TypeError, ValueError):
+                editor.setValue(editor.minimum())
+            return
+
+        editor.setText(index.data(Qt.DisplayRole) or "")
+
+    def setModelData(self, editor, model, index) -> None:
+        opt = self._option_for_index(index)
+
+        if isinstance(editor, QComboBox):
+            new_value = editor.itemData(editor.currentIndex())
+        elif isinstance(editor, (QSpinBox, QDoubleSpinBox)):
+            editor.interpretText()
+            new_value = editor.value()
+        else:
+            new_value = _coerce_option_value(editor.text(), opt)
+
+        self._dialog.apply_option_value(index.row(), new_value)
 
 
 class PipelineManagerDialog(QDialog):
@@ -226,6 +541,10 @@ class PipelineManagerDialog(QDialog):
             [copy.deepcopy(m) for m in initial_modules] if initial_modules else []
         )
         self.pipeline_row_offset = 0
+        # keys of the rows currently shown in the options table, and the index
+        # of the module they belong to
+        self.option_row_keys: List[str] = []
+        self.option_table_module_index: int = -1
 
         self._init_ui()
         self._populate_available_modules()
@@ -277,9 +596,11 @@ class PipelineManagerDialog(QDialog):
         right_layout.addLayout(list_controls)
         right_layout.addWidget(QLabel("Selected module options"))
         self.options_table = QTableWidget(right_panel)
-        self.options_table.setColumnCount(2)
-        self.options_table.setHorizontalHeaderLabels(["Option", "Value"])
+        self.options_table.setColumnCount(3)
+        self.options_table.setHorizontalHeaderLabels(["Option", "Value", "Default"])
+        self.options_table.setItemDelegateForColumn(1, OptionEditorDelegate(self))
         self.options_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.options_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.options_table.setEditTriggers(
             QAbstractItemView.DoubleClicked
             | QAbstractItemView.EditKeyPressed
@@ -307,6 +628,7 @@ class PipelineManagerDialog(QDialog):
         self.move_down_button.clicked.connect(self._move_selected_down)
         self.remove_button.clicked.connect(self._remove_selected_module)
         self.options_table.itemChanged.connect(self._on_option_item_changed)
+        self.options_table.customContextMenuRequested.connect(self._show_options_menu)
         self.clear_button.clicked.connect(self._clear_pipeline)
         self.done_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
@@ -453,9 +775,7 @@ class PipelineManagerDialog(QDialog):
         if self.pipeline_modules:
             if select_row < 0:
                 current_row = self.pipeline_list.currentRow()
-                select_row = self._module_index_from_list_row(current_row)
-                if select_row < 0:
-                    select_row = 0
+                select_row = max(self._module_index_from_list_row(current_row), 0)
             select_row = max(0, min(select_row, len(self.pipeline_modules) - 1))
             self.pipeline_list.setCurrentRow(select_row + self.pipeline_row_offset)
             self._populate_option_table(select_row)
@@ -475,6 +795,8 @@ class PipelineManagerDialog(QDialog):
     def _populate_option_table(self, row: int) -> None:
         self.options_table.blockSignals(True)
         self.options_table.setRowCount(0)
+        self.option_row_keys = []
+        self.option_table_module_index = row
 
         if row < 0 or row >= len(self.pipeline_modules):
             self.options_table.blockSignals(False)
@@ -486,46 +808,205 @@ class PipelineManagerDialog(QDialog):
             self.options_table.blockSignals(False)
             return
 
-        self.options_table.setRowCount(len(options))
-        for row_idx, (key, value) in enumerate(options.items()):
+        entries = list(_iter_option_objects(options))
+        self.option_row_keys = [key for key, _ in entries]
+        self.options_table.setRowCount(len(entries))
+        for row_idx, (key, opt) in enumerate(entries):
+            tooltip = _option_tooltip(key, opt)
+
             key_item = QTableWidgetItem(str(key))
             key_item.setFlags(key_item.flags() & ~Qt.ItemIsEditable)
+            key_item.setToolTip(tooltip)
             self.options_table.setItem(row_idx, 0, key_item)
-            self.options_table.setItem(row_idx, 1, QTableWidgetItem(_display_value(value)))
+
+            value_item = QTableWidgetItem()
+            value_item.setToolTip(tooltip)
+            if isinstance(opt, BooleanOption):
+                # booleans are toggled with a check box instead of being typed
+                value_item.setFlags(
+                    (value_item.flags() & ~Qt.ItemIsEditable) | Qt.ItemIsUserCheckable
+                )
+            self.options_table.setItem(row_idx, 1, value_item)
+
+            default_text = (
+                str(_format_default(opt)) if isinstance(opt, OptionVariable) else ""
+            )
+            default_item = QTableWidgetItem(default_text)
+            default_item.setFlags(default_item.flags() & ~Qt.ItemIsEditable)
+            default_item.setForeground(QColor(120, 120, 120))
+            default_item.setToolTip(
+                "Right-click to set this option back to its default value."
+                if isinstance(opt, OptionVariable)
+                else tooltip
+            )
+            self.options_table.setItem(row_idx, 2, default_item)
+
+            self._refresh_option_row(row_idx)
 
         self.options_table.resizeColumnsToContents()
         self.options_table.blockSignals(False)
 
-    def _on_option_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() != 1:
-            return
-        module_idx = self._selected_module_index()
-        if module_idx < 0 or module_idx >= len(self.pipeline_modules):
+    # ------------------------------------------------------------------
+    # option table helpers
+    # ------------------------------------------------------------------
+    def _current_options(self) -> Optional[Any]:
+        """Return the options dict of the module shown in the options table."""
+        idx = self.option_table_module_index
+        if idx < 0 or idx >= len(self.pipeline_modules):
+            return None
+        options = getattr(self.pipeline_modules[idx], "options", None)
+        return options if isinstance(options, dict) else None
+
+    def option_for_row(self, row: int) -> Any:
+        """Return the option object (or raw value) shown in *row*."""
+        options = self._current_options()
+        if options is None or row < 0 or row >= len(self.option_row_keys):
+            return None
+        key = self.option_row_keys[row]
+        if isinstance(options, OptionsDict):
+            return options.option(key)
+        return options.get(key)
+
+    def _refresh_option_row(self, row: int) -> None:
+        """Redraw the value/default cells of *row* from the current option state."""
+        opt = self.option_for_row(row)
+        value_item = self.options_table.item(row, 1)
+        if value_item is None:
             return
 
-        module = self.pipeline_modules[module_idx]
-        if not isinstance(module.options, dict):
-            return
+        blocked = self.options_table.signalsBlocked()
+        self.options_table.blockSignals(True)
 
-        key_item = self.options_table.item(item.row(), 0)
-        if key_item is None:
-            return
-        key = key_item.text()
-        if key not in module.options:
-            return
+        if isinstance(opt, BooleanOption):
+            value_item.setCheckState(Qt.Checked if opt.value else Qt.Unchecked)
+            value_item.setText(_display_value(opt))
+        else:
+            value_item.setText(_display_value(opt))
 
-        previous = module.options[key]
+        if isinstance(opt, OptionVariable):
+            font = value_item.font()
+            font.setBold(not opt.is_default)
+            value_item.setFont(font)
+
+        self.options_table.blockSignals(blocked)
+
+    def apply_option_value(self, row: int, new_value: Any) -> bool:
+        """Assign *new_value* to the option in *row*, reporting invalid values.
+
+        Returns ``True`` when the value was accepted. The option itself performs
+        the validation, so out-of-range or unknown values are refused here.
+        """
+        options = self._current_options()
+        if options is None or row < 0 or row >= len(self.option_row_keys):
+            return False
+        key = self.option_row_keys[row]
+
         try:
-            module.options[key] = _coerce_option_value(item.text(), previous)
+            options[key] = new_value
         except Exception as exc:
             QMessageBox.warning(
                 self,
                 "Invalid Option Value",
                 f"Could not set option '{key}':\n{exc}",
             )
-            self.options_table.blockSignals(True)
-            item.setText(_display_value(previous))
-            self.options_table.blockSignals(False)
+            self._refresh_option_row(row)
+            return False
+
+        # re-read: the option may have coerced or normalised the value
+        self._refresh_option_row(row)
+        return True
+
+    def _reset_option_row(self, row: int) -> None:
+        opt = self.option_for_row(row)
+        if isinstance(opt, OptionVariable):
+            opt.reset()
+            self._refresh_option_row(row)
+
+    def _reset_all_options(self) -> None:
+        options = self._current_options()
+        if isinstance(options, OptionsDict):
+            options.reset()
+            self._populate_option_table(self.option_table_module_index)
+
+    def _on_option_item_changed(self, item: QTableWidgetItem) -> None:
+        """Handle check-box toggles and edits of plain (non-delegate) cells."""
+        if item.column() != 1:
+            return
+
+        row = item.row()
+        opt = self.option_for_row(row)
+        if opt is None:
+            return
+
+        if isinstance(opt, BooleanOption):
+            # the check box is the editor for boolean options
+            new_value = item.checkState() == Qt.Checked
+            if new_value != bool(opt.value):
+                self.apply_option_value(row, new_value)
+            return
+
+        if isinstance(opt, OptionVariable):
+            # values set through an editor widget are applied by the delegate;
+            # this only fires for cells edited as plain text.
+            if item.text() == _display_value(opt):
+                return
+            self.apply_option_value(row, _coerce_option_value(item.text(), opt))
+            return
+
+        options = self._current_options()
+        if options is None:
+            return
+        key = self.option_row_keys[row]
+        try:
+            options[key] = _coerce_option_value(item.text(), options[key])
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid Option Value",
+                f"Could not set option '{key}':\n{exc}",
+            )
+            self._refresh_option_row(row)
+
+    def _show_options_menu(self, pos) -> None:
+        """Context menu of the options table.
+
+        Right-clicking the *Default* column offers "Set to Defaults" for that
+        single option; the menu always offers resetting every option of the
+        selected module.
+        """
+        options = self._current_options()
+        if not isinstance(options, OptionsDict):
+            return
+
+        item = self.options_table.itemAt(pos)
+        row = item.row() if item is not None else -1
+        column = item.column() if item is not None else -1
+        opt = self.option_for_row(row) if row >= 0 else None
+        key = self.option_row_keys[row] if 0 <= row < len(self.option_row_keys) else None
+
+        menu = QMenu(self)
+        set_default_action = menu.addAction("Set to Defaults")
+        help_action = menu.addAction("Show Help")
+        menu.addSeparator()
+        reset_all_action = menu.addAction("Set all variables to their defaults")
+
+        can_reset_row = isinstance(opt, OptionVariable)
+        set_default_action.setEnabled(can_reset_row)
+        help_action.setEnabled(can_reset_row)
+        if can_reset_row and column == 2:
+            # emphasise the per-option reset when the default cell was clicked
+            menu.setDefaultAction(set_default_action)
+
+        action = menu.exec(self.options_table.viewport().mapToGlobal(pos))
+        if action is None:
+            return
+
+        if action is set_default_action and row >= 0:
+            self._reset_option_row(row)
+        elif action is help_action and isinstance(opt, OptionVariable):
+            QMessageBox.information(self, f"Option: {key}", opt.format_help())
+        elif action is reset_all_action:
+            self._reset_all_options()
 
     def _show_pipeline_menu(self, pos) -> None:
         item = self.pipeline_list.itemAt(pos)
@@ -706,5 +1187,5 @@ def pipeline_manager(
     dialog = PipelineManagerDialog(initial_modules=initial_modules, parent=parent)
     result = dialog.exec()
     if result == QDialog.Accepted:
-        return dialog.build_pipeline() #(dialog.pipeline_modules)
+        return dialog.build_pipeline()  # (dialog.pipeline_modules)
     return None

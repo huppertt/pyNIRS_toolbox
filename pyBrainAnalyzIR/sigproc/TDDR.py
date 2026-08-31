@@ -2,31 +2,30 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 
 
-
 def TDDR(data, Fs, split_PosNeg, usePCA):
 
-    if(hasattr(data,'wavelength')):
-        data=data.transpose('time','channel','wavelength')
+    if (hasattr(data, 'wavelength')):
+        data = data.transpose('time', 'channel', 'wavelength')
     else:
-        data=data.transpose('time','channel','chromo')
+        data = data.transpose('time', 'channel', 'chromo')
 
-    units=data.pint.units
-    #d.pint.dequalify()
-    shp=data.shape
-    d=np.reshape(data.as_numpy().data,(shp[0],shp[1]*shp[2]))
+    # d.pint.dequalify()
+    shp = data.shape
+    d = np.reshape(data.as_numpy().data, (shp[0], shp[1] * shp[2]))
 
     if usePCA:
         U, S, V = np.linalg.svd(d)
-        U=U[:,:len(S)]
-        S=np.diag(S)
+        U = U[:, :len(S)]
+        S = np.diag(S)
         U = local_tddr(U, Fs, split_PosNeg)
 
         d = U @ S @ V.T
     else:
         d = local_tddr(d, Fs, split_PosNeg)
 
-    data.data=np.reshape(d,shp)
+    data.data = np.reshape(d, shp)
     return data
+
 
 def local_tddr(signal, sample_rate, splitPosNeg=False):
     """
@@ -42,12 +41,12 @@ def local_tddr(signal, sample_rate, splitPosNeg=False):
         Outputs:
         signals_corrected: A [sample x channel] matrix of corrected optical density data
 
-        Fishburn F.A., Ludlum R.S., Vaidya C.J., & Medvedev A.V. (2019). 
-        Temporal Derivative Distribution Repair (TDDR): A motion correction 
+        Fishburn F.A., Ludlum R.S., Vaidya C.J., & Medvedev A.V. (2019).
+        Temporal Derivative Distribution Repair (TDDR): A motion correction
         method for fNIRS. NeuroImage, 184, 171-179.
         https://doi.org/10.1016/j.neuroimage.2018.09.025
     """
-    
+
     # Iterate over each channel
     nch = signal.shape[1] if signal.ndim > 1 else 1
     if nch > 1:
@@ -92,7 +91,7 @@ def local_tddr(signal, sample_rate, splitPosNeg=False):
 
         if splitPosNeg:
             lst = np.where((deriv - mu) > 0)[0]
-            if(len(lst)>0):
+            if (len(lst) > 0):
                 # Step 3b. Calculate absolute residuals of estimate
                 dev = np.abs(deriv[lst] - mu)
 
@@ -149,4 +148,3 @@ def local_tddr(signal, sample_rate, splitPosNeg=False):
     signal_corrected = signal_corrected + DC
 
     return signal_corrected
-

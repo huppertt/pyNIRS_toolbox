@@ -1,0 +1,77 @@
+[MAIN]
+# PySide6 is a compiled extension module; without this pylint cannot introspect
+# it and reports spurious no-name-in-module errors for every Qt class.
+extension-pkg-allow-list=PySide6,pywt,scipy
+
+ignore=.git,__pycache__,build,dist,.eggs
+
+# cedalion and other heavy scientific dependencies are optional at lint time.
+ignored-modules=cedalion,cedalion.nirs,cedalion.dataclasses,cedalion.models,
+                cedalion.sigproc,cedalion.typing,cedalion.math,cedalion.io,
+                statsmodels,statsmodels.api,statsmodels.formula.api,
+                pywt,snirf,pysnirf2,nilearn,mne,PySide6
+
+jobs=0
+persistent=no
+suggestion-mode=yes
+
+[MESSAGES CONTROL]
+# The project is a research toolbox that intentionally favours short
+# mathematical names and long numeric routines, so the purely stylistic
+# conventions are disabled here.  Formatting is enforced separately by flake8.
+disable=
+    C0103,  # invalid-name (short math names such as X, Y, Z, LL)
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    C0301,  # line-too-long (flake8 owns line length)
+    C0302,  # too-many-lines
+    C0325,  # superfluous-parens (existing house style uses if(...) )
+    R0801,  # duplicate-code across sibling pipeline modules
+    R0902,  # too-many-instance-attributes
+    R0903,  # too-few-public-methods
+    R0904,  # too-many-public-methods
+    R0911,  # too-many-return-statements
+    R0912,  # too-many-branches
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    R0917,  # too-many-positional-arguments
+    W0212,  # protected-access (used between cooperating pipeline classes)
+    W0511,  # fixme / TODO notes
+    W0603,  # global-statement
+    W0718,  # broad-exception-caught
+    E1101,  # no-member (dynamic xarray / statsmodels attributes)
+    E1102,  # not-callable (_cite is either a str attribute or a method)
+    E0202,  # method-hidden (same _cite attribute/method duality)
+    E1136,  # unsubscriptable-object (dynamic pandas objects via getattr)
+    R0401,  # cyclic-import (package uses namespace-style submodule imports)
+    R1705,  # no-else-return (house style)
+    R1711,  # useless-return
+    R1735,  # use-dict-literal
+    R0402,  # consider-using-from-import
+    C0206,  # consider-iterating-dictionary items
+    C0411,  # wrong-import-order
+    C0412,  # ungrouped-imports
+    C0414,  # useless-import-alias (used to mark deliberate re-exports)
+    W0105,  # pointless-string-statement (used as inline commentary)
+    W0231,  # super-init-not-called (modules set up their own option dicts)
+    W0237,  # arguments-renamed in _runlocal overrides
+    W0611,  # unused-import (namespace / accessor-registration imports)
+    W0613,  # unused-argument (Qt/delegate override signatures are fixed)
+    W0621,  # redefined-outer-name (standard pytest fixture-argument idiom)
+    C0413,  # wrong-import-position (importorskip must run before imports)
+    C0415,  # import-outside-toplevel (deferred optional/heavy imports)
+    W0622   # redefined-builtin (OptionVariable.help field)
+
+[REPORTS]
+score=yes
+
+[FORMAT]
+max-line-length=120
+
+[BASIC]
+good-names=i,j,k,n,m,x,y,z,X,Y,Z,W,R,S,Q,d,e,f,w,b,p,q,r,s,t,c,a,h,K,LL,df,ax,fs,Fs,_
+
+[DESIGN]
+max-parents=15

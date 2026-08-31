@@ -13,9 +13,9 @@ Usage
 `result` is a list of dictionaries (same row order as the input `data`)
 reflecting any edits, renamed/added/removed columns and filled-in values.
 """
-
 from __future__ import annotations
 
+import math
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -46,7 +46,7 @@ SUBJECT_ID_KEY = "subjectID"
 def _to_display_str(value: Any) -> str:
     if value is None:
         return ""
-    if isinstance(value, float) and value != value:  # NaN
+    if isinstance(value, float) and math.isnan(value):
         return ""
     return str(value)
 
@@ -77,7 +77,7 @@ class MatchColumnsDialog(QDialog):
         self.setWindowTitle("Select Matching Column(s)")
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Select column(s) shared between the table and the "
-                                 "Excel file to use as the match key:"))
+                                "Excel file to use as the match key:"))
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QListWidget.MultiSelection)

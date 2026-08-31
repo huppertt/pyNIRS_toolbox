@@ -1,0 +1,36 @@
+name: Flake8
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  flake8:
+    name: Flake8 style check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Check for syntax errors and undefined names
+        # These are hard failures: they indicate genuinely broken code.
+        run: flake8 pyBrainAnalyzIR tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Check the full style guide
+        # Configuration (line length, per-file ignores, ...) lives in setup.cfg
+        run: flake8 pyBrainAnalyzIR tests --count --statistics
