@@ -1,0 +1,9 @@
+# Runtime / test dependencies.
+# Development-only tools (linters, etc.) live in requirements-dev.txt.
+pytest>=7.0
+numpy
+pandas
+scipy
+xarray
+matplotlib
+statsmodels
