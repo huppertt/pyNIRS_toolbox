@@ -289,10 +289,17 @@ class Statistics:
                     dims=['indices']
                 )
         
-    def draw(self,vartype='tstat',vrange=None,thresh='p<0.05',condnames=None,fdr_correct_full=True):
+    def draw(self,vartype='tstat',vrange=None,thresh='p<0.05',condnames=None,types=None,fdr_correct_full=True):
 
             if(condnames is None):
                 condnames=self.list_conditions()
+
+            types_all = np.unique(self.betas.type)
+            if types is None:
+                types_draw = types_all
+            else:
+                # Keep only types that actually exist in the data, preserving order
+                types_draw = np.array([t for t in types_all if t in types])
                             
             geo2d=self.geo3d
 
@@ -318,12 +325,16 @@ class Statistics:
             sm = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
             sm.set_array([])  # Important for the colorbar to work correctly
 
-            types = np.unique(beta.type)
+            types = types_draw
             num_types=len(types)
 
             fig, ax = plt.subplots(len(condnames),num_types,figsize=(8,8))
-            if(len(condnames)==1):
+            if len(condnames)==1 and num_types==1:
+                ax=np.array([[ax]])
+            elif(len(condnames)==1):
                 ax=np.expand_dims(ax,axis=0)
+            elif num_types==1:
+                ax=np.expand_dims(ax,axis=1)
 
 
             for idxc,condname in enumerate(condnames):

@@ -15,8 +15,8 @@ from typing import Dict
 _DEFAULTS: Dict[str, str] = {
     "Name": "pyBrainAnalyzIR",
     "Version": "0.1.0",
-    "Author": "T. Huppert",
-    "Affiliation": "University of Pittsburgh, Departments of Radiology and Bioengineering",
+    "Author": "Theodore Huppert, Ph.D.",
+    "Affiliation": "Stony Brook University, Departments of Psychiatry and Behavioral Health",
     "Build Date": "2026-08-20",
     "License": "BSD 3-Clause",
     "Repository": "https://github.com/huppertt/pyNIRS_toolbox",

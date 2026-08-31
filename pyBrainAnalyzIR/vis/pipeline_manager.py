@@ -706,5 +706,5 @@ def pipeline_manager(
     dialog = PipelineManagerDialog(initial_modules=initial_modules, parent=parent)
     result = dialog.exec()
     if result == QDialog.Accepted:
-        return list(dialog.pipeline_modules)
+        return dialog.build_pipeline() #(dialog.pipeline_modules)
     return None

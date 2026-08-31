@@ -80,15 +80,55 @@ def plot(rec,type='amp',show_stim=True):
     ax[0].set_xlim(optodes[:,0].min()-s, optodes[:,0].max()+s)
     ax[0].set_axis_off()
 
-    selchann=to_string(data.channel[0])
-    if(hasattr(data,'wavelength')):
-        line0=ax[1].plot(data.time,data.sel(channel=selchann, wavelength="850"), "r-", label="850nm")
-        line1=ax[1].plot(data.time,data.sel(channel=selchann, wavelength="760"), "b-", label="760nm")
-    else:
-        line0=ax[1].plot(data.time,data.sel(channel=selchann, chromo="HbO"), "r-", label="HbO")
-        line1=ax[1].plot(data.time,data.sel(channel=selchann, chromo="HbR"), "b-", label="HbR")
+    selected=[0]
+    ts_lines=[]
+    stim_handles=[]
+    legends={'channels':None,'stim':None}
 
-    legend1 = ax[1].legend(handles=[line0[0], line1[0]], loc='upper right')
+    def components(selchann):
+        if(hasattr(data,'wavelength')):
+            return [(data.sel(channel=selchann, wavelength="850"), '-', "850nm"),
+                    (data.sel(channel=selchann, wavelength="760"), '--', "760nm")]
+        return [(data.sel(channel=selchann, chromo="HbO"), '-', "HbO"),
+                (data.sel(channel=selchann, chromo="HbR"), '--', "HbR")]
+
+    def redraw():
+        for line in ts_lines:
+            line.remove()
+        ts_lines.clear()
+
+        multi=len(selected)>1
+        handles=[]
+        names=[]
+        for k,index in enumerate(selected):
+            selchann=to_string(data.channel[index])
+            names.append(selchann)
+            chancolor=linecolors[(k+1)%len(linecolors)] if multi else None
+            for j,(series,style,comp) in enumerate(components(selchann)):
+                color=chancolor if multi else ('r' if j==0 else 'b')
+                label=f"{selchann} {comp}" if multi else comp
+                line,=ax[1].plot(data.time,series,linestyle=style,color=color,label=label)
+                ts_lines.append(line)
+                handles.append(line)
+
+        for line in mllines:
+            line.set_color('k')
+        for k,index in enumerate(selected):
+            mllines[index].set_color(linecolors[(k+1)%len(linecolors)] if multi else 'r')
+
+        for legend in legends.values():
+            if legend is not None:
+                legend.remove()
+        legends['channels']=ax[1].legend(handles=handles, loc='upper right', fontsize=8)
+        if stim_handles:
+            legends['stim']=ax[1].legend(handles=stim_handles, loc='lower right')
+            ax[1].add_artist(legends['channels'])
+
+        if multi:
+            ax[1].set_title(f"{len(names)} channels: " + ", ".join(names), fontsize=9)
+        else:
+            ax[1].set_title(names[0] if names else "")
+        fig.canvas.draw_idle()
 
     if(show_stim):
         stim=rec.stim
@@ -102,44 +142,38 @@ def plot(rec,type='amp',show_stim=True):
                                 linewidth=2, alpha=0.1)
             ax[1].add_patch(rectangle)
 
-        lines=[]
         for index in range(0,cond_names.shape[0]):
             l,=ax[1].plot([0,1],[-10000,-10000], color=linecolors[index],label=cond_names[index])
-            lines.append(l)
-        legend2 = ax[1].legend(handles=lines, loc='lower right')   
+            stim_handles.append(l)
 
-        ax[1].add_artist(legend1) # Add the first legend back to the axes, as the second one overwrites it
+    redraw()
 
-
-    ax[1].set_title( selchann)
     ax[1].set_xlabel("time / s")
     ax[1].set_ylabel("Signal intensity / a.u.")
     ax[1].set_ylim(data.to_numpy().min(), data.to_numpy().max())
     ax[1].set_xlim(data.time.min(), data.time.max())
 
-
-
     def on_click(event):
-        if event.inaxes is not None:
-            distances = []
-            for line in mllines:
-                xdata, ydata = line.get_data()
-                linelength = ((xdata[0] - xdata[-1])**2 + (ydata[0] - ydata[-1])**2)**0.5   
-                lineseg1   = ((xdata[0] - event.xdata)**2 + (ydata[0] - event.ydata)**2)**0.5 
-                lineseg2   = ((xdata[-1] - event.xdata)**2 + (ydata[-1] - event.ydata)**2)**0.5 
-                distances.append(np.abs(linelength-lineseg1-lineseg2))
-                line.set_color('k')  
+        if event.inaxes is not ax[0]:
+            return
+        distances = []
+        for line in mllines:
+            xdata, ydata = line.get_data()
+            linelength = ((xdata[0] - xdata[-1])**2 + (ydata[0] - ydata[-1])**2)**0.5
+            lineseg1   = ((xdata[0] - event.xdata)**2 + (ydata[0] - event.ydata)**2)**0.5
+            lineseg2   = ((xdata[-1] - event.xdata)**2 + (ydata[-1] - event.ydata)**2)**0.5
+            distances.append(np.abs(linelength-lineseg1-lineseg2))
 
-            min_index = distances.index(min(distances))
-            mllines[min_index].set_color('r')  
-            selchann=to_string(data.channel[min_index])
-            if(hasattr(data,'wavelength')):
-                line0[0].set_ydata(data.sel(channel=selchann, wavelength="850"))
-                line1[0].set_ydata(data.sel(channel=selchann, wavelength="760"))
+        min_index = distances.index(min(distances))
+        if event.button == 3:   # right click adds to (or removes from) the selection
+            if min_index in selected:
+                if len(selected) > 1:
+                    selected.remove(min_index)
             else:
-                line0[0].set_ydata(data.sel(channel=selchann, chromo="HbO"))
-                line1[0].set_ydata(data.sel(channel=selchann, chromo="HbR"))
-            ax[1].set_title( selchann)
+                selected.append(min_index)
+        else:
+            selected[:] = [min_index]
+        redraw()
 
     fig.canvas.mpl_connect('button_press_event', on_click)
 
