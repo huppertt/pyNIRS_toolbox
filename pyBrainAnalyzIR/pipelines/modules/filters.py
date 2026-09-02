@@ -36,8 +36,8 @@ class bandpass_filter(cedalion_module):
                                                'values give a sharper roll-off but more '
                                                'ringing.'),
         })
-        self.inputName = 'od'
-        self.outputName = 'od'
+        self.inputName = 'last'
+        self.outputName = 'last'
         self.description = "Apply a band-pass filter to the input signal"
         self.previous_job = previous_job
 

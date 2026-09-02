@@ -2,6 +2,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import copy
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -86,6 +87,37 @@ class Statistics:
             self.import_model(model)
 
         return
+
+    def __copy__(self) -> "Statistics":
+        """Return a shallow copy of this Statistics object."""
+        cls = self.__class__
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo=None) -> "Statistics":
+        """Return a deep copy of this Statistics object."""
+        if memo is None:
+            memo = {}
+        cls = self.__class__
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            setattr(new, key, copy.deepcopy(value, memo))
+        return new
+
+    def copy(self, deep: bool = True) -> "Statistics":
+        """Return a copy of this Statistics object.
+
+        Args:
+            deep (bool): If True (default), return a deep copy where nested
+                mutable attributes (geometries, meta data, etc.) are
+                independent of the original. If False, return a shallow copy.
+
+        Returns:
+            Statistics: The copied object.
+        """
+        return copy.deepcopy(self) if deep else copy.copy(self)
 
     def import_model(self, model):
         ss = model.to_numpy()
