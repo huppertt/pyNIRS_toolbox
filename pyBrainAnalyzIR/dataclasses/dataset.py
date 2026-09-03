@@ -100,6 +100,7 @@ class DataSet:
 
         return pd.DataFrame(demographics)
 
+    
     def add_demographics_by_index(self, table):
         if (table.shape[0] != len(self.dataset)):
             warnings.warn("Length of table does not match dataset.")

@@ -310,12 +310,15 @@ class Connectivity:
                     s = (optodes.max() - optodes.min()) / 10
                     ax[axIdx].set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
                     ax[axIdx].set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
+                    ax[axIdx].set_aspect('equal')
                     ax[axIdx].set_axis_off()
                     
                     if typeto == typefrom:
-                        ax[axIdx].set_title(f"Connectivity for type: {typeto}", fontsize=16)
+                        ax[axIdx].set_title(f"Connectivity for type: {typeto}", 
+                                            fontsize=16,y=1.5)
                     else:
-                        ax[axIdx].set_title(f"Connectivity for type: {typeto}-{typefrom}", fontsize=16)
+                        ax[axIdx].set_title(f"Connectivity for type: {typeto}-{typefrom}",
+                                            fontsize=16, y=1.5)
 
                     plt.colorbar(sm, ax=ax[axIdx], shrink=0.5)
 

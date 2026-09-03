@@ -75,12 +75,12 @@ def defaultProbe2D():
     labels = np.hstack([sourceLabels, detectorLabels])  # , landmarkLabels])
 
     sourcePos = np.ones((9, 2))
-    sourcePos[:, 0] = [-80, -60, -40, -20, 0, 20, 40, 60, 80]
-    sourcePos[:, 1] = 0
+    sourcePos[:, 0] = [-75.8, -61.9, -43.7, -22.6, 0, 22.6, 43.7, 61.9, 75.8]
+    sourcePos[:, 1] = [-92.6, -56.2, -28.4,  -9.2,   0. ,  -9.2, -28.4, -56.2, -92.6]
 
     detectorPos = np.ones((8, 2))
-    detectorPos[:, 0] = [-70, -50, -30, -10, 10, 30, 50, 70]
-    detectorPos[:, 1] = 25
+    detectorPos[:, 0] = [-63,-48.3, -30.45,-10.4, 10.4, 30.45, 48.3, 63]
+    detectorPos[:, 1] = [-83.4, -54. , -33.2, -22.2, -22.2, -33.2, -54. , -83.4]
 
     positions = np.vstack([sourcePos, detectorPos])  # , landmarkPos])
 
