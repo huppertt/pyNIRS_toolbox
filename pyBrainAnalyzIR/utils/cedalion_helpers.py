@@ -1,6 +1,6 @@
 from cedalion import units
 
-common_units = {'time':[
+common_units = {'time': [
     units.millisecond,
     units.seconds,
     units.minute,
@@ -8,7 +8,7 @@ common_units = {'time':[
     units.day,
     units.month,
     units.year],
-    'length':[
+    'length': [
     units.millimeter,
     units.centimeter,
     units.inch,
@@ -17,19 +17,19 @@ common_units = {'time':[
     units.meter,
     units.kilometer,
     units.mile],
-    'mass':[
+    'mass': [
     units.milligram,
     units.gram,
     units.kilogram,
     units.pound],
-    'volume':[
+    'volume': [
     units.milliliter,
     units.liter,
     units.meter**3],
-    'temperature':[
+    'temperature': [
     units.celsius,
     units.fahrenheit],
-    'sound':[
+    'sound': [
         units.decibel,
         units.hertz,
         units.kilohertz],
@@ -37,5 +37,5 @@ common_units = {'time':[
         units.percent,
         units.degree,
         units.radian]
-    
+
 }

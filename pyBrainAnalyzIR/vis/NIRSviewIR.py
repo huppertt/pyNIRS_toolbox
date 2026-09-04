@@ -56,8 +56,6 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QTableView,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QTreeWidget,

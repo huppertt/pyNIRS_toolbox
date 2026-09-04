@@ -1,10 +1,17 @@
 import numpy as np
 import pint
 
+
 class geo_rotation:
-    def __init__(self,translation2D:np.ndarray=np.zeros(2),rotation2D:np.ndarray=np.eye(2),flip2D:np.ndarray=np.ones(2),
-                 translation3D:np.ndarray=np.zeros(3),rotation3D:np.ndarray=np.eye(3),flip3D:np.ndarray=np.ones(3)):
-        
+    def __init__(
+            self,
+            translation2D: np.ndarray = np.zeros(2),
+            rotation2D: np.ndarray = np.eye(2),
+            flip2D: np.ndarray = np.ones(2),
+            translation3D: np.ndarray = np.zeros(3),
+            rotation3D: np.ndarray = np.eye(3),
+            flip3D: np.ndarray = np.ones(3)):
+
         self.translation2D = translation2D
         self.rotation2D = rotation2D
         self.flip2D = flip2D
@@ -12,13 +19,19 @@ class geo_rotation:
         self.rotation3D = rotation3D
         self.flip3D = flip3D
 
-    def set_rotation2D(self,angles:np.ndarray):
-        self.rotation2D = np.array([[np.cos(angles[0]),-np.sin(angles[0])],[np.sin(angles[0]),np.cos(angles[0])]])
+    def set_rotation2D(self, angles: np.ndarray):
+        self.rotation2D = np.array([[np.cos(angles[0]), -np.sin(angles[0])], [np.sin(angles[0]), np.cos(angles[0])]])
 
-    def set_rotation3D(self,angles:np.ndarray):
-        self.rotation3D = np.array([[np.cos(angles[0])*np.cos(angles[1]),np.cos(angles[0])*np.sin(angles[1])*np.sin(angles[2])-np.sin(angles[0])*np.cos(angles[2]),np.cos(angles[0])*np.sin(angles[1])*np.cos(angles[2])+np.sin(angles[0])*np.sin(angles[2])],
-                                    [np.sin(angles[0])*np.cos(angles[1]),np.sin(angles[0])*np.sin(angles[1])*np.sin(angles[2])+np.cos(angles[0])*np.cos(angles[2]),np.sin(angles[0])*np.sin(angles[1])*np.cos(angles[2])-np.cos(angles[0])*np.sin(angles[2])],
-                                    [-np.sin(angles[1]), np.cos(angles[1])*np.sin(angles[2]), np.cos(angles[1])*np.cos(angles[2])]])
+    def set_rotation3D(self, angles: np.ndarray):
+        self.rotation3D = np.array([[np.cos(angles[0]) * np.cos(angles[1]),
+                                     np.cos(angles[0]) * np.sin(angles[1]) * np.sin(angles[2]) - np.sin(angles[0]) * np.cos(angles[2]),  # noqa: E501
+                                     np.cos(angles[0]) * np.sin(angles[1]) * np.cos(angles[2]) + np.sin(angles[0]) * np.sin(angles[2])],  # noqa: E501
+                                    [np.sin(angles[0]) * np.cos(angles[1]),
+                                     np.sin(angles[0]) * np.sin(angles[1]) * np.sin(angles[2]) + np.cos(angles[0]) * np.cos(angles[2]),  # noqa: E501
+                                     np.sin(angles[0]) * np.sin(angles[1]) * np.cos(angles[2]) - np.cos(angles[0]) * np.sin(angles[2])],  # noqa: E501
+                                    [-np.sin(angles[1]),
+                                     np.cos(angles[1]) * np.sin(angles[2]),
+                                     np.cos(angles[1]) * np.cos(angles[2])]])
 
     def transform(self, geo):
         """Apply the configured rotation/translation to a 2D or 3D geo Xarray object.
@@ -54,5 +67,3 @@ class geo_rotation:
             geoNew.attrs = dict(geo.attrs)
 
         return geoNew
-
-        
