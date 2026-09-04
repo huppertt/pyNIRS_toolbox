@@ -58,12 +58,16 @@ from PySide6.QtWidgets import (
     QTableView,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
 
-from pyBrainAnalyzIR.vis.demographics_manager import DictTableEditor, _to_display_str
+from pyBrainAnalyzIR.vis.demographics_manager import DemographicsManager, _to_display_str
 from pyBrainAnalyzIR.vis.plot_nirs_inline import linecolors, to_string
 from pyBrainAnalyzIR.vis.pipeline_manager import (
     PipelineManagerDialog,
@@ -75,15 +79,40 @@ from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
 from pyBrainAnalyzIR.dataclasses.statistics import Statistics
 from statsmodels.stats.multitest import multipletests
 
-SUBJECT_KEYS = ("subject", "subjectID", "ID")
+#: Item role storing a leaf's index into `dataset.dataset`.
+RECORDING_INDEX_ROLE = Qt.UserRole + 1
+
+SUBJECT_KEYS = ("subject", "subj", "subjID", "subjectID", "ID", "name")
+
+#: Alternative meta_data names for each tree level, in order of preference.
+#: Matching is case-insensitive.
+GROUP_KEYS = ("group",)
+SESSION_KEYS = ("session", "sess", "visit")
+
+
+def _meta_lookup(rec: Any, keys: tuple) -> Optional[str]:
+    """First non-empty meta_data value among `keys`, matched case-insensitively."""
+    meta = getattr(rec, "meta_data", None) or {}
+    lowered = {}
+    for actual_key, value in meta.items():
+        lowered.setdefault(str(actual_key).strip().lower(), value)
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value is not None and _to_display_str(value).strip() != "":
+            return _to_display_str(value).strip()
+    return None
 
 
 def _subject_label(rec: Any) -> Optional[str]:
-    meta = getattr(rec, "meta_data", None) or {}
-    for key in SUBJECT_KEYS:
-        if key in meta and meta[key] is not None and str(meta[key]).strip() != "":
-            return str(meta[key])
-    return None
+    return _meta_lookup(rec, SUBJECT_KEYS)
+
+
+def _group_label(rec: Any) -> Optional[str]:
+    return _meta_lookup(rec, GROUP_KEYS)
+
+
+def _session_label(rec: Any) -> Optional[str]:
+    return _meta_lookup(rec, SESSION_KEYS)
 
 
 def _build_labels(dataset: Any) -> List[str]:
@@ -307,21 +336,26 @@ class NIRSviewIRWindow(QMainWindow):
         left = QWidget(content_widget)
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(QLabel("Recordings"))
-        self.file_list = QTableWidget(left)
-        self.file_list.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.file_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.file_list.setAlternatingRowColors(True)
-        self.file_list.verticalHeader().setVisible(False)
-        self.file_list.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.file_list.horizontalHeader().setStretchLastSection(True)
-        self._populate_file_table()
-        left_layout.addWidget(self.file_list)
+        self.file_tree = QTreeWidget(left)
+        self.file_tree.setHeaderHidden(True)
+        self.file_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.file_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._populate_file_tree()
+        left_layout.addWidget(self.file_tree)
         left_layout.addWidget(QLabel("Selected recording summary"))
-        self.summary_panel = QTextEdit(left)
-        self.summary_panel.setReadOnly(True)
-        self.summary_panel.setMinimumHeight(170)
-        left_layout.addWidget(self.summary_panel)
+        self.summary_tabs = QTabWidget(left)
+        self.summary_tabs.setMinimumHeight(170)
+        self.demographics_panel = QTextEdit(left)
+        self.data_quality_panel = QTextEdit(left)
+        self.stimulus_panel = QTextEdit(left)
+        for panel, title in (
+            (self.demographics_panel, "Demographics"),
+            (self.data_quality_panel, "Data Quality"),
+            (self.stimulus_panel, "Stimulus Information"),
+        ):
+            panel.setReadOnly(True)
+            self.summary_tabs.addTab(panel, title)
+        left_layout.addWidget(self.summary_tabs)
         left_layout.addWidget(QLabel("Data type"))
         self.type_selector = QComboBox(left)
         left_layout.addWidget(self.type_selector)
@@ -330,7 +364,7 @@ class NIRSviewIRWindow(QMainWindow):
 
         # Right-clicking anywhere in the recordings panel offers the
         # demographics editor.
-        for widget in (left, self.file_list):
+        for widget in (left, self.file_tree):
             widget.setContextMenuPolicy(Qt.CustomContextMenu)
             widget.customContextMenuRequested.connect(self._show_file_list_menu)
 
@@ -483,13 +517,13 @@ class NIRSviewIRWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._status_bar.showMessage("Ready.")
 
-        self.file_list.itemSelectionChanged.connect(self._on_file_selection_changed)
+        self.file_tree.itemSelectionChanged.connect(self._on_file_selection_changed)
         self.type_selector.currentTextChanged.connect(self._on_type_changed)
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self._run_pipeline_action.triggered.connect(self._run_pipeline)
 
         if len(dataset.dataset) > 0:
-            self.file_list.setCurrentCell(0, 0)
+            self._select_row(0)
             self._on_file_changed(0)
         else:
             self._update_summary(-1)
@@ -538,7 +572,7 @@ class NIRSviewIRWindow(QMainWindow):
 
         self._set_status("Editing stimulus timing…")
         updated = edit_stimulus_events(self.dataset, self)
-        self._refresh_labels(preferred_row=self.file_list.currentRow())
+        self._refresh_labels(preferred_row=self._current_row())
         if updated:
             self._mark_dataset_changed()
         self._set_status(
@@ -622,7 +656,7 @@ class NIRSviewIRWindow(QMainWindow):
             if result is not None:
                 self.dataset = result
             self._set_status("Pipeline complete. Refreshing display…")
-            self._refresh_labels(preferred_row=self.file_list.currentRow())
+            self._refresh_labels(preferred_row=self._current_row())
             self._pipeline_dirty = False
             self._update_run_pipeline_enabled()
             self._set_status("Pipeline complete.")
@@ -633,16 +667,19 @@ class NIRSviewIRWindow(QMainWindow):
     # --------------------------------------------------------- file list menu
 
     def _show_file_list_menu(self, pos) -> None:
-        widget = self.sender() or self.file_list
+        widget = self.sender() or self.file_tree
         menu = QMenu(self)
         edit_action = menu.addAction("Edit Demographics...")
         remove_action = None
         target_row = -1
-        if widget is self.file_list:
-            target_row = self.file_list.rowAt(pos.y())
-            if target_row >= 0:
-                self.file_list.setCurrentCell(target_row, 0)
-                remove_action = menu.addAction("Remove Recording...")
+        if widget is self.file_tree:
+            clicked = self.file_tree.itemAt(pos)
+            if clicked is not None:
+                self.file_tree.setCurrentItem(clicked)
+                # Only leaves map to a recording; grouping rows have no index.
+                target_row = self._current_row()
+                if target_row >= 0:
+                    remove_action = menu.addAction("Remove Recording...")
 
         chosen = menu.exec(widget.mapToGlobal(pos))
         if chosen == edit_action:
@@ -659,24 +696,24 @@ class NIRSviewIRWindow(QMainWindow):
             )
             return
 
-        table = self.dataset.get_demographics()
-        rows: List[Dict[str, Any]] = [
-            {k: v for k, v in row.items() if _to_display_str(v) != ""}
-            for row in table.to_dict(orient="records")
-        ]
-        while len(rows) < len(recordings):
-            rows.append({})
-
-        editor = DictTableEditor(rows, self)
+        # Pass the dataset itself (not a plain list of rows) so dataset-aware
+        # actions such as "Add Additional BIDS Variables" behave exactly as they
+        # do when the manager is launched from a notebook.
+        editor = DemographicsManager(self.dataset, self)
         editor.setWindowTitle("Edit Demographics")
         editor.exec()
 
-        # `DictTableEditor` fills in `result` on both Done and window close, so
-        # the edits are applied either way (same contract as `edit_dict_table`).
-        self._apply_demographics(editor.result)
+        # `DemographicsManager` writes back to `self.dataset` on both Done and
+        # window close, so the edits are applied either way.
+        self._refresh_labels(preferred_row=self._current_row())
         self._mark_dataset_changed()
 
     def _apply_demographics(self, rows: List[Dict[str, Any]]) -> None:
+        """Write edited demographics rows back onto the recordings.
+
+        `edit_demographics` now delegates this to `DemographicsManager`; this is
+        kept for callers that already hold a plain list of rows.
+        """
         recordings = self.dataset.dataset
         if len(rows) != len(recordings):
             QMessageBox.warning(
@@ -703,44 +740,80 @@ class NIRSviewIRWindow(QMainWindow):
             else:
                 rec.meta_data = new
 
-        self._refresh_labels(preferred_row=self.file_list.currentRow())
+        self._refresh_labels(preferred_row=self._current_row())
 
-    def _populate_file_table(self) -> None:
+    def _populate_file_tree(self) -> None:
+        """Rebuild the recordings tree grouped by group / subject / session.
+
+        Levels that no recording provides are skipped entirely, and when no
+        subject naming is found at all the tree degrades to one flat branch per
+        file. Each leaf carries its recording index in `RECORDING_INDEX_ROLE`.
+        """
         recordings = list(getattr(self.dataset, "dataset", []))
-        labels = _build_labels(self.dataset) if recordings else []
-        demo = self.dataset.get_demographics() if recordings else None
+        self.file_tree.clear()
+        if not recordings:
+            return
 
-        columns: List[str] = []
-        rows: List[Dict[str, Any]] = []
-        if demo is not None:
-            columns = [str(col) for col in demo.columns]
-            rows = demo.to_dict(orient="records")
+        labels = _build_labels(self.dataset)
 
-        while len(rows) < len(recordings):
-            rows.append({})
-        if len(rows) > len(recordings):
-            rows = rows[: len(recordings)]
+        levels = []
+        if any(_group_label(rec) is not None for rec in recordings):
+            levels.append(_group_label)
+        if any(_subject_label(rec) is not None for rec in recordings):
+            levels.append(_subject_label)
+            if any(_session_label(rec) is not None for rec in recordings):
+                levels.append(_session_label)
 
-        headers = ["Recording"] + columns
-        self.file_list.setColumnCount(len(headers))
-        self.file_list.setHorizontalHeaderLabels(headers)
-        self.file_list.setRowCount(len(recordings))
+        for index, rec in enumerate(recordings):
+            parent = self.file_tree.invisibleRootItem()
+            for level in levels:
+                parent = self._child_named(parent, level(rec) or "<unknown>")
+            label = labels[index] if index < len(labels) else f"recording {index}"
+            leaf = QTreeWidgetItem(parent, [label])
+            leaf.setData(0, RECORDING_INDEX_ROLE, index)
 
-        for row_idx, label in enumerate(labels):
-            self.file_list.setItem(row_idx, 0, QTableWidgetItem(label))
-            row_data = rows[row_idx] if row_idx < len(rows) else {}
-            for col_idx, key in enumerate(columns, start=1):
-                self.file_list.setItem(
-                    row_idx, col_idx, QTableWidgetItem(_to_display_str(row_data.get(key)))
-                )
+        self.file_tree.expandAll()
+
+    @staticmethod
+    def _child_named(parent: QTreeWidgetItem, name: str) -> QTreeWidgetItem:
+        """Find (case-insensitively) or create a grouping child under `parent`."""
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            if child.data(0, RECORDING_INDEX_ROLE) is None and \
+                    child.text(0).strip().lower() == name.strip().lower():
+                return child
+        return QTreeWidgetItem(parent, [name])
+
+    def _item_for_row(self, row: int) -> Optional[QTreeWidgetItem]:
+        """The leaf item representing recording index `row`."""
+        iterator = QTreeWidgetItemIterator(self.file_tree)
+        while iterator.value():
+            item = iterator.value()
+            if item.data(0, RECORDING_INDEX_ROLE) == row:
+                return item
+            iterator += 1
+        return None
+
+    def _current_row(self) -> int:
+        """Recording index of the selected leaf, or -1 when none is selected."""
+        item = self.file_tree.currentItem()
+        if item is None:
+            return -1
+        value = item.data(0, RECORDING_INDEX_ROLE)
+        return -1 if value is None else int(value)
+
+    def _select_row(self, row: int) -> None:
+        item = self._item_for_row(row)
+        if item is not None:
+            self.file_tree.setCurrentItem(item)
 
     def _remove_recording(self, row: int) -> None:
         recordings = getattr(self.dataset, "dataset", None)
         if recordings is None or row < 0 or row >= len(recordings):
             return
 
-        label_item = self.file_list.item(row, 0)
-        label = label_item.text() if label_item is not None else f"recording {row}"
+        label_item = self._item_for_row(row)
+        label = label_item.text(0) if label_item is not None else f"recording {row}"
         confirm = QMessageBox.question(
             self,
             "Remove Recording",
@@ -776,7 +849,9 @@ class NIRSviewIRWindow(QMainWindow):
     def _update_summary(self, row: int, key: Optional[str] = None) -> None:
         recordings = getattr(self.dataset, "dataset", [])
         if row < 0 or row >= len(recordings):
-            self.summary_panel.setPlainText("No recording selected.")
+            for panel in (self.demographics_panel, self.data_quality_panel,
+                          self.stimulus_panel):
+                panel.setPlainText("No recording selected.")
             return
 
         rec = recordings[row]
@@ -800,29 +875,28 @@ class NIRSviewIRWindow(QMainWindow):
         duration_text = f"{duration:.2f}" if duration is not None else "N/A"
         channels_text = str(n_channels) if n_channels is not None else "N/A"
         stim_text = (
-            ", ".join(f"{name} ({stim_counts[name]})" for name in stim_names)
-            if stim_names else "<none>"
+            "\n".join(f"  - {name} ({stim_counts[name]})" for name in stim_names)
+            if stim_names else "  - <none>"
         )
 
-        summary = (
-            "Demographics:\n"
-            + "\n".join(demographic_lines)
-            + "\n\nStimulus events:\n"
-            + f"  - {stim_text}\n\n"
-            + f"Recording length (s): {duration_text}\n"
-            + f"Number of channels: {channels_text}"
+        self.demographics_panel.setPlainText(
+            "Demographics:\n" + "\n".join(demographic_lines)
         )
-        self.summary_panel.setPlainText(summary)
+        self.data_quality_panel.setPlainText(
+            f"Recording length (s): {duration_text}\n"
+            f"Number of channels: {channels_text}"
+        )
+        self.stimulus_panel.setPlainText("Stimulus events:\n" + stim_text)
 
     def _refresh_labels(self, preferred_row: int = -1) -> None:
         recordings = getattr(self.dataset, "dataset", [])
-        self.file_list.blockSignals(True)
-        self._populate_file_table()
-        self.file_list.blockSignals(False)
+        self.file_tree.blockSignals(True)
+        self._populate_file_tree()
+        self.file_tree.blockSignals(False)
         if recordings:
             row = max(preferred_row, 0)
             row = min(row, len(recordings) - 1)
-            self.file_list.setCurrentCell(row, 0)
+            self._select_row(row)
             self._on_file_changed(row)
         else:
             self.rec = None
@@ -839,7 +913,12 @@ class NIRSviewIRWindow(QMainWindow):
             self._update_summary(-1)
 
     def _on_file_selection_changed(self) -> None:
-        self._on_file_changed(self.file_list.currentRow())
+        row = self._current_row()
+        # Clicking a group/subject/session row is just navigation, so keep the
+        # current plot instead of clearing it.
+        if row < 0:
+            return
+        self._on_file_changed(row)
 
     def _on_file_changed(self, row: int) -> None:
         if row < 0 or row >= len(self.dataset.dataset):
@@ -865,7 +944,7 @@ class NIRSviewIRWindow(QMainWindow):
     def _on_type_changed(self, key: str) -> None:
         if self.rec is not None and key:
             self._draw(key)
-            self._update_summary(self.file_list.currentRow(), key)
+            self._update_summary(self._current_row(), key)
 
     def _on_click(self, event) -> None:
         if self._right_stack.currentIndex() != 0:
