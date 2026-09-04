@@ -6,7 +6,8 @@
 # python parts of the package such as the option-variable data classes.
 pytest>=7.0
 flake8>=6.0
-pylint>=3.0
+pylint>=3.0,<4.0
+pint
 
 # Scientific stack used by the parts of the package that can be imported
 # without cedalion.

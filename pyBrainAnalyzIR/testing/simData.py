@@ -70,17 +70,17 @@ def defaultProbe2D():
         [cdc.PointType.SOURCE] * len(sourceLabels)
         + [cdc.PointType.DETECTOR] * len(detectorLabels)
         + [cdc.PointType.LANDMARK] * len(landmarkLabels)
-        )
+    )
 
     labels = np.hstack([sourceLabels, detectorLabels])  # , landmarkLabels])
 
     sourcePos = np.ones((9, 2))
     sourcePos[:, 0] = [-75.8, -61.9, -43.7, -22.6, 0, 22.6, 43.7, 61.9, 75.8]
-    sourcePos[:, 1] = [-92.6, -56.2, -28.4,  -9.2,   0. ,  -9.2, -28.4, -56.2, -92.6]
+    sourcePos[:, 1] = [-92.6, -56.2, -28.4, -9.2, 0., -9.2, -28.4, -56.2, -92.6]
 
     detectorPos = np.ones((8, 2))
-    detectorPos[:, 0] = [-63,-48.3, -30.45,-10.4, 10.4, 30.45, 48.3, 63]
-    detectorPos[:, 1] = [-83.4, -54. , -33.2, -22.2, -22.2, -33.2, -54. , -83.4]
+    detectorPos[:, 0] = [-63, -48.3, -30.45, -10.4, 10.4, 30.45, 48.3, 63]
+    detectorPos[:, 1] = [-83.4, -54., -33.2, -22.2, -22.2, -33.2, -54., -83.4]
 
     positions = np.vstack([sourcePos, detectorPos])  # , landmarkPos])
 

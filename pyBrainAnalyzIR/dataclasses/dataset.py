@@ -7,6 +7,7 @@ import warnings
 import pyBrainAnalyzIR
 from pathlib import Path
 
+
 @dataclass
 class DataSet:
     """Main container for holding multiple recording datatypes.
@@ -26,7 +27,7 @@ class DataSet:
             f"{self.description}, "
             f"Contains: {len(self.dataset)} recordings,"
             f"Statistics: {list(self.statistics.keys())}, "
-            )
+        )
 
     def __init__(self, data=None):
         self.description = "Data Set"
@@ -100,7 +101,6 @@ class DataSet:
 
         return pd.DataFrame(demographics)
 
-    
     def add_demographics_by_index(self, table):
         if (table.shape[0] != len(self.dataset)):
             warnings.warn("Length of table does not match dataset.")
@@ -128,7 +128,6 @@ class DataSet:
                 if (var == var2):
                     for key in table.keys():
                         self.dataset[idx].meta_data[key] = table[key][idx2]
-
 
     def save_bids(self, path: str | Path):
         """Save the dataset in BIDS format.
