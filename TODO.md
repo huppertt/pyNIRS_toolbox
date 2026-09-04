@@ -33,4 +33,6 @@
 - [ ] Add pytest unit testing on data types (currently only code breaks but not value checks)
 - [ ] Parametric linear modeling for GLM
 - [ ] Scatter plots for mixed effects models/results
-- [ ] 
+- [ ] When renaming in demographics_manager, make sure the description follows
+- [ ] Add window to add descriptions in demographics manager
+- [ ] Add tooltips about demographics in demographics manager and NIRSviewIR

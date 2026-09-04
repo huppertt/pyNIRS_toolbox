@@ -89,13 +89,69 @@ class DataSet:
                 self.dataset.append(d)
         else:
             self.dataset.append(data)
+        self._sync_bids_descriptions()
+
+    def _sync_bids_descriptions(self):
+        """Sync the _bids_descriptions field in the meta_data of each recording.
+
+        This method ensures that the _bids_descriptions field in the meta_data of each recording
+        is consistent with the current state of the meta_data. It adds missing descriptions for
+        new keys and removes descriptions for keys that no longer exist in the meta_data.
+        """
+
+        common_key = {}
+
+        # First, gather all unique keys and their descriptions from the _bids_descriptions field across all recordings.
+        for rec in self.dataset:
+            if '_bids_descriptions' in rec.meta_data:
+                for key in rec.meta_data['_bids_descriptions']:
+                    if key not in common_key:
+                        common_key[key] = rec.meta_data['_bids_descriptions'][key]
+                    else:
+                        if common_key[key] == "No description available." and rec.meta_data['_bids_descriptions'][key] != "No description available.":
+                            common_key[key] = rec.meta_data['_bids_descriptions'][key]
+                        elif common_key[key] != rec.meta_data['_bids_descriptions'][key]:   
+                            warnings.warn(f"Description for key '{key}' is inconsistent across recordings. Using the first encountered description.")
+        # Now, update each recording's _bids_descriptions field to match the common_key dictionary.
+        all_keys = []
+        for rec in self.dataset:
+            for key in rec.meta_data.keys():
+                all_keys.append(key)
+                if key != '_bids_descriptions':
+                    if key not in common_key:
+                        common_key[key] = "No description available."
+
+        # The list of all keys across all recordings, ensuring uniqueness
+        all_keys = list(set(all_keys))
+
+        # Prune out any leftover keys that are no longer part of the current meta_data of any recording
+        common_key = {key: common_key.get(key, "No description available.") for key in all_keys}
+
+        common_key['_bids_descriptions'] = "A special field used for BIDS metadata descriptions. This field is automatically managed by the DataSet class and should not be modified directly."
+
+        # Assign the common_key dictionary to the _bids_descriptions field of each recording's meta_data
+        # Since this is passing by reference, any changes to common_key will be reflected in all recordings.
+        for rec in self.dataset:
+            rec.meta_data['_bids_descriptions'] = common_key
+
+    def add_meta_data_description(self, key: str, description: str):
+        """Add or update a description for a specific metadata key across all recordings.
+
+        Args:
+            key (str): The metadata key for which to add or update the description.
+            description (str): The description to associate with the specified key.
+        """
+        self._sync_bids_descriptions()
+        self.dataset[0].meta_data['_bids_descriptions'][key] = description
+        self._sync_bids_descriptions()
 
     def get_demographics(self):
         demographics = []
         for rec in self.dataset:
             demo = {}
             for keys in rec.meta_data.keys():
-                demo[keys] = rec.meta_data[keys]
+                if keys != '_bids_descriptions':  # _bids_descriptions is a special field used for BIDS metadata descriptions, and we don't want to include it in the demographics table.   
+                    demo[keys] = rec.meta_data[keys]
 
             demographics.append(demo)
 
@@ -109,6 +165,8 @@ class DataSet:
         for keys in table.keys():
             for idx in range(0, table.shape[0]):
                 self.dataset[idx].meta_data[keys] = table[keys][idx]
+        self._sync_bids_descriptions()
+        
 
     def add_demographics_by_match_variable(self, table, matchvariable='subjectID', allow_missing=False):
         cur_demo = self.get_demographics()
@@ -128,6 +186,8 @@ class DataSet:
                 if (var == var2):
                     for key in table.keys():
                         self.dataset[idx].meta_data[key] = table[key][idx2]
+        self._sync_bids_descriptions()
+        
 
     def save_bids(self, path: str | Path):
         """Save the dataset in BIDS format.

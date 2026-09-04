@@ -27,7 +27,7 @@ def bids_README_template():
         "recording duration, the project name and years it ran, and the associated "
         "publication (if any)"
     )
-    bids_README_template['Experimental design (optional)'] = (
+    bids_README_template['Experimental design'] = (
         "State the variables that define the experiment — the independent (manipulated), "
         "dependent (measured), and control (held-fixed) variables. This does not apply to "
         "datasets without a designed manipulation (e.g. resting state)."
@@ -58,10 +58,10 @@ def bids_README_template():
         "canonical TaskName / TaskDescription live in task-<label>_*.json and events "
         "live in *_events.tsv"
     )
-    bids_README_template['Stimuli (optional)'] = (
+    bids_README_template['Stimuli'] = (
         "What was presented, and where stimulus files live (e.g. stimuli/)."
     )
-    bids_README_template['Additional data acquired (optional)'] = (
+    bids_README_template['Additional data acquired'] = (
         "Non-imaging data collected as part of the study: questionnaires, surveys, "
         "clinical measures, swabs. Note availability and location; standardized "
         "phenotypic data belong in a phenotype/ folder."
@@ -163,10 +163,12 @@ def save_dataset_to_bids(dset: dataset.DataSet, path: str | Path):
         dset (dataset.DataSet): The dataset to be saved.
         path (str | Path): The directory path where the BIDS dataset will be saved.
     """
-    add_missing_bids_to_metadata(dset)
-    demographics = dset.get_demographics()
+    add_missing_bids_to_metadata(dset) # Add any required BIDS metadata to the dataset if missing
+                                       # I think alot of these fields are unnecessary for the BIDS spec, but they are required official NIRS-BIDS validator to pass.  
 
-    save_bids_demographics(demographics, demofile=Path(path) / 'participants.tsv')
+    demographics = dset.get_demographics()
+    # Write the participants.tsv and JSON files in the BIDS dataset directory
+    save_bids_demographics(demographics, demofile=Path(path) / 'participants')
 
 
 def add_missing_bids_to_metadata(data, intype='amp'):
@@ -174,42 +176,51 @@ def add_missing_bids_to_metadata(data, intype='amp'):
 
     Args:
         data: The data object containing metadata and other relevant information.
-
+        intype (str): The type of data to be processed (default is 'amp').
     """
+
+    # The NIRS-BIDS validator requires certain fields to be present in the metadata, even if they are not strictly necessary for the BIDS specification or the SNIRF standard. This function adds those required fields with default values if they are missing.
+
     if (data.__class__ == pyBrainAnalyzIR.dataclasses.dataset.DataSet):
         for r in data.dataset:
             add_missing_bids_to_metadata(r, intype=intype)
         return
     else:
-        defaults = {'Manufacturer': 'n/a',
-                    'ManufacturersModelName': 'n/a',
-                    'SoftwareVersions': 'n/a',
-                    'DeviceSerialNumber': 'n/a',
-                    'HardwareFilters': 'n/a',
-                    'SourceType': 'n/a',
-                    'DetectorType': 'n/a',
-                    'InstitutionName': 'n/a',
-                    'InstitutionAddress': 'n/a',
-                    'InstitutionalDepartmentName': 'n/a',
-                    'CapManufacturer': 'n/a',
-                    'CapManufacturersModelName': 'n/a',
-                    'HeadCircumference': 'n/a',
-                    'SubjectArtefactDescription': 'n/a',
-                    'TaskDescription': 'n/a',
-                    'Instructions': 'n/a',
-                    'CogPOID': 'n/a',
-                    'NIRSPlacementScheme': 'n/a',
-                    'RecordingDuration': (data[intype].time[-1] - data[intype].time[0]).values,
-                    'SamplingFrequency': 1 / (data[intype].time[1] - data[intype].time[0]).values,
-                    'NIRSChannelCount': len(data[intype].channel),
-                    'NIRSSourceOptodeCount': sum((data.geo2d.type == PointType(1).SOURCE).values),
-                    'NIRSDetectorOptodeCount': sum((data.geo2d.type == PointType(1).DETECTOR).values),
-                    'ShortChannelCount': sum((xrutils.norm(data.geo3d.loc[data[intype].source] - data.geo3d.loc[data[intype].detector],  # noqa: E501
-                                                           data.geo3d.points.crs) < units.millimeter * 15).values),
+        defaults = {'Manufacturer': {'value':'n/a','description':'The manufacturer of the device used for data acquisition.'},
+                    'ManufacturersModelName': {'value':'n/a','description':'The model name of the device used for data acquisition.'},
+                    'SoftwareVersions': {'value':'n/a','description':'The software versions of the device used for data acquisition'},
+                    'DeviceSerialNumber': {'value':'n/a','description':'The serial number of the device used for data acquisition.'},
+                    'HardwareFilters': {'value':'n/a','description':'The hardware filters used in the device.'},
+                    'SourceType': {'value':'n/a','description':'The type of source used in the device.'},
+                    'DetectorType': {'value':'n/a','description':'The type of detector used in the device.'},
+                    'InstitutionName': {'value':'n/a','description':'The name of the institution where the data was acquired.'},
+                    'InstitutionAddress': {'value':'n/a','description':'The address of the institution where the data was acquired.'},
+                    'InstitutionalDepartmentName': {'value':'n/a','description':'The department of the institution where the data was acquired.'},
+                    'CapManufacturer': {'value':'n/a','description':'The manufacturer of the cap used in the study.'},
+                    'CapManufacturersModelName': {'value':'n/a','description':'The model name of the cap used in the study.'},
+                    'HeadCircumference': {'value':'n/a','description':'The head circumference of the subject.'},
+                    'SubjectArtefactDescription': {'value':'n/a','description':'Description of any artefacts related to the subject.'},
+                    'TaskDescription': {'value':'n/a','description':'Description of the task performed by the subject.'},
+                    'Instructions': {'value':'n/a','description':'Instructions given to the subject.'},
+                    'CogPOID': {'value':'n/a','description':'The CogPO ID associated with the task.'},
+                    'NIRSPlacementScheme': {'value':'n/a','description':'The NIRS placement scheme used.'},
+                    'RecordingDuration': {'value': (data[intype].time[-1] - data[intype].time[0]).values, 'description': 'The duration of the recording.'},
+                    'SamplingFrequency': {'value': 1 / (data[intype].time[1] - data[intype].time[0]).values, 'description': 'The sampling frequency of the recording.'},
+                    'NIRSChannelCount': {'value': len(data[intype].channel), 'description': 'The number of NIRS channels.'},
+                    'NIRSSourceOptodeCount': {'value': sum((data.geo2d.type == PointType(1).SOURCE).values), 'description': 'The number of NIRS source optodes.'},
+                    'NIRSDetectorOptodeCount': {'value': sum((data.geo2d.type == PointType(1).DETECTOR).values), 'description': 'The number of NIRS detector optodes.'},
+                    'ShortChannelCount': {'value': sum((xrutils.norm(data.geo3d.loc[data[intype].source] - data.geo3d.loc[data[intype].detector],  # noqa: E501
+                                                           data.geo3d.points.crs) < units.millimeter * 15).values), 'description': 'The number of short channels.'},
                     }
+        
         for key, value in defaults.items():
             if key not in data.meta_data:
-                data.meta_data[key] = value
+                data.meta_data[key] = value['value']
+                if '_bids_descriptions' not in data.meta_data:
+                    data.meta_data['_bids_descriptions'] = {}
+                    
+                if key not in data.meta_data['_bids_descriptions']:
+                    data.meta_data['_bids_descriptions'][key] = value['description']
 
         return
 
@@ -227,7 +238,22 @@ def save_bids_demographics(demographics: pd.DataFrame, demofile: str | Path):
     if not isinstance(demofile, (str, Path)):
         raise ValueError("demofile must be a string or Path")
 
-    demofile = Path(demofile)
-    demofile.parent.mkdir(parents=True, exist_ok=True)
+    demofileTSV = Path(demofile + '.tsv')
+    demofileTSV.parent.mkdir(parents=True, exist_ok=True)
+    demographics.to_csv(demofileTSV, sep='\t', index=False)
 
-    demographics.to_csv(demofile, sep='\t', index=False)
+    # Now save the JSON sidecar file with the column descriptions
+    demofileJSON = Path(demofile + '.json')
+    demofileJSON.parent.mkdir(parents=True, exist_ok=True)
+
+
+    demo_info = {}
+
+    for col in demographics.columns:
+        demo_info[col] = {
+            "Description": "n/a",
+            "Units": "n/a"
+        }
+
+    #with open(demofileJSON, 'w') as f:
+    #    json.dump({col: "n/a" for col in demographics.columns}, f)
