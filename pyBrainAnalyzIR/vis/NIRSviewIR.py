@@ -63,7 +63,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pyBrainAnalyzIR.vis.dict_table_editor import DictTableEditor, _to_display_str
+from pyBrainAnalyzIR.vis.demographics_manager import DictTableEditor, _to_display_str
 from pyBrainAnalyzIR.vis.plot_nirs_inline import linecolors, to_string
 from pyBrainAnalyzIR.vis.pipeline_manager import (
     PipelineManagerDialog,

@@ -26,7 +26,7 @@ class GLM(cedalion_module):
     def __init__(self, previous_job=None):
         self.name = "GLM Model"
         self.options = OptionsDict({
-            'noise_model': StringOption('ols',
+            'noise_model': StringOption('ar_irls',
                                         allowed=['ols', 'ar_irls', 'wls', 'gls', 'rls'],
                                         description='Noise/estimator model',
                                         help="Estimator used to solve the GLM. 'ols' is "

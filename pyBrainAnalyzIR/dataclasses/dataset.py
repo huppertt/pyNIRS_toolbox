@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import pyBrainAnalyzIR
-
+from pathlib import Path
 
 @dataclass
 class DataSet:
@@ -128,3 +128,13 @@ class DataSet:
                 if (var == var2):
                     for key in table.keys():
                         self.dataset[idx].meta_data[key] = table[key][idx2]
+
+
+    def save_bids(self, path: str | Path):
+        """Save the dataset in BIDS format.
+
+        Args:
+            path (str | Path): The directory path where the BIDS dataset will be saved.
+        """
+        from pyBrainAnalyzIR.io.bids import save_dataset_to_bids
+        save_dataset_to_bids(self, path)
