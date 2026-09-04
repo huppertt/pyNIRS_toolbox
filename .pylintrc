@@ -13,7 +13,6 @@ ignored-modules=cedalion,cedalion.nirs,cedalion.dataclasses,cedalion.models,
 
 jobs=0
 persistent=no
-suggestion-mode=yes
 
 [MESSAGES CONTROL]
 # The project is a research toolbox that intentionally favours short
@@ -26,6 +25,9 @@ disable=
     C0116,  # missing-function-docstring
     C0301,  # line-too-long (flake8 owns line length)
     C0302,  # too-many-lines
+    C0303,  # trailing-whitespace (flake8 owns formatting)
+    C0304,  # missing-final-newline (flake8 owns formatting)
+    C0305,  # trailing-newlines (flake8 owns formatting)
     C0325,  # superfluous-parens (existing house style uses if(...) )
     R0801,  # duplicate-code across sibling pipeline modules
     R0902,  # too-many-instance-attributes
@@ -51,12 +53,16 @@ disable=
     R1735,  # use-dict-literal
     R0402,  # consider-using-from-import
     C0206,  # consider-iterating-dictionary items
+    C0200,  # consider-using-enumerate (existing indexed loops)
+    C0209,  # consider-using-f-string (existing formatting)
     C0411,  # wrong-import-order
     C0412,  # ungrouped-imports
     C0414,  # useless-import-alias (used to mark deliberate re-exports)
     W0105,  # pointless-string-statement (used as inline commentary)
     W0231,  # super-init-not-called (modules set up their own option dicts)
     W0237,  # arguments-renamed in _runlocal overrides
+    W0311,  # bad-indentation (existing formatting)
+    W0612,  # unused-variable (existing intermediate results)
     W0611,  # unused-import (namespace / accessor-registration imports)
     W0613,  # unused-argument (Qt/delegate override signatures are fixed)
     W0621,  # redefined-outer-name (standard pytest fixture-argument idiom)
