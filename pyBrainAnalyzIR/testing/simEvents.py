@@ -9,6 +9,53 @@ This is a collection of functions for generating stimulus stiming information us
 
 """
 
+def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
+                        block_dur=20, block_space=20, ncond=1,randomize_order=False):
+    """
+        This function generates a blocked design
+
+        Inputs:
+            t: time np.array {default 0-300s @ 10Hz}
+            block_dur: duration of blocks (float; seconds) {default 20s}
+            block_space: (float seconds) {default 20s}.  This is the average time between the onsets of blocks
+            ncond:  Number of conditions to simulate {default 1}. Blocks are named "A","B",...
+
+        Outputs:
+            stim design: pandas.DataFrame
+    """
+    t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3)
+    block_dur=20
+    block_space=20
+    ncond=2
+    randomize_order=False
+
+    # min max times
+    tmin = np.min(t) + 1 * block_dur
+    tmax = np.max(t) - 2 * block_dur
+
+    # onsets
+    onsets = np.arange(tmin, tmax, block_space+block_dur)
+
+    nevents=np.int32(np.floor(len(onsets)/ncond))
+    onsets = onsets[:nevents*ncond]
+
+    if randomize_order:
+        np.random.shuffle(onsets)
+
+
+    # durations
+    dur = block_dur * np.ones_like(onsets)
+
+    # amplitude
+    amp = np.ones_like(dur)
+
+    stimnames = [chr(65 + i) for i in range(ncond)]
+    stim_order = np.tile(stimnames, nevents)
+
+    stim = pd.DataFrame({"onset": onsets, "trial_type": stim_order, "duration": dur, "value": amp})
+    stim.sort_values(by="onset", inplace=True)
+
+    return stim
 
 def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
                      stim_dur=2, stim_space=7, ncond=1):

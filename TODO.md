@@ -36,3 +36,5 @@
 - [ ] When renaming in demographics_manager, make sure the description follows
 - [ ] Add window to add descriptions in demographics manager
 - [ ] Add tooltips about demographics in demographics manager and NIRSviewIR
+- [ ] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset
+- [ ] Trim baseline times in stimulus GUI
