@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.patches as patches
+import warnings
+
+from cedalion.geometry.registration import simple_scalp_projection
 
 
 def to_string(arr):
@@ -49,37 +52,102 @@ linecolors = np.array(("#000000", "#FFFF00", "#1CE6FF", "#FF34FF", "#FF4A46", "#
                        ))
 
 
-def plot(rec, type='amp', show_stim=True):
+def _channel_source_detector(data, index: int, chan) -> tuple[str, str]:
+    if hasattr(data, "source") and hasattr(data, "detector"):
+        return to_string(data.source[index]), to_string(data.detector[index])
+
+    sdstr = to_string(chan)
+    return sdstr[:sdstr.find("D")], sdstr[sdstr.find("D"):]
+
+
+def _point_for_label(geo2d, label: str):
+    labels = np.asarray([str(value) for value in geo2d.label.values])
+    matches = labels == str(label)
+    if not matches.any():
+        raise ValueError(f"Probe geometry does not contain optode label '{label}'.")
+    return geo2d[matches].to_numpy()[0]
+
+
+def _legacy_probe_geometry(rec):
+    return rec.geo3d if len(rec.geo2d) == 0 else rec.geo2d
+
+
+def _scalp_probe_geometry(rec):
+    try:
+        return simple_scalp_projection(rec.geo3d)
+    except ValueError as exc:
+        warnings.warn(
+            f"Scalp projection unavailable ({exc}); using probe geometry.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return _legacy_probe_geometry(rec)
+
+
+def _draw_scalp_outline(ax) -> None:
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.add_patch(patches.Circle((0, 0), 1.0, ec="k", fc="None"))
+    ax.add_patch(patches.Ellipse((1.05, 0), 0.1, 0.3, ec="k", fc="None"))
+    ax.add_patch(patches.Ellipse((-1.05, 0), 0.1, 0.3, ec="k", fc="None"))
+    angles = np.array([np.pi / 2 + 0.05, np.pi / 2, np.pi / 2 - 0.05])
+    radius = np.array([1.0, 1.1, 1.0])
+    ax.plot(radius * np.cos(angles), radius * np.sin(angles), "k-")
+    ax.set_xlim(-1.15, 1.15)
+    ax.set_ylim(-1.15, 1.15)
+    ax.set_axis_off()
+
+
+def _draw_optode_labels(ax, geo2d, sources: set[str], detectors: set[str]) -> None:
+    for labels, color in ((sources, "#e41a1c"), (detectors, "#377eb8")):
+        for label in sorted(labels):
+            pos = _point_for_label(geo2d, label)
+            ax.text(pos[0], pos[1], label, fontsize=10, ha="center",
+                    va="center", color=color, weight="semibold", zorder=200)
+
+
+def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
+    """Draw the probe and return channel line handles in data.channel order."""
+    geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else _legacy_probe_geometry(rec)
+    mllines = []
+    used_sources: set[str] = set()
+    used_detectors: set[str] = set()
+
+    if plot_on_scalp:
+        _draw_scalp_outline(ax)
+
+    for index, chan in enumerate(data.channel):
+        source, detector = _channel_source_detector(data, index, chan)
+        srcpos = _point_for_label(geo2d, source)
+        detpos = _point_for_label(geo2d, detector)
+        ll, = ax.plot([srcpos[0], detpos[0]], [srcpos[1], detpos[1]], "k", lw=2.0)
+        mllines.append(ll)
+        used_sources.add(source)
+        used_detectors.add(detector)
+
+        if not plot_on_scalp:
+            ax.text(srcpos[0], srcpos[1], source, fontsize=12, ha="center", va="center")
+            ax.text(detpos[0], detpos[1], detector, fontsize=12, ha="center", va="center")
+
+    if plot_on_scalp:
+        _draw_optode_labels(ax, geo2d, used_sources, used_detectors)
+    else:
+        optodes = geo2d.to_numpy()
+        s = (optodes.max() - optodes.min()) / 10
+        ax.set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
+        ax.set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
+        ax.set_axis_off()
+
+    return mllines
+
+
+def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), width_ratios=[1, 3])
 
-    if (len(rec.geo2d) == 0):
-        geo2d = rec.geo3d
-    else:
-        geo2d = rec.geo2d
-
     data = rec[type]
-    mllines = []
-    for chan in data.channel:
-        sdstr = to_string(chan)
-        source = sdstr[:sdstr.find("D")]
-        detector = sdstr[sdstr.find("D"):]
-
-        srcpos = geo2d[geo2d.label == source].to_numpy()
-        detpos = geo2d[geo2d.label == detector].to_numpy()
-        ll, = ax[0].plot([srcpos[0, 0], detpos[0, 0]], [srcpos[0, 1], detpos[0, 1]], 'k')
-        ax[0].text(srcpos[0, 0], srcpos[0, 1], source, fontsize=12, ha='center', va='center')
-        ax[0].text(detpos[0, 0], detpos[0, 1], detector, fontsize=12, ha='center', va='center')
-        ll.set_color('k')
-        mllines.append(ll)
+    mllines = draw_probe(rec, data, ax[0], plot_on_scalp=plot_on_scalp)
 
     mllines[0].set_color('r')
-
-    optodes = geo2d.to_numpy()
-    s = (optodes.max() - optodes.min()) / 10
-    ax[0].set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
-    ax[0].set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
-    ax[0].set_axis_off()
 
     selected = [0]
     ts_lines = []

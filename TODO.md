@@ -38,3 +38,6 @@
 - [ ] Add tooltips about demographics in demographics manager and NIRSviewIR
 - [ ] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset
 - [ ] Trim baseline times in stimulus GUI
+- [ ] Add find/replace for demographics edits
+- [ ] Add analysis pipeline and log (add to BIDS derivatives outputs)
+- [ ] Data Quality GUI with export for PDF and HTML (including code to do so directly from a BIDS folder)

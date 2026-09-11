@@ -12,22 +12,27 @@ class default_pipelines(Enum):
 
     def pipeline(self):
         if self == default_pipelines.basic_preprocessing:
-
-            job = pipelines.preproccessing.intensity_opticaldensity()
+            job = pipelines.preproccessing.input_data()
+            job.options['InputName'] = 'amp'
+            job = pipelines.preproccessing.intensity_opticaldensity(job)
             job = pipelines.preproccessing.mbll(job)
             job = pipelines.preproccessing.resample(job)
             job.options['Fs'] = 4
             return job
 
         elif self == default_pipelines.pediatric_preprocessing:
-            job = pipelines.preproccessing.intensity_opticaldensity()
+            job = pipelines.preproccessing.input_data()
+            job.options['InputName'] = 'amp'
+            job = pipelines.preproccessing.intensity_opticaldensity(job)
             job = pipelines.preproccessing.mbll(job)
             job = pipelines.motion_correction.TDDR(job)
             job = pipelines.preproccessing.resample(job)
             job.options['Fs'] = 4
             return job
         elif self == default_pipelines.first_level_analysis:
-            job = pipelines.preproccessing.intensity_opticaldensity()
+            job = pipelines.preproccessing.input_data()
+            job.options['InputName'] = 'amp'
+            job = pipelines.preproccessing.intensity_opticaldensity(job)
             job = pipelines.preproccessing.mbll(job)
             job = pipelines.preproccessing.resample(job)
             job.options['Fs'] = 4

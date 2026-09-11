@@ -7,6 +7,24 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, StringOption, ListOption, ObjectOption)
 
 
+class input_data(cedalion_module):
+    # Module to handle input data
+    # This is needed so you can specify the input timeseries name for the pipeline within the pipeline_manager GUI
+    
+    def __init__(self, previous_job=None):
+        self.name = "Input Data"
+        self._cite = None
+        self.options = OptionsDict({
+            'InputName': StringOption('amp', 'amp', description='Name of the input timeseries'),
+                                    })
+        self.inputName = self.options['InputName']
+        self.outputName = self.options['InputName']
+        self.description = "Handle input data for the pipeline"
+        self.previous_job = previous_job
+
+    def _runlocal(self, rec):
+        return rec
+
 class resample(cedalion_module):
     # Module to resample the input fNIRS signal to a specified sampling frequency
     def __init__(self, previous_job=None):

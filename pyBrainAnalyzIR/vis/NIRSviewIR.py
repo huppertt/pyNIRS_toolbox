@@ -67,7 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from pyBrainAnalyzIR.vis.demographics_manager import DemographicsManager, _to_display_str
-from pyBrainAnalyzIR.vis.plot_nirs_inline import linecolors, to_string
+from pyBrainAnalyzIR.vis.plot_nirs_inline import draw_probe, linecolors, to_string
 from pyBrainAnalyzIR.vis.pipeline_manager import (
     PipelineManagerDialog,
     pipeline_to_json,
@@ -266,12 +266,18 @@ def _pick_values_dialog(parent: QWidget, title: str, all_values: List[str],
 
 
 class NIRSviewIRWindow(QMainWindow):
-    def __init__(self, dataset: Any, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        dataset: Any,
+        parent: Optional[QWidget] = None,
+        plot_on_scalp: bool = True,
+    ):
         super().__init__(parent)
         self.setWindowTitle("NIRSviewIR")
         self.resize(1200, 700)
 
         self.dataset = dataset if dataset is not None else dataset_module.DataSet()
+        self.plot_on_scalp = plot_on_scalp
         self.rec = None
         self.data = None
         self.mllines = []
@@ -319,6 +325,12 @@ class NIRSviewIRWindow(QMainWindow):
         analysis_menu.addAction("Edit Pipeline").triggered.connect(self._edit_pipeline)
         analysis_menu.addAction("Save Pipeline").triggered.connect(self._save_pipeline)
         analysis_menu.addAction("Load Pipeline").triggered.connect(self._load_pipeline)
+
+        # Data Review menu
+        data_review_menu = menu_bar.addMenu("Data Review")
+        data_review_menu.addAction("Data Quality Manager").triggered.connect(
+            self._open_data_quality_manager
+        )
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")
@@ -706,6 +718,16 @@ class NIRSviewIRWindow(QMainWindow):
         buttons.accepted.connect(dlg.accept)
         layout.addWidget(buttons)
         dlg.exec()
+
+    def _open_data_quality_manager(self) -> None:
+        if not getattr(self.dataset, "dataset", []):
+            QMessageBox.information(
+                self, "Data Quality Manager", "No recordings loaded."
+            )
+            return
+        from pyBrainAnalyzIR.vis.data_quality_manager import data_quality_manager
+
+        data_quality_manager(self.dataset, block=False)
 
     def _edit_stimulus_timing(self) -> None:
         """Open the Stimulus Manager and refresh the view with its result."""
@@ -1197,26 +1219,11 @@ class NIRSviewIRWindow(QMainWindow):
         # Switch to timeseries page
         self._right_stack.setCurrentIndex(0)
 
-        geo2d = rec.geo3d if len(rec.geo2d) == 0 else rec.geo2d
-
         self.ax_probe.clear()
         self.ax_ts.clear()
-        self.mllines = []
-
-        for chan in data.channel:
-            sdstr = to_string(chan)
-            source = sdstr[: sdstr.find("D")]
-            detector = sdstr[sdstr.find("D"):]
-            srcpos = geo2d[geo2d.label == source].to_numpy()
-            detpos = geo2d[geo2d.label == detector].to_numpy()
-            ll, = self.ax_probe.plot(
-                [srcpos[0, 0], detpos[0, 0]], [srcpos[0, 1], detpos[0, 1]], "k"
-            )
-            self.ax_probe.text(srcpos[0, 0], srcpos[0, 1], source, fontsize=10,
-                               ha="center", va="center")
-            self.ax_probe.text(detpos[0, 0], detpos[0, 1], detector, fontsize=10,
-                               ha="center", va="center")
-            self.mllines.append(ll)
+        self.mllines = draw_probe(
+            rec, data, self.ax_probe, plot_on_scalp=self.plot_on_scalp
+        )
 
         if not self.mllines:
             self.canvas.draw_idle()
@@ -1226,12 +1233,6 @@ class NIRSviewIRWindow(QMainWindow):
         self._ts_lines = []
         self._stim_handles = []
         self._ts_legends = {"channels": None, "stim": None}
-
-        optodes = geo2d.to_numpy()
-        s = (optodes.max() - optodes.min()) / 10
-        self.ax_probe.set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
-        self.ax_probe.set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
-        self.ax_probe.set_axis_off()
 
         vmin = float(data.to_numpy().min())
         vmax = float(data.to_numpy().max())
@@ -1585,7 +1586,11 @@ def _active_ipython():
     return get_ipython()
 
 
-def NIRSviewIR(dataset: Any, block: Optional[bool] = None) -> "NIRSviewIRWindow":
+def NIRSviewIR(
+    dataset: Any,
+    block: Optional[bool] = None,
+    plot_on_scalp: bool = True,
+) -> "NIRSviewIRWindow":
     """Launch the NIRSviewIR browser for `dataset` (a `DataSet` instance).
 
     `block` defaults to True in plain scripts and False under IPython/Jupyter,
@@ -1602,7 +1607,7 @@ def NIRSviewIR(dataset: Any, block: Optional[bool] = None) -> "NIRSviewIRWindow"
     if block is None:
         block = shell is None
 
-    window = NIRSviewIRWindow(dataset)
+    window = NIRSviewIRWindow(dataset, plot_on_scalp=plot_on_scalp)
     # Without WA_DeleteOnClose the window (and the Qt event-loop hook installed
     # below) would outlive the notebook cell and block kernel shutdown.
     window.setAttribute(Qt.WA_DeleteOnClose, True)
