@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 SUBJECT_ID_KEY = "subjectID"
 
 NO_UNITS_LABEL = "No Units"
+NO_DESCRIPTION_LABEL = "No description available."
 
 #: Item role holding the input-order index of a row, so re-sorting the view for
 #: display never changes which recording a row is written back to.
@@ -101,33 +102,38 @@ def _split_magnitude_units(value: Any):
 
 
 class UnitsDialog(QDialog):
-    """Assign a physical unit to each column of the demographics table."""
+    """Assign physical units and descriptions to demographics columns."""
 
     def __init__(
         self,
         columns: List[str],
         current: Optional[Dict[str, Any]] = None,
+        descriptions: Optional[Dict[str, str]] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Add Units")
-        self.resize(480, 400)
+        self.setWindowTitle("Add units/descriptions")
+        self.resize(720, 400)
 
         self._columns = list(columns)
         self._groups = _load_common_units()
         current = current or {}
+        descriptions = descriptions or {}
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Select the units associated with each variable:"))
+        layout.addWidget(
+            QLabel("Select the units and enter descriptions associated with each variable:")
+        )
 
-        self.table = QTableWidget(len(self._columns), 2, self)
-        self.table.setHorizontalHeaderLabels(["Variable", "Units"])
+        self.table = QTableWidget(len(self._columns), 3, self)
+        self.table.setHorizontalHeaderLabels(["Variable", "Units", "Description"])
         self.table.verticalHeader().setVisible(False)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.horizontalHeader().setStretchLastSection(True)
 
         self._combos: Dict[str, QComboBox] = {}
+        self._description_items: Dict[str, QTableWidgetItem] = {}
         for row, name in enumerate(self._columns):
             name_item = QTableWidgetItem(name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
@@ -137,6 +143,10 @@ class UnitsDialog(QDialog):
             self._select_current(combo, current.get(name))
             self.table.setCellWidget(row, 1, combo)
             self._combos[name] = combo
+
+            description_item = QTableWidgetItem(descriptions.get(name, ""))
+            self.table.setItem(row, 2, description_item)
+            self._description_items[name] = description_item
         layout.addWidget(self.table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -181,6 +191,13 @@ class UnitsDialog(QDialog):
             if unit is not None:
                 chosen[name] = unit
         return chosen
+
+    def descriptions(self) -> Dict[str, str]:
+        """Column name -> description text, preserving blanks so users can clear text."""
+        descriptions: Dict[str, str] = {}
+        for name, item in self._description_items.items():
+            descriptions[name] = item.text().strip()
+        return descriptions
 
 
 def _to_display_str(value: Any) -> str:
@@ -309,6 +326,7 @@ class DictTableEditor(QDialog):
         self.result: List[Dict[str, Any]] = []
         # column name -> pint unit chosen through the Add Units dialog
         self.column_units: Dict[str, Any] = {}
+        self.column_descriptions: Dict[str, str] = {}
         self.show_outliers = False
         self._sort_column: Optional[int] = None
         self._sort_ascending = True
@@ -346,7 +364,7 @@ class DictTableEditor(QDialog):
         self.edit_menu.addAction("Add Additional BIDS Variables").triggered.connect(
             self.add_bids_variable
         )
-        self.edit_menu.addAction("Add Units").triggered.connect(self.add_units)
+        self.edit_menu.addAction("Add units/descriptions").triggered.connect(self.add_units)
         self.show_outliers_action = self.edit_menu.addAction("Show Outliers")
         self.show_outliers_action.setCheckable(True)
         self.show_outliers_action.toggled.connect(self._toggle_outliers)
@@ -557,6 +575,10 @@ class DictTableEditor(QDialog):
             QMessageBox.warning(self, "Rename Column", "A column with that name already exists.")
             return
         self._columns[col] = new_name
+        if old_name in self.column_units:
+            self.column_units[new_name] = self.column_units.pop(old_name)
+        if old_name in self.column_descriptions:
+            self.column_descriptions[new_name] = self.column_descriptions.pop(old_name)
         self.table.setHorizontalHeaderItem(col, QTableWidgetItem(new_name))
 
     def _remove_column(self, col: int) -> None:
@@ -569,6 +591,8 @@ class DictTableEditor(QDialog):
             return
         self.table.removeColumn(col)
         del self._columns[col]
+        self.column_units.pop(name, None)
+        self.column_descriptions.pop(name, None)
 
     def add_column(self) -> None:
         name, ok = QInputDialog.getText(self, "Add Column", "New column name:")
@@ -599,23 +623,24 @@ class DictTableEditor(QDialog):
             self._add_column_named(name.strip(), "Add Additional BIDS Variables")
 
     def add_units(self) -> None:
-        """Attach a pint unit to the values of one or more columns."""
+        """Attach pint units and descriptions to one or more columns."""
         if not self._columns:
-            QMessageBox.information(self, "Add Units", "The table has no columns.")
-            return
-
-        dialog = UnitsDialog(self._columns, self.column_units, self)
-        if not dialog._groups:
-            QMessageBox.warning(
-                self, "Add Units",
-                "The common units list is unavailable (cedalion could not be "
-                "imported), so units cannot be assigned.",
+            QMessageBox.information(
+                self, "Add units/descriptions", "The table has no columns."
             )
             return
+
+        dialog = UnitsDialog(
+            self._columns,
+            self.column_units,
+            self.column_descriptions,
+            self,
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
 
         self.column_units = dialog.selected_units()
+        self.column_descriptions = dialog.descriptions()
         self._refresh_unit_display()
 
     def _refresh_unit_display(self) -> None:
@@ -935,6 +960,7 @@ class DemographicsManager(DictTableEditor):
         super().__init__(rows, parent)
         self.setWindowTitle("Demographics Manager")
         self.column_units = self._units_from_rows(rows)
+        self.column_descriptions = self._descriptions_from_dataset(dataset)
         self._refresh_unit_display()
 
     @staticmethod
@@ -961,6 +987,21 @@ class DemographicsManager(DictTableEditor):
             rows.append({})
         return rows
 
+    @staticmethod
+    def _descriptions_from_dataset(dataset: Any) -> Dict[str, str]:
+        descriptions: Dict[str, str] = {}
+        for rec in getattr(dataset, "dataset", []):
+            meta_data = getattr(rec, "meta_data", {})
+            bids_descriptions = meta_data.get("_bids_descriptions", {})
+            for key, description in bids_descriptions.items():
+                if key == "_bids_descriptions":
+                    continue
+                description_text = _to_display_str(description).strip()
+                if not description_text or description_text == NO_DESCRIPTION_LABEL:
+                    continue
+                descriptions.setdefault(key, description_text)
+        return descriptions
+
     def _apply_to_dataset(self) -> None:
         recordings = list(getattr(self.dataset, "dataset", []))
         if len(self.result) != len(recordings):
@@ -984,6 +1025,18 @@ class DemographicsManager(DictTableEditor):
                 old.update(new)
             else:
                 rec.meta_data = new
+        self._apply_descriptions_to_dataset()
+
+    def _apply_descriptions_to_dataset(self) -> None:
+        if not hasattr(self.dataset, "add_meta_data_description"):
+            return
+        if not getattr(self.dataset, "dataset", []):
+            return
+        for key in self._columns:
+            description = self.column_descriptions.get(key, "").strip()
+            self.dataset.add_meta_data_description(
+                key, description if description else NO_DESCRIPTION_LABEL
+            )
 
     def accept(self) -> None:
         self.result = self._current_data()
@@ -1021,6 +1074,7 @@ class DemographicsManager(DictTableEditor):
         self.table.clear()
         self._populate_table(rows)
         self.column_units.update(self._units_from_rows(rows))
+        self.column_descriptions = self._descriptions_from_dataset(self.dataset)
         self._refresh_unit_display()
 
     def reject(self) -> None:

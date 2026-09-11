@@ -23,6 +23,7 @@ import sys
 import copy
 import pickle
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -74,7 +75,10 @@ from pyBrainAnalyzIR.vis.pipeline_manager import (
 )
 from pyBrainAnalyzIR.vis._about import get_about_text
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
+import pyBrainAnalyzIR.dataclasses.dataset as dataset_module
+from pyBrainAnalyzIR.io.bids import read_bids_dataset, write_bids_dataset
 from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+from cedalion.io.snirf import read_snirf
 from statsmodels.stats.multitest import multipletests
 
 #: Item role storing a leaf's index into `dataset.dataset`.
@@ -267,7 +271,7 @@ class NIRSviewIRWindow(QMainWindow):
         self.setWindowTitle("NIRSviewIR")
         self.resize(1200, 700)
 
-        self.dataset = dataset
+        self.dataset = dataset if dataset is not None else dataset_module.DataSet()
         self.rec = None
         self.data = None
         self.mllines = []
@@ -283,6 +287,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._current_stats_obj = None      # the Statistics object currently displayed
         self._stats_condition_filter: Optional[set] = None  # None = all
         self._stats_type_filter: Optional[set] = None        # None = all
+        self.data_changed = False
 
         # ---------------------------------------------------------------- menus
         # Use setNativeMenuBar(False) so the menu bar is embedded inside the
@@ -292,12 +297,11 @@ class NIRSviewIRWindow(QMainWindow):
 
         # File menu
         file_menu = menu_bar.addMenu("File")
-        sessions_menu = file_menu.addMenu("Sessions")
-        sessions_menu.addAction("New Analysis Session")
-        sessions_menu.addAction("Load Analysis Session")
-        sessions_menu.addAction("Save Analysis Session")
-        files_menu = file_menu.addMenu("Files")
-        files_menu.addAction("Load File")
+        file_menu.addAction("New Session").triggered.connect(self._new_session)
+        file_menu.addAction("Load Session").triggered.connect(self._load_session)
+        file_menu.addAction("Save Session").triggered.connect(self._save_session)
+        file_menu.addAction("Load File").triggered.connect(self._load_files)
+        file_menu.addAction("Exit").triggered.connect(self._exit_application)
 
         # Edit Data menu
         edit_data_menu = menu_bar.addMenu("Edit Data")
@@ -520,7 +524,7 @@ class NIRSviewIRWindow(QMainWindow):
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self._run_pipeline_action.triggered.connect(self._run_pipeline)
 
-        if len(dataset.dataset) > 0:
+        if len(self.dataset.dataset) > 0:
             self._select_row(0)
             self._on_file_changed(0)
         else:
@@ -534,10 +538,153 @@ class NIRSviewIRWindow(QMainWindow):
         self._status_bar.showMessage(msg)
         QApplication.processEvents()
 
+    def _ensure_dataset(self) -> None:
+        if self.dataset is None or not hasattr(self.dataset, "dataset"):
+            self.dataset = dataset_module.DataSet()
+
+    def _append_dataset(self, new_dataset: Any) -> int:
+        self._ensure_dataset()
+        added = 0
+        for rec in getattr(new_dataset, "dataset", []):
+            self.dataset.import_data(rec)
+            added += 1
+        return added
+
+    def _confirm_discard_unsaved_changes(self, title: str, action: str) -> bool:
+        if not self.data_changed:
+            return True
+        confirm = QMessageBox.question(
+            self,
+            title,
+            f"The current data session has unsaved changes. {action}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return confirm == QMessageBox.Yes
+
+    def _exit_application(self) -> None:
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        if self._confirm_discard_unsaved_changes("Exit", "Close the GUI and discard them"):
+            event.accept()
+        else:
+            event.ignore()
+
+    def _new_session(self) -> None:
+        if not self._confirm_discard_unsaved_changes(
+            "New Session",
+            "Close the current data session and clear all loaded recordings",
+        ):
+            return
+
+        self.dataset = dataset_module.DataSet()
+        self.rec = None
+        self.data = None
+        self.mllines = []
+        self.line0 = None
+        self.line1 = None
+        self.selected_channels = [0]
+        self._ts_lines = []
+        self._stim_handles = []
+        self._ts_legends = {"channels": None, "stim": None}
+        self._pipeline_modules = []
+        self._pipeline_dirty = True
+        self._current_stats_df = None
+        self._current_stats_obj = None
+        self._stats_condition_filter = None
+        self._stats_type_filter = None
+        self._mark_data_saved()
+        self._update_run_pipeline_enabled()
+        self._right_stack.setCurrentIndex(0)
+        self._refresh_labels()
+        self._set_status("New session ready.")
+
+    def _load_session(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Load BIDS Session", "", QFileDialog.ShowDirsOnly
+        )
+        if not folder:
+            return
+
+        include_derivatives = True
+        if (Path(folder) / "bids_derivatives").exists():
+            include_derivatives = QMessageBox.question(
+                self,
+                "Load BIDS Session",
+                "This BIDS folder contains bids_derivatives. Load both raw data "
+                "and derivatives?\n\nChoose No to load only raw data.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            ) == QMessageBox.Yes
+
+        self._set_status(f"Loading BIDS session from {folder}...")
+        try:
+            loaded_dataset = read_bids_dataset(
+                folder, include_derivatives=include_derivatives
+            )
+            added = self._append_dataset(loaded_dataset)
+            self._refresh_labels(preferred_row=max(len(self.dataset.dataset) - added, 0))
+            if added:
+                self._mark_dataset_changed()
+            self._set_status(f"Loaded {added} recording(s) from BIDS session.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Load Session", f"Failed to load BIDS session:\n{exc}")
+            self._set_status("BIDS session load failed.")
+
+    def _save_session(self) -> None:
+        self._ensure_dataset()
+        if not getattr(self.dataset, "dataset", []):
+            QMessageBox.information(self, "Save Session", "No recordings loaded in dataset.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self, "Save BIDS Session", "", QFileDialog.ShowDirsOnly
+        )
+        if not folder:
+            return
+
+        self._set_status(f"Saving BIDS session to {folder}...")
+        try:
+            write_bids_dataset(self.dataset, folder)
+            self._mark_data_saved()
+            self._set_status(f"BIDS session saved to {folder}.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Session", f"Failed to save BIDS session:\n{exc}")
+            self._set_status("BIDS session save failed.")
+
+    def _load_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Load SNIRF File(s)", "", "SNIRF Files (*.snirf);;All Files (*)"
+        )
+        if not paths:
+            return
+
+        self._ensure_dataset()
+        start_row = len(self.dataset.dataset)
+        loaded_count = 0
+        self._set_status(f"Loading {len(paths)} SNIRF file(s)...")
+        try:
+            for path in paths:
+                for rec in read_snirf(path):
+                    self.dataset.import_data(rec)
+                    loaded_count += 1
+            self._refresh_labels(preferred_row=start_row)
+            if loaded_count:
+                self._mark_dataset_changed()
+            self._set_status(f"Loaded {loaded_count} recording(s) from SNIRF file(s).")
+        except Exception as exc:
+            QMessageBox.critical(self, "Load File", f"Failed to load SNIRF file(s):\n{exc}")
+            self._set_status("SNIRF file load failed.")
+
     def _mark_dataset_changed(self) -> None:
-        """Re-enable Run Pipeline after the data or the pipeline changed."""
+        """Track unsaved data changes and re-enable pipeline runs."""
+        self.data_changed = True
         self._pipeline_dirty = True
         self._update_run_pipeline_enabled()
+
+    def _mark_data_saved(self) -> None:
+        self.data_changed = False
 
     def _update_run_pipeline_enabled(self) -> None:
         self._run_pipeline_action.setEnabled(
@@ -656,6 +803,7 @@ class NIRSviewIRWindow(QMainWindow):
             self._set_status("Pipeline complete. Refreshing display…")
             self._refresh_labels(preferred_row=self._current_row())
             self._pipeline_dirty = False
+            self.data_changed = True
             self._update_run_pipeline_enabled()
             self._set_status("Pipeline complete.")
         except Exception as exc:
@@ -739,6 +887,7 @@ class NIRSviewIRWindow(QMainWindow):
                 rec.meta_data = new
 
         self._refresh_labels(preferred_row=self._current_row())
+        self._mark_dataset_changed()
 
     def _populate_file_tree(self) -> None:
         """Rebuild the recordings tree grouped by group / subject / session.
@@ -854,8 +1003,14 @@ class NIRSviewIRWindow(QMainWindow):
 
         rec = recordings[row]
         meta = getattr(rec, "meta_data", None) or {}
-        if meta:
-            demographic_lines = [f"  - {k}: {_to_display_str(v)}" for k, v in meta.items()]
+        visible_meta = {
+            k: v for k, v in meta.items()
+            if str(k).strip().lower() != "_bids_descriptions"
+        }
+        if visible_meta:
+            demographic_lines = [
+                f"  - {k}: {_to_display_str(v)}" for k, v in visible_meta.items()
+            ]
         else:
             demographic_lines = ["  - <none>"]
 

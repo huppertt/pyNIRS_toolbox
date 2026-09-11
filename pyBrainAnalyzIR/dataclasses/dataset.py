@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 import pyBrainAnalyzIR
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -144,6 +145,45 @@ class DataSet:
         self._sync_bids_descriptions()
         self.dataset[0].meta_data['_bids_descriptions'][key] = description
         self._sync_bids_descriptions()
+
+    @staticmethod
+    def _is_demographics_unit_value(value: Any) -> bool:
+        return isinstance(value, (int, float, np.number)) and not isinstance(value, bool)
+
+    @staticmethod
+    def _normalize_demographics_unit_value(value: Any) -> Any:
+        if isinstance(value, np.ndarray) and value.shape == ():
+            return value.item()
+        return value
+
+    @staticmethod
+    def _split_demographics_units(value: Any):
+        if hasattr(value, "magnitude") and hasattr(value, "units"):
+            return DataSet._normalize_demographics_unit_value(value.magnitude), value.units
+        return DataSet._normalize_demographics_unit_value(value), None
+
+    def add_demographics_units(self, key: str, unit: Any):
+        """Add or update units for a metadata key across all recordings.
+
+        Args:
+            key (str): The metadata key whose numeric values should receive units.
+            unit: A cedalion/pint unit, such as ``cedalion.units.years``. Passing
+                ``None`` removes an existing unit while keeping the magnitude.
+        """
+        if not any(key in rec.meta_data for rec in self.dataset):
+            warnings.warn(f"Metadata key '{key}' is not present in the dataset.")
+            return
+
+        for rec in self.dataset:
+            if key not in rec.meta_data:
+                continue
+            magnitude, existing = self._split_demographics_units(rec.meta_data[key])
+            if unit is None:
+                if existing is not None:
+                    rec.meta_data[key] = magnitude
+                continue
+            if self._is_demographics_unit_value(magnitude):
+                rec.meta_data[key] = magnitude * unit
 
     def get_demographics(self):
         demographics = []
