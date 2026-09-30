@@ -57,11 +57,17 @@ def test_draw_probe_legacy_mode_uses_recording_probe_geometry():
 
 
 def test_draw_probe_falls_back_when_scalp_landmarks_are_missing():
+    import warnings
+
     rec, _ = simData.Data(snr=10)
     fig, ax = plt.subplots()
 
-    with pytest.warns(UserWarning, match="Scalp projection unavailable"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
         lines = draw_probe(rec, rec["amp"], ax, plot_on_scalp=True)
 
     assert len(lines) == len(rec["amp"].channel)
+    # Without landmarks the probe is drawn in its own geometry, not on the unit scalp.
+    assert not any(isinstance(patch, Circle) for patch in ax.patches)
+    assert ax.get_xlim()[1] > 1.15
     plt.close(fig)

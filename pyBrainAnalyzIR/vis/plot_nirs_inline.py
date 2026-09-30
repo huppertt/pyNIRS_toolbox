@@ -72,16 +72,27 @@ def _legacy_probe_geometry(rec):
     return rec.geo3d if len(rec.geo2d) == 0 else rec.geo2d
 
 
+_SCALP_LANDMARKS = ("Nz", "LPA", "RPA")
+
+
 def _scalp_probe_geometry(rec):
+    """Return the scalp-projected probe, or None if it cannot be computed."""
+    geo3d = getattr(rec, "geo3d", None)
+    if geo3d is None or "label" not in geo3d.coords:
+        return None
+    labels = {str(label) for label in geo3d.label.values}
+    if not all(landmark in labels for landmark in _SCALP_LANDMARKS):
+        # Probes without head landmarks (e.g. simulated 2D probes) are drawn as-is.
+        return None
     try:
-        return simple_scalp_projection(rec.geo3d)
+        return simple_scalp_projection(geo3d)
     except ValueError as exc:
         warnings.warn(
             f"Scalp projection unavailable ({exc}); using probe geometry.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
-        return _legacy_probe_geometry(rec)
+        return None
 
 
 def _draw_scalp_outline(ax) -> None:
@@ -107,7 +118,10 @@ def _draw_optode_labels(ax, geo2d, sources: set[str], detectors: set[str]) -> No
 
 def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
     """Draw the probe and return channel line handles in data.channel order."""
-    geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else _legacy_probe_geometry(rec)
+    geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else None
+    if geo2d is None:
+        plot_on_scalp = False
+        geo2d = _legacy_probe_geometry(rec)
     mllines = []
     used_sources: set[str] = set()
     used_detectors: set[str] = set()

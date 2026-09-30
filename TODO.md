@@ -1,22 +1,22 @@
 # Project TODO list
 
-- [ ] Add support for geo3D drawing in all the code
+- [X] Add support for geo3D drawing in all the code
 - [ ] Add code for dividing events for the connectivity and hyperscanning modules
 - [ ] Add Mixed Effects modules for connectvitiy and hyperscanning
 - [ ] Add pipeline modules to remove within type and subject connectivity from the hyperscanning (currently can do from command like with Connectivity methods)
-- [ ] Add visualization of conenctivity in the NIRSviewIR GUI
+- [X] Add visualization of conenctivity in the NIRSviewIR GUI
 - [ ] Fix the T-test for stats in the NIRSviewIR GUI (shows the opposite of requested)
 - [ ] Fix the pipeline options to allow items like the GLM basis set to be defined as enum choices in the pipeline.  This allows the pipeline manager to edit these from a select number of predefined options, but can still be fully edited from command line
 - [ ] Fix the titles and colorbars on the connectivity drawing code
 - [ ] Add ROI averaging methods for time-series and stats
 - [ ] Group-level results stored in the dataset class
 - [ ] Save/load for stats, connectivity, and datasets
-- [ ] Add BIDS loading and updating from the NIRSviewIR GUI
+- [X] Add BIDS loading and updating from the NIRSviewIR GUI
 - [ ] Add read/write demographics from Excel 
 - [ ] Add ability to mask time 
 - [ ] Add ability to mask channels
-- [ ] Add info about data quality in NIRSviewIR
-- [ ] Add function to add data QC to metadata 
+- [X] Add info about data quality in NIRSviewIR
+- [X] Add function to add data QC to metadata 
 - [ ] Add data removal tools based on data QC
 - [ ] Add outlier detector code for group analysis
 - [ ] Add code to draw HRF from Stats models
@@ -34,10 +34,11 @@
 - [ ] Parametric linear modeling for GLM
 - [ ] Scatter plots for mixed effects models/results
 - [ ] When renaming in demographics_manager, make sure the description follows
-- [ ] Add window to add descriptions in demographics manager
+- [X] Add window to add descriptions in demographics manager
 - [ ] Add tooltips about demographics in demographics manager and NIRSviewIR
 - [ ] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset
 - [ ] Trim baseline times in stimulus GUI
 - [ ] Add find/replace for demographics edits
 - [ ] Add analysis pipeline and log (add to BIDS derivatives outputs)
-- [ ] Data Quality GUI with export for PDF and HTML (including code to do so directly from a BIDS folder)
+- [X] Data Quality GUI with export for PDF and HTML (including code to do so directly from a BIDS folder)
+- [ ] Fix the PCA motion correction module
