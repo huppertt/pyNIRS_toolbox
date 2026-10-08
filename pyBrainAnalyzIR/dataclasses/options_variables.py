@@ -41,6 +41,7 @@ __all__ = [
     "ListOption",
     "QuantityOption",
     "ObjectOption",
+    "PresetOption",
     "DictOption",
     "OptionsDict",
     "option_value",
@@ -505,6 +506,141 @@ class ObjectOption(OptionVariable):
         if type(self._value).__repr__ is object.__repr__:
             return f"<{type(self._value).__name__}>"
         return repr(self._value)
+
+
+def _preset_key(name: str) -> str:
+    """Normalized form of a preset name used for lookups."""
+    return "".join(ch for ch in str(name).lower() if ch not in " _-")
+
+
+class PresetOption(ObjectOption):
+    """Option whose value is either a named preset or a custom python object.
+
+    ``presets`` maps a name to a ready-made object (e.g. a GLM basis function).
+    The option may be set to:
+
+    * a preset name (string, matched case-insensitively and ignoring spaces,
+      underscores and hyphens) -- this is what the pipeline manager GUI offers
+      in its drop-down list and what is stored when a pipeline is saved;
+    * any object passing the ``types`` check (when ``allow_custom`` is True),
+      for full flexibility when a pipeline is built from code.
+
+    Reading the option (``opt.value`` or ``module.options[key]``) always returns
+    the *resolved object*: a fresh copy of the preset, or the custom object.
+    Use :attr:`selection` for the stored name/object and :attr:`preset_name` for
+    the preset name (``None`` for custom objects).
+    """
+
+    def __init__(
+        self,
+        presets: dict,
+        value: Any = None,
+        default: Any = None,
+        types: Optional[Any] = None,
+        allow_custom: bool = True,
+        **kwargs,
+    ):
+        if not presets:
+            raise ValueError("PresetOption requires at least one preset")
+        self.presets = dict(presets)
+        self.allow_custom = allow_custom
+        if value is None:
+            value = next(iter(self.presets))
+        kwargs.setdefault("allow_none", False)
+        super().__init__(value, default, types=types, **kwargs)
+
+    # ------------------------------------------------------------------
+    @property
+    def choices(self) -> list:
+        """Names of the available presets."""
+        return list(self.presets)
+
+    def match_preset(self, name: str) -> Optional[str]:
+        """Return the canonical preset name matching *name*, or ``None``."""
+        wanted = _preset_key(name)
+        for key in self.presets:
+            if _preset_key(key) == wanted:
+                return key
+        return None
+
+    def validate(self, value: Any) -> Any:
+        if isinstance(value, str):
+            key = self.match_preset(value)
+            if key is None:
+                raise self._error(
+                    f"unknown preset {value!r}; choose one of {', '.join(self.presets)}"
+                )
+            return key
+        if value is None:
+            return super().validate(value)
+        if not self.allow_custom:
+            raise self._error(
+                f"value must be one of the presets {', '.join(self.presets)}"
+            )
+        return super().validate(value)
+
+    def resolve(self, value: Any = None) -> Any:
+        """Return the object for *value* (default: the current selection)."""
+        value = self._value if value is None else self.validate(value)
+        if isinstance(value, str):
+            return copy.deepcopy(self.presets[value])
+        return value
+
+    @property
+    def value(self) -> Any:
+        return self.resolve()
+
+    @value.setter
+    def value(self, new_value: Any) -> None:
+        if isinstance(new_value, PresetOption):
+            new_value = new_value.selection
+        self._value = self._check(new_value)
+
+    @property
+    def selection(self) -> Any:
+        """The stored selection: a preset name or a custom object."""
+        return self._value
+
+    @property
+    def preset_name(self) -> Optional[str]:
+        """Name of the selected preset, or ``None`` for a custom object."""
+        return self._value if isinstance(self._value, str) else None
+
+    # ------------------------------------------------------------------
+    def format_value(self) -> str:
+        if self._formatter is not None:
+            return self._formatter(self)
+        if isinstance(self._value, str):
+            return self._value
+        return "custom: " + self._describe(self._value)
+
+    def format_help(self) -> str:
+        text = super().format_help()
+        presets = "\n".join(
+            f"    {name}: {self._describe(obj)}" for name, obj in self.presets.items()
+        )
+        return f"{text}\n  presets:\n{presets}"
+
+    @staticmethod
+    def _describe(obj: Any) -> str:
+        if type(obj).__repr__ is object.__repr__:
+            params = ", ".join(f"{k}={v}" for k, v in vars(obj).items()
+                               if not k.startswith("_"))
+            return f"{type(obj).__name__}({params})"
+        return repr(obj)
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, PresetOption):
+            other = other.selection
+        if isinstance(other, str) and isinstance(self._value, str):
+            return self.match_preset(other) == self._value
+        return self._value is other or self._value == other
+
+    def __hash__(self) -> int:
+        return OptionVariable.__hash__(self)
+
+    def __bool__(self) -> bool:
+        return self._value is not None
 
 
 class DictOption(OptionVariable):

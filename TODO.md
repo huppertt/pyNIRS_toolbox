@@ -1,12 +1,12 @@
 # Project TODO list
 
 - [X] Add support for geo3D drawing in all the code
-- [ ] Add code for dividing events for the connectivity and hyperscanning modules
+- [X] Add code for dividing events for the connectivity and hyperscanning modules
 - [ ] Add Mixed Effects modules for connectvitiy and hyperscanning
 - [ ] Add pipeline modules to remove within type and subject connectivity from the hyperscanning (currently can do from command like with Connectivity methods)
 - [X] Add visualization of conenctivity in the NIRSviewIR GUI
 - [ ] Fix the T-test for stats in the NIRSviewIR GUI (shows the opposite of requested)
-- [ ] Fix the pipeline options to allow items like the GLM basis set to be defined as enum choices in the pipeline.  This allows the pipeline manager to edit these from a select number of predefined options, but can still be fully edited from command line
+- [X] Fix the pipeline options to allow items like the GLM basis set to be defined as enum choices in the pipeline.  This allows the pipeline manager to edit these from a select number of predefined options, but can still be fully edited from command line
 - [ ] Fix the titles and colorbars on the connectivity drawing code
 - [ ] Add ROI averaging methods for time-series and stats
 - [ ] Group-level results stored in the dataset class
@@ -23,7 +23,7 @@
 - [ ] Fix all modules to work for ROI time-series
 - [ ] Stimulus manager features
 - [ ] Age-based DPF in MBLL
-- [ ] Visualization in 10-20 space
+- [X] Visualization in 10-20 space
 - [ ] Add ROC analysis templates for ROI and connectivity modules
 - [ ] Add non-parametric stats for connectivity and hyperscanning
 - [ ] Add data summary report generator to export PDF and HTML code
@@ -42,3 +42,4 @@
 - [ ] Add analysis pipeline and log (add to BIDS derivatives outputs)
 - [X] Data Quality GUI with export for PDF and HTML (including code to do so directly from a BIDS folder)
 - [ ] Fix the PCA motion correction module
+- [X] Error in BIDS reading back demographics information

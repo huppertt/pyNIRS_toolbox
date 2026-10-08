@@ -17,6 +17,7 @@ from pyBrainAnalyzIR.io.bids import (  # noqa: E402
     _get_participant_id,
     _get_session_name,
     _get_task_name,
+    _apply_bids_stim_metadata,
     add_missing_bids_to_metadata,
     read_bids_data,
     read_bids_dataset,
@@ -127,11 +128,14 @@ def test_read_bids_dataset_applies_sidecar_overrides(tmp_path):
     rec.meta_data["subject"] = "subj_1"
     rec.meta_data["task"] = "finger"
     rec.meta_data["age"] = 21 * cedalion.units.years
+    rec.meta_data["gender"] = "M"
     dset = DataSet([rec])
     write_bids_dataset(dset, tmp_path)
 
     participants = pd.read_csv(tmp_path / "participants.tsv", sep="\t", keep_default_na=False)
     participants.loc[0, "age"] = 99
+    participants.loc[0, "gender"] = "X"
+    participants["study_site"] = "north"
     participants.to_csv(tmp_path / "participants.tsv", sep="\t", index=False)
 
     with open(tmp_path / "participants.json") as f:
@@ -151,22 +155,22 @@ def test_read_bids_dataset_applies_sidecar_overrides(tmp_path):
     with open(local_fnirs_json, "w") as f:
         json.dump(local_metadata, f)
 
-    root_stim = pd.DataFrame({
-        "name": ["root_event"],
+    root_events = pd.DataFrame({
+        "trial_type": ["root_event"],
         "onset": [0.0],
         "duration": [1.0],
-        "amplitude": [1.0],
+        "value": [1.0],
     })
-    root_stim.to_csv(tmp_path / "task-finger_stim.tsv", sep="\t", index=False)
+    root_events.to_csv(tmp_path / "task-finger_events.tsv", sep="\t", index=False)
 
-    local_stim = pd.DataFrame({
-        "name": ["local_event"],
+    local_events = pd.DataFrame({
+        "trial_type": ["local_event"],
         "onset": [2.0],
         "duration": [3.0],
-        "amplitude": [4.0],
+        "value": [4.0],
     })
-    local_stim.to_csv(
-        next(path for path in tmp_path.rglob("*_stim.tsv") if path.parent != tmp_path),
+    local_events.to_csv(
+        next(path for path in tmp_path.rglob("*_events.tsv") if path.parent != tmp_path),
         sep="\t",
         index=False,
     )
@@ -176,11 +180,43 @@ def test_read_bids_dataset_applies_sidecar_overrides(tmp_path):
 
     assert loaded_rec.meta_data["age"].magnitude == 99
     assert loaded_rec.meta_data["age"].units == cedalion.units.years
+    assert loaded_rec.meta_data["gender"] == "X"
+    assert loaded_rec.meta_data["study_site"] == "north"
     assert loaded_rec.meta_data["_bids_descriptions"]["age"] == "Age from participants sidecar."
     assert loaded_rec.meta_data["HierarchyField"] == "root"
     assert loaded_rec.meta_data["filedescription"] == "local"
     assert loaded_rec.stim["trial_type"].tolist() == ["local_event"]
     assert loaded_rec.stim["value"].tolist() == [4.0]
+    loaded_demographics = loaded.get_demographics()
+    assert loaded_demographics.loc[0, "age"].magnitude == 99
+    assert loaded_demographics.loc[0, "gender"] == "X"
+    assert loaded_demographics.loc[0, "study_site"] == "north"
+
+
+def test_read_legacy_bids_stim_tsv(tmp_path):
+    rec = Recording({})
+    snirf_file = tmp_path / "sub-A" / "sub-A_task-finger_run-1_fnirs.snirf"
+    snirf_file.parent.mkdir(parents=True)
+    pd.DataFrame({
+        "name": ["legacy_event"],
+        "onset": [2.0],
+        "duration": [3.0],
+        "amplitude": [4.0],
+    }).to_csv(
+        snirf_file.with_name("sub-A_task-finger_run-1_stim.tsv"),
+        sep="\t",
+        index=False,
+    )
+
+    _apply_bids_stim_metadata(
+        rec,
+        snirf_file,
+        tmp_path,
+        {"sub": "A", "task": "finger", "run": "1"},
+    )
+
+    assert rec.stim["trial_type"].tolist() == ["legacy_event"]
+    assert rec.stim["value"].tolist() == [4.0]
 
 
 def test_write_bids_dataset_preserves_existing_snirf_by_default(tmp_path, monkeypatch):
@@ -213,7 +249,7 @@ def test_write_bids_dataset_preserves_existing_snirf_by_default(tmp_path, monkey
     write_bids_dataset(dset, tmp_path)
     snirf_file = next(tmp_path.rglob("*_fnirs.snirf"))
     fnirs_json = next(tmp_path.rglob("*_fnirs.json"))
-    stim_tsv = next(tmp_path.rglob("*_stim.tsv"))
+    events_tsv = next(tmp_path.rglob("*_events.tsv"))
     assert snirf_file.read_text() == "original"
 
     rec.meta_data["filedescription"] = "updated"
@@ -229,8 +265,8 @@ def test_write_bids_dataset_preserves_existing_snirf_by_default(tmp_path, monkey
     assert snirf_file.read_text() == "original"
     with open(fnirs_json) as f:
         assert json.load(f)["filedescription"] == "updated"
-    saved_stim = pd.read_csv(stim_tsv, sep="\t")
-    assert saved_stim["name"].tolist() == ["updated_event"]
+    saved_events = pd.read_csv(events_tsv, sep="\t")
+    assert saved_events["trial_type"].tolist() == ["updated_event"]
 
     write_bids_dataset(dset, tmp_path, overwrite_snirf=True)
 

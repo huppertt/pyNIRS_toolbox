@@ -20,8 +20,13 @@ ITALICSEND = '\x1B[0m'
 
 
 class cedalion_module:
+    # Advanced modules are hidden in the pipeline manager GUI unless
+    # "Show Advanced Modules" is checked. Subclasses override this in __init__.
+    advanced_module = True
+
     def __init__(self, previous_job=None):
         self.name = "default pipeline"
+        self.advanced_module = True
         self._cite = None  # Citation String for the module, if applicable
         self.options = OptionsDict({
             'some_option': BooleanOption(True,

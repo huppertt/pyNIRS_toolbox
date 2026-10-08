@@ -117,6 +117,7 @@ def make_editor(dialog, option):
     (NumericOption(3, integer_only=True), QSpinBox),
     (NumericOption(0.5, minimum=0.0, maximum=1.0), QDoubleSpinBox),
     (StringOption("free text"), QLineEdit),
+    (glm.BasisFunctionOption("AFNIGamma"), QComboBox),
 ])
 def test_editor_type_matches_option_type(dialog, option, expected):
     editor = make_editor(dialog, option)
@@ -144,6 +145,17 @@ def test_combo_lists_all_choices(dialog):
     labels = [editor.itemText(i) for i in range(editor.count())]
     for choice in ("ols", "ar_irls", "wls"):
         assert choice in labels
+
+
+def test_basis_combo_selects_the_current_preset(dialog):
+    editor = make_editor(dialog, glm.BasisFunctionOption("AFNIGamma"))
+    delegate = pm.OptionEditorDelegate(dialog)
+    index = dialog.options_table.model().index(0, 1)
+    delegate.setEditorData(editor, index)
+    assert editor.currentText() == "AFNIGamma"
+    editor.setCurrentIndex(editor.findText("boxcar"))
+    delegate.setModelData(editor, dialog.options_table.model(), index)
+    assert dialog.pipeline_modules[0].options.option("probe").preset_name == "boxcar"
 
 
 def test_boolean_option_uses_a_check_box(dialog):
@@ -269,3 +281,37 @@ def test_dialog_lists_available_modules(dialog):
     names = [spec.cls.__name__ for spec in dialog.available_specs]
     assert "GLM" in names
     assert "resample" in names
+
+
+BASIC_MODULES = {
+    "hyperscanning", "resting_state_connectivity", "bandpass_filter", "pca_filter", "GLM",
+    "MixedEffects", "TDDR", "resample", "TrimBaseline", "mbll", "intensity_opticaldensity",
+}
+
+
+def _listed_classes(dialog):
+    return {spec.cls.__name__ for spec in dialog.available_row_specs if spec is not None}
+
+
+def test_advanced_modules_hidden_by_default(dialog):
+    assert not dialog.show_advanced_checkbox.isChecked()
+    assert _listed_classes(dialog) == BASIC_MODULES
+    assert {spec.cls.__name__ for spec in dialog.available_specs if not spec.advanced} \
+        == BASIC_MODULES
+
+
+def test_show_advanced_modules_lists_everything(dialog):
+    dialog.show_advanced_checkbox.setChecked(True)
+    assert _listed_classes(dialog) == {spec.cls.__name__ for spec in dialog.available_specs}
+    assert "ShortSeparationFilter" in _listed_classes(dialog)
+    dialog.show_advanced_checkbox.setChecked(False)
+    assert _listed_classes(dialog) == BASIC_MODULES
+
+
+def test_toggling_advanced_keeps_the_current_selection(dialog):
+    row = next(i for i, s in enumerate(dialog.available_row_specs)
+               if s is not None and s.cls.__name__ == "GLM")
+    dialog.available_list.setCurrentRow(row)
+    dialog.show_advanced_checkbox.setChecked(True)
+    selected = dialog.available_row_specs[dialog.available_list.currentRow()]
+    assert selected.cls.__name__ == "GLM"

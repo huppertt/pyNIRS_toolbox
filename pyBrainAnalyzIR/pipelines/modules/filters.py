@@ -4,6 +4,8 @@ import pyBrainAnalyzIR.pipelines
 
 import cedalion.sigproc.frequency as freq
 import pyBrainAnalyzIR.sigproc.pca_filter
+from pyBrainAnalyzIR.sigproc.short_separation import (
+    DEFAULT_THRESHOLD, short_separation_filter, remove_short_channels_recording)
 
 import pyBrainAnalyzIR.pipelines.pipeline
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
@@ -17,7 +19,8 @@ units = cedalion.units
 class bandpass_filter(cedalion_module):
     # Module to apply a band-pass filter to the input signal
     def __init__(self, previous_job=None):
-        self.name = "Band-pass filter"
+        self.name = "Band-Pass Filter"
+        self.advanced_module = False
         self._cite = None
         self.options = OptionsDict({
             'fmax': QuantityOption(1 * units.Hz, units=units.Hz, minimum=0,
@@ -58,7 +61,8 @@ class bandpass_filter(cedalion_module):
 class pca_filter(cedalion_module):
     # Module to apply a PCA filter to the input signal
     def __init__(self, previous_job=None):
-        self.name = "PCA filter"
+        self.name = "PCA Filter"
+        self.advanced_module = False
         self._cite = None
         self.options = OptionsDict({
             'ncomp': NumericOption(.8, minimum=0,
@@ -98,3 +102,54 @@ class pca_filter(cedalion_module):
                                                                             split_types=self.options['split_types'])
 
             return rec
+
+
+class ShortSeparationFilter(cedalion_module):
+    # Module to regress the closest short-separation channel out of each channel
+    def __init__(self, previous_job=None):
+        self.name = "Short Separation Filter"
+        self.advanced_module = True
+        self._cite = None
+        self.options = OptionsDict({
+            'remove_short_channels': BooleanOption(True,
+                                                   description='Remove short-separation channels',
+                                                   help='If True, the short-separation channels (which are flat '
+                                                        'after the filter) are removed from all time series and '
+                                                        'their optodes from the probe geometry.'),
+            'distance_threshold': QuantityOption(DEFAULT_THRESHOLD, units=units.mm, minimum=0,
+                                                 description='Short-separation distance threshold',
+                                                 help='Channels with a source-detector distance below this '
+                                                      'value are treated as short-separation channels.'),
+        })
+        self.inputName = 'last'
+        self.outputName = 'last'
+        self.description = ("Regress the closest short-separation channel out of each channel "
+                            "(separately for each wavelength / chromophore)")
+        self.previous_job = previous_job
+
+    def _runlocal(self, rec):
+        if (rec.__class__ == pyBrainAnalyzIR.dataclasses.dataset.DataSet):
+            for r in rec.dataset:
+                self._runlocal(r)
+            return rec
+        else:
+            if (self.inputName == 'last'):
+                inputName = list(rec.timeseries.keys())[-1]
+            else:
+                inputName = self.inputName
+
+            if (self.outputName == 'last'):
+                outputName = inputName
+            else:
+                outputName = self.outputName
+
+            rec[outputName] = short_separation_filter(rec[inputName], rec.geo3d,
+                                                      self.options['distance_threshold'])
+            if self.options['remove_short_channels']:
+                remove_short_channels_recording(rec, self.options['distance_threshold'])
+
+            return rec
+
+
+# Alias matching the spelling used in the original request
+ShortSeperationFilter = ShortSeparationFilter

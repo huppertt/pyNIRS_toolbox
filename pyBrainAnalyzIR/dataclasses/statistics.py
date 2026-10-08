@@ -144,9 +144,10 @@ class Statistics:
                 covB += ss[i, j].cov_params()
                 stderr[i, j, :] = ss[i, j].bse
 
-        channelsFull = np.matlib.repmat(np.matlib.repmat(channels, len(conds), 1).T.flatten(), len(types), 1).flatten()
-        condsFull = np.matlib.repmat(np.matlib.repmat(conds, len(channels), 1).flatten(), len(types), 1).flatten()
-        typesFull = np.matlib.repmat(types, len(channels) * len(conds), 1).T.flatten()
+        # labels must follow the (channel, type, condition) order of beta.flatten()
+        channelsFull = np.repeat(np.asarray(channels, dtype=object), num_types * num_conds)
+        typesFull = np.tile(np.repeat(np.asarray(types, dtype=object), num_conds), num_channels)
+        condsFull = np.tile(np.asarray(conds, dtype=object), num_channels * num_types)
 
         beta = beta.flatten()
         stderr = stderr.flatten()

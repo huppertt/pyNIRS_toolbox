@@ -21,6 +21,7 @@ import pyBrainAnalyzIR.pipelines.modules.glm as glm              # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.mixedeffects as mixed   # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.motion_correction as mc  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
+import pyBrainAnalyzIR.pipelines.modules.utilities as util      # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 
@@ -30,11 +31,15 @@ ALL_MODULES = [
     events.rename_stims,
     events.remove_stims,
     events.keep_stims,
+    events.RemoveStimGaps,
+    events.RemoveShortStims,
+    events.DiscardStims,
+    events.KeepStims,
     filters.bandpass_filter,
     filters.pca_filter,
     glm.GLM,
     mixed.MixedEffects,
-    mc.motion_splineSG,
+    mc.splineSG,
     mc.TDDR,
     mc.Wavelet,
     prep.resample,
@@ -42,6 +47,13 @@ ALL_MODULES = [
     prep.opticaldensity_intensity,
     prep.conc2od,
     prep.mbll,
+    prep.TrimBaseline,
+    filters.ShortSeparationFilter,
+    util.DiscardData,
+    util.RemoveShortSeparationChannels,
+    util.DiscardTypes,
+    util.KeepTypes,
+    util.RemoveTooLongDistance,
 ]
 
 MODULE_IDS = [cls.__name__ for cls in ALL_MODULES]
@@ -55,6 +67,13 @@ MODULE_IDS = [cls.__name__ for cls in ALL_MODULES]
 def test_module_constructs_and_has_a_name(cls):
     job = cls()
     assert isinstance(job.name, str) and job.name
+
+
+@pytest.mark.parametrize("cls", ALL_MODULES, ids=MODULE_IDS)
+def test_module_declares_advanced_flag(cls):
+    job = cls()
+    assert "advanced_module" in vars(job)
+    assert isinstance(job.advanced_module, bool)
 
 
 @pytest.mark.parametrize("cls", ALL_MODULES, ids=MODULE_IDS)
@@ -144,7 +163,7 @@ def test_resample_rate_must_be_positive():
 
 def test_splinesg_p_is_bounded():
     """``p`` is a smoothing fraction and must stay within [0, 1]."""
-    job = mc.motion_splineSG()
+    job = mc.splineSG()
     assert "p" in job.options
     job.options["p"] = 0.5
     with pytest.raises(ValueError):
@@ -191,7 +210,7 @@ def test_pipeline_chains_previous_jobs():
     job = build_pipeline()
     assert job.name == "GLM Model"
     assert job.previous_job is not None
-    assert job.previous_job.name == "resample"
+    assert job.previous_job.name == "Resample"
 
 
 def test_get_option_searches_the_whole_pipeline():
@@ -257,4 +276,4 @@ def test_pipeline_show_prints_each_step(capsys):
     job.show()
     out = capsys.readouterr().out
     assert "GLM Model" in out
-    assert "resample" in out
+    assert "Resample" in out

@@ -10,10 +10,25 @@ import pyBrainAnalyzIR
 import pyBrainAnalyzIR.dataclasses.dataset
 import statsmodels.formula.api as smf
 import pyBrainAnalyzIR.math.mixed_effects
+from pyBrainAnalyzIR.utils.data_selection import condition_stim_name
 from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, BooleanOption, StringOption)
 
 units = cedalion.units
+
+
+def _without_nuisance(stats):
+    """Copy of first-level *stats* keeping only the stimulus (``'HRF ...'``)
+    conditions; drift and other nuisance regressors are dropped. Unchanged if
+    no condition is a stimulus regressor."""
+    conds = [str(c) for c in stats.list_conditions()]
+    nuisance = [c for c in conds if condition_stim_name(c) is None]
+    if not nuisance or len(nuisance) == len(conds):
+        return stats
+    stats = stats.copy(deep=True)
+    for cond in nuisance:
+        stats.remove_condition(cond)
+    return stats
 
 
 def is_numeric(x):
@@ -27,6 +42,7 @@ class MixedEffects(cedalion_module):
     # Module to fit a Mixed Effects Model for Group Level analysis to fNIRS data
     def __init__(self, previous_job=None):
         self.name = "Mixed Effects Model"
+        self.advanced_module = False
         self.options = OptionsDict({
             'FE_formula': StringOption('Beta ~ 0 + Condition',
                                        description='Fixed-effects formula',
@@ -54,6 +70,15 @@ class MixedEffects(cedalion_module):
                                       help='If True, each subject is weighted by the inverse '
                                            'of their first-level covariance, so noisier '
                                            'subjects contribute less to the group estimate.'),
+            'include_nuisance': BooleanOption(False,
+                                              description='Keep nuisance regressors',
+                                              help='If False (default), only the stimulus '
+                                                   "conditions ('HRF ...') of the first-level "
+                                                   'models enter the group model; drift and other '
+                                                   'nuisance regressors are dropped, as in the '
+                                                   'MATLAB nirs-toolbox. Their large, arbitrary '
+                                                   'variance otherwise dominates the pooled '
+                                                   'group variance and the whitening.'),
         })
         self.inputName = 'stats'
         self.outputName = 'groupstats'
@@ -79,15 +104,21 @@ class MixedEffects(cedalion_module):
 
         cur_demo['fileIdx'] = cur_demo.index
 
-        for idx, rec in enumerate(dset.dataset):
-            tbl = rec['stats'].table()
+        first_level = [rec[self.inputName] for rec in dset.dataset]
+        if not self.options['include_nuisance']:
+            first_level = [_without_nuisance(s) for s in first_level]
+
+        for idx, subj_stats in enumerate(first_level):
+            tbl = subj_stats.table()
             demo_rows = pd.DataFrame(
                 np.matlib.repmat(cur_demo.iloc[idx], tbl.shape[0], 1),
                 columns=cur_demo.columns)
             demo.append(pd.merge(demo_rows, tbl,
                                  left_index=True, right_index=True, how='inner'))
 
-        demo = pd.concat(demo)
+        # positional index: rows follow the first-level stats order of each file,
+        # which is the order of the block-diagonal whitening matrix W below
+        demo = pd.concat(demo).reset_index(drop=True)
 
         for key in demo.keys():
             if (is_numeric(demo[key][0])):
@@ -95,8 +126,8 @@ class MixedEffects(cedalion_module):
 
         W = 0
         if (self.options['weighted']):
-            for rec in dset.dataset:
-                cov = rec[self.inputName].covariance.to_numpy()
+            for subj_stats in first_level:
+                cov = subj_stats.covariance.to_numpy()
                 cov = .5 * (cov + cov.T)
                 # First-level covariances are frequently only positive
                 # semi-definite (or slightly indefinite because of numerical
@@ -128,16 +159,27 @@ class MixedEffects(cedalion_module):
         ntype = len(np.unique(demo['Type'].to_numpy()))
 
         X = model.exog
-        Z = model.exog_re
+        # exog_re only holds the random-effect covariates; expand them into one
+        # block of columns per group (file), as MATLAB's designMatrix(lm,'Random')
+        # does, so each subject gets its own random effects.
+        Z_cov = np.asarray(model.exog_re)
+        group_idx = pd.factorize(localdemo['fileIdx'])[0]
+        n_re = Z_cov.shape[1]
+        Z = np.zeros((Z_cov.shape[0], (group_idx.max() + 1) * n_re))
+        for row, grp in enumerate(group_idx):
+            Z[row, grp * n_re:(grp + 1) * n_re] = Z_cov[row]
 
         eye = np.eye(nchan * ntype)
         X2 = np.kron(eye, X)
         Z2 = np.kron(eye, Z)
 
-        demo_sorted = demo.sort_values(by=['Type', 'Channel'])
+        demo_sorted = demo.sort_values(by=['Type', 'Channel'], kind='stable')
         Y2 = demo_sorted['Beta'].to_numpy()
 
         if (self.options['weighted']):
+            # reorder W from file order into the (Type, Channel) order of Y2/X2/Z2
+            order = demo_sorted.index.to_numpy()
+            W = W[np.ix_(order, order)]
             Y2 = W @ Y2
             X2 = W @ X2
             Z2 = W @ Z2
@@ -186,7 +228,9 @@ class MixedEffects(cedalion_module):
                     },
                     dims=['indices']
                 )
-        stats.dof = Y2.shape[0] - X2.shape[1] - Z2.shape[1]
+        # residual degrees of freedom of the single-channel model (n - p), which is
+        # what MATLAB's nirs.modules.MixedEffects reports (lm1.DFE)
+        stats.dof = X.shape[0] - np.linalg.matrix_rank(X)
         dset[self.outputName] = stats
 
         return dset

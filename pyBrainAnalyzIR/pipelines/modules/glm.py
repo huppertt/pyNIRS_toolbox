@@ -1,14 +1,64 @@
 import cedalion.nirs
 
+
 import cedalion.models.glm as glm
+from cedalion.models.glm import basis_functions
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
 import pyBrainAnalyzIR
 import pyBrainAnalyzIR.dataclasses.dataset
 from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, BooleanOption, StringOption, QuantityOption,
-    ObjectOption)
+    PresetOption)
 
 units = cedalion.units
+
+
+#: Commonly used hemodynamic basis sets for the GLM ``basis_function`` option.
+#: The keys are what the pipeline manager GUI offers in its drop-down list;
+#: from code any :class:`cedalion.models.glm.basis_functions.TemporalBasisFunction`
+#: instance may be passed instead.
+BasisOptions = {
+    # canonical gamma variate HRF convolved with a 3 s boxcar (previous default)
+    'gamma': basis_functions.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
+    # gamma variate HRF plus its temporal derivative (absorbs latency shifts)
+    'gamma_deriv': basis_functions.GammaDeriv(tau=0 * units.s, sigma=3 * units.s,
+                                              T=3 * units.s),
+    # AFNI 'GAM' response: t^p * exp(-t/q) with AFNI's default p=8.6, q=0.547 s
+    'AFNIGamma': basis_functions.AFNIGamma(p=8.6, q=0.547 * units.s, T=0 * units.s),
+    # deconvolution (FIR-like) model: Gaussian kernels every 3 s from -5 s to +30 s
+    'GaussianKernels': basis_functions.GaussianKernels(
+        t_pre=5 * units.s, t_post=30 * units.s, t_delta=3 * units.s, t_std=3 * units.s),
+    # as GaussianKernels but with the first/last kernels extended as tails
+    'GaussianKernelsWithTails': basis_functions.GaussianKernelsWithTails(
+        t_pre=5 * units.s, t_post=30 * units.s, t_delta=3 * units.s, t_std=3 * units.s),
+    # stimulus boxcar without hemodynamic convolution
+    'boxcar': basis_functions.DiracDelta(),
+}
+
+DEFAULT_BASIS = 'gamma'
+
+
+def BasisFunctionOption(value=DEFAULT_BASIS, **kwargs) -> PresetOption:
+    """Option accepting a :data:`BasisOptions` key or any cedalion basis object."""
+    kwargs.setdefault('description', 'Hemodynamic response basis')
+    kwargs.setdefault(
+        'help',
+        'Basis function convolved with the stimulus design to model the hemodynamic '
+        'response. Either the name of a predefined basis set (' + ', '.join(BasisOptions)
+        + ') or, from code, any cedalion.models.glm.basis_functions object, e.g. '
+        'cedalion.models.glm.Gamma(tau=0*units.s, sigma=3*units.s, T=3*units.s).')
+    return PresetOption(BasisOptions, value,
+                        types=basis_functions.TemporalBasisFunction, **kwargs)
+
+
+def get_basis_function(basis=DEFAULT_BASIS):
+    """Return the basis object for a :data:`BasisOptions` key or a basis object."""
+    if isinstance(basis, str):
+        return BasisFunctionOption(basis).value
+    if isinstance(basis, basis_functions.TemporalBasisFunction):
+        return basis
+    raise TypeError('basis must be a BasisOptions key or a TemporalBasisFunction '
+                    f'(got {type(basis).__name__})')
 
 
 class GLM(cedalion_module):
@@ -25,6 +75,7 @@ class GLM(cedalion_module):
 
     def __init__(self, previous_job=None):
         self.name = "GLM Model"
+        self.advanced_module = False
         self.options = OptionsDict({
             'noise_model': StringOption('ar_irls',
                                         allowed=['ols', 'ar_irls', 'wls', 'gls', 'rls'],
@@ -43,13 +94,7 @@ class GLM(cedalion_module):
                                       description='Number of parallel jobs',
                                       help='Number of channels fit in parallel. Increase '
                                            'to use more CPU cores.'),
-            'basis_function': ObjectOption(
-                cedalion.models.glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
-                allow_none=False,
-                description='Hemodynamic response basis',
-                help='Basis function convolved with the stimulus design to model the '
-                     'hemodynamic response, e.g. cedalion.models.glm.Gamma(...) or '
-                     'cedalion.models.glm.GaussianKernels(...).'),
+            'basis_function': BasisFunctionOption(DEFAULT_BASIS),
             'Add_Short_Seperations': BooleanOption(
                 False,
                 description='Use short-separation regression',

@@ -40,7 +40,7 @@ def write_bids_data(data, path: str | Path,
 
     if overwrite_snirf or not snirffile.exists():
         _write_snirf_with_timeseries(snirffile, data, ["amp"], stim)
-    write_bids_stim(stim.copy(), path=folder / (filename + "_stim.tsv"))
+    write_bids_stim(stim.copy(), path=folder / (filename + "_events.tsv"))
 
     derivative_keys = _derivative_timeseries_keys(data)
     if include_derivatives and derivative_keys:
@@ -144,6 +144,8 @@ def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
 
     Metadata stored in BIDS TSV/JSON files is applied after the SNIRF file is
     loaded, so sidecar files take precedence over the embedded SNIRF metadata.
+    Standard ``*_events.tsv`` files override SNIRF stimulus data; legacy
+    ``*_stim.tsv`` files are still read when no events file is present.
     Matching sidecars are applied from the dataset root toward the local data
     folder, allowing more local files to override inherited parent files.
     """
@@ -348,32 +350,36 @@ def _apply_bids_participant_unit(value, column_info: dict):
 
 
 def _apply_bids_stim_metadata(rec, snirf_file: Path, root: Path, entities: dict) -> None:
-    stim_tsv_files = _bids_sidecars_for_suffix(snirf_file, root, "stim", ".tsv", entities)
+    stim_tsv_files = _bids_sidecars_for_suffix(snirf_file, root, "events", ".tsv", entities)
+    if not stim_tsv_files:
+        stim_tsv_files = _bids_sidecars_for_suffix(snirf_file, root, "stim", ".tsv", entities)
     if not stim_tsv_files:
         return
     stim = pd.read_csv(stim_tsv_files[-1], sep="\t", keep_default_na=False)
-    stim.rename(columns={"name": "trial_type", "amplitude": "value"}, inplace=True)
+    rename = {}
+    if "trial_type" not in stim and "name" in stim:
+        rename["name"] = "trial_type"
+    if "value" not in stim and "amplitude" in stim:
+        rename["amplitude"] = "value"
+    stim.rename(columns=rename, inplace=True)
     rec.stim = stim
 
 
 def write_bids_stim(stim: pd.DataFrame, path: str | Path):
-    """ 
-        Write the stimulus information to a BIDS-compliant TSV and JSON file.
-    """
+    """Write stimulus information using the BIDS events.tsv schema."""
+    stim = stim[["trial_type", "onset", "duration", "value"]]
 
-    stim.rename(columns={"trial_type": "name","value": "amplitude"}, inplace=True)
-    stim = stim[['name', 'onset', 'duration', 'amplitude']]
-
-    info = {"name": {"description": "name of task"},
-             "onset": {"description": "onset of event", "units": "seconds", "time_sync": "fnirs"}, 
-             "duration": {"description": "duration of event", "units": "seconds"}, 
-             "amplitude": {"description": "amplitude of event"}
-             }
+    info = {
+        "trial_type": {"Description": "Type or name of the event."},
+        "onset": {"Description": "Onset of the event.", "Units": "seconds"},
+        "duration": {"Description": "Duration of the event.", "Units": "seconds"},
+        "value": {"Description": "Amplitude of the event."},
+    }
 
     stim.to_csv(Path(path).with_suffix('.tsv'), sep='\t', index=False)
     
-    stimfileJSON = Path(path).with_suffix('.json')
-    with open(stimfileJSON, 'w') as f:
+    stimfile_json = Path(path).with_suffix(".json")
+    with open(stimfile_json, "w") as f:
         json.dump(info, f, indent=4)
 
 

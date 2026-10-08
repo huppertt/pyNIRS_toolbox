@@ -25,6 +25,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -55,6 +56,7 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
     ChoiceOption,
     EnumOption,
     NumericOption,
+    PresetOption,
     QuantityOption,
     StringOption,
     option_value,
@@ -67,6 +69,7 @@ class ModuleSpec:
     module_path: str
     package_name: str
     cls: Type[cedalion_module]
+    advanced: bool = True
 
 
 def _get_citation(module: cedalion_module) -> Optional[str]:
@@ -126,14 +129,17 @@ def _discover_modules() -> List[ModuleSpec]:
             try:
                 instance = cls()
                 name = str(getattr(instance, "name", cls.__name__))
+                advanced = bool(getattr(instance, "advanced_module", True))
             except Exception:
                 name = cls.__name__
+                advanced = bool(getattr(cls, "advanced_module", True))
             specs.append(
                 ModuleSpec(
                     name=name,
                     module_path=module_path,
                     package_name=info.name,
                     cls=cls,
+                    advanced=advanced,
                 )
             )
 
@@ -181,6 +187,8 @@ def _option_tooltip(key: str, opt: Any) -> str:
         parts.append("allowed: " + ", ".join(repr(c) for c in opt.choices))
     elif isinstance(opt, StringOption) and opt.allowed is not None:
         parts.append("allowed: " + ", ".join(opt.allowed))
+    elif isinstance(opt, PresetOption):
+        parts.append("presets: " + ", ".join(opt.choices))
     elif isinstance(opt, BooleanOption):
         parts.append("allowed: True, False")
     else:
@@ -261,6 +269,9 @@ def _coerce_for_option(text: str, opt: OptionVariable) -> Any:
             return None
         return text
 
+    if isinstance(opt, PresetOption):
+        return text  # preset name; validate() resolves it
+
     if text == "":
         return None
 
@@ -298,6 +309,9 @@ _KEEP_DEFAULT = _KeepDefault()
 
 def _option_value_to_json(value: Any) -> Any:
     """Serialize a single option value to a JSON-safe form."""
+    if isinstance(value, PresetOption):
+        # presets are stored by name; custom objects fall through below
+        value = value.selection
     value = option_value(value)
     if isinstance(value, enum.Enum):
         return {"__enum__": True, "name": value.name}
@@ -347,7 +361,8 @@ def pipeline_to_json(modules: List[cedalion_module]) -> str:
         opts = getattr(module, "options", None)
         if isinstance(opts, dict):
             for k in opts.keys():
-                options_raw[k] = _option_value_to_json(opts[k])
+                raw = opts.option(k) if isinstance(opts, OptionsDict) else opts[k]
+                options_raw[k] = _option_value_to_json(raw)
         steps.append({
             "class": module.__class__.__name__,
             "module": module.__class__.__module__,
@@ -408,8 +423,19 @@ def _string_choices(opt: StringOption) -> List[Tuple[str, Any]]:
     return [(a, a) for a in (opt.allowed or [])]
 
 
+def _preset_choices(opt: PresetOption) -> List[Tuple[str, Any]]:
+    choices: List[Tuple[str, Any]] = [(name, name) for name in opt.choices]
+    if opt.preset_name is None and opt.selection is not None:
+        # keep a custom object (set from code) selectable so editing the row
+        # does not silently replace it
+        choices.insert(0, (str(opt), opt.selection))
+    return choices
+
+
 def _combo_choices(opt: Any) -> Optional[List[Tuple[str, Any]]]:
     """Return ``(label, value)`` pairs when the option has a fixed choice set."""
+    if isinstance(opt, PresetOption):
+        return _preset_choices(opt)
     if isinstance(opt, EnumOption):
         return _enum_choices(opt)
     if isinstance(opt, BooleanOption):
@@ -485,11 +511,14 @@ class OptionEditorDelegate(QStyledItemDelegate):
 
     def setEditorData(self, editor, index) -> None:
         opt = self._option_for_index(index)
-        value = opt.value if isinstance(opt, OptionVariable) else opt
+        if isinstance(opt, PresetOption):
+            value = opt.selection
+        else:
+            value = opt.value if isinstance(opt, OptionVariable) else opt
 
         if isinstance(editor, QComboBox):
             for i in range(editor.count()):
-                if editor.itemData(i) == value:
+                if editor.itemData(i) is value or editor.itemData(i) == value:
                     editor.setCurrentIndex(i)
                     return
             editor.setCurrentIndex(0)
@@ -559,7 +588,16 @@ class PipelineManagerDialog(QDialog):
         # Left: available modules + summary
         left_panel = QWidget(self)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.addWidget(QLabel("Available modules"))
+        available_header = QHBoxLayout()
+        available_header.addWidget(QLabel("Available modules"))
+        available_header.addStretch()
+        self.show_advanced_checkbox = QCheckBox("Show Advanced Modules", left_panel)
+        self.show_advanced_checkbox.setChecked(False)
+        self.show_advanced_checkbox.setToolTip(
+            "Also list less frequently used (advanced) modules."
+        )
+        available_header.addWidget(self.show_advanced_checkbox)
+        left_layout.addLayout(available_header)
         self.available_list = QListWidget(left_panel)
         self.available_list.setSelectionMode(QAbstractItemView.SingleSelection)
         left_layout.addWidget(self.available_list, stretch=2)
@@ -621,6 +659,7 @@ class PipelineManagerDialog(QDialog):
         root.addLayout(footer)
 
         self.available_list.currentRowChanged.connect(self._on_available_selected)
+        self.show_advanced_checkbox.toggled.connect(self._on_show_advanced_toggled)
         self.add_button.clicked.connect(self._add_selected_module)
         self.pipeline_list.currentRowChanged.connect(self._on_pipeline_selected)
         self.pipeline_list.customContextMenuRequested.connect(self._show_pipeline_menu)
@@ -633,12 +672,27 @@ class PipelineManagerDialog(QDialog):
         self.done_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
 
-    def _populate_available_modules(self) -> None:
+    def _visible_specs(self) -> List[ModuleSpec]:
+        if self.show_advanced_checkbox.isChecked():
+            return list(self.available_specs)
+        return [spec for spec in self.available_specs if not spec.advanced]
+
+    def _on_show_advanced_toggled(self, _checked: bool) -> None:
+        current = self.available_list.currentRow()
+        selected = (
+            self.available_row_specs[current]
+            if 0 <= current < len(self.available_row_specs)
+            else None
+        )
+        self._populate_available_modules(selected)
+
+    def _populate_available_modules(self, select_spec: Optional[ModuleSpec] = None) -> None:
         self.available_list.clear()
         self.available_row_specs = []
+        self.add_button.setEnabled(True)
 
         grouped: Dict[str, List[ModuleSpec]] = {}
-        for spec in self.available_specs:
+        for spec in self._visible_specs():
             grouped.setdefault(spec.package_name, []).append(spec)
 
         for package_name in sorted(grouped.keys()):
@@ -653,9 +707,15 @@ class PipelineManagerDialog(QDialog):
                 self.available_row_specs.append(spec)
 
         first_module_row = next(
-            (idx for idx, spec in enumerate(self.available_row_specs) if spec is not None),
+            (idx for idx, spec in enumerate(self.available_row_specs)
+             if spec is not None and (select_spec is None or spec is select_spec)),
             -1,
         )
+        if first_module_row < 0:
+            first_module_row = next(
+                (idx for idx, spec in enumerate(self.available_row_specs) if spec is not None),
+                -1,
+            )
         if first_module_row >= 0:
             self.available_list.setCurrentRow(first_module_row)
         else:

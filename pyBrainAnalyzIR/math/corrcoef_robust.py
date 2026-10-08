@@ -139,8 +139,9 @@ def corrcoef(d, verbose=False, mask=None):
     #
     # r=sign(r+r').*abs(sqrt(r.*r'));
 
-    with np.errstate(invalid="ignore"):
-        r = np.sign(r + r.T) * np.abs(np.sqrt(r * r.T))
+    # MATLAB's sqrt of a negative product is complex and abs() returns its magnitude;
+    # numpy would return NaN, so take the magnitude before the sqrt.
+    r = np.sign(r + r.T) * np.sqrt(np.abs(r * r.T))
 
     # MATLAB:
     # r(abs(r)>1) = fix(r(abs(r)>1));

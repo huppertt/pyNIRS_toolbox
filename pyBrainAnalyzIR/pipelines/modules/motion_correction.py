@@ -20,7 +20,8 @@ units = cedalion.units
 class MotionCorrectPCA(cedalion_module):
     # Module to perform PCA-based motion correction on fNIRS data
     def __init__(self, previous_job=None):
-        self.name = "PCA based motion-correction (hmrR_MotionCorrectPCA.m)"
+        self.name = "PCA Based Motion Correction (hmrR_MotionCorrectPCA.m)"
+        self.advanced_module = True
         self._cite = "Huppert, T. J., Diamond, S. G., Franceschini, M. A., & Boas, D. A. (2009). HomER: a review of time-series analysis methods for near-infrared spectroscopy of the brain. Applied optics, 48(10), D280-D298."
         self.options = OptionsDict({
             'nSV': NumericOption(0.97,0.97, minimum=0,
@@ -97,7 +98,8 @@ class MotionCorrectPCA(cedalion_module):
 class splineSG(cedalion_module):
     # Module to perform spline-based motion correction on fNIRS data
     def __init__(self, previous_job=None):
-        self.name = "Spline based motion-correction"
+        self.name = "Spline Based Motion Correction"
+        self.advanced_module = True
         self._cite = "Molavi, B., & Dumont, G. A. (2012). Wavelet-based motion artifact removal for functional near-infrared spectroscopy. Physiological measurement, 33(2), 259-270."
         self.options = OptionsDict({
             'p': NumericOption(0.99, minimum=0, maximum=1,
@@ -142,6 +144,7 @@ class TDDR(cedalion_module):
     # Module to perform Temporal Derivative Distribution Repair (TDDR) motion correction on fNIRS data
     def __init__(self, previous_job=None):
         self.name = "TDDR"
+        self.advanced_module = False
         self._cite = (
             'Fishburn, Frank A., Ludlum, Ruth S., Vaidya, Chandan J., and Medvedev, Andrei V. Temporal '
             'Derivative Distribution Repair (TDDR): A motion correction method for fNIRS. NeuroImage 184 '
@@ -190,7 +193,8 @@ class TDDR(cedalion_module):
 class Wavelet(cedalion_module):
     # Module to perform wavelet-based motion correction on fNIRS data
     def __init__(self, previous_job=None):
-        self.name = "Remove Trend & Motion w/ Wavelets"
+        self.name = "Remove Trend & Motion with Wavelets"
+        self.advanced_module = True
         self._cite = None
         self.options = OptionsDict({
             'sthresh': NumericOption(5, minimum=0,
