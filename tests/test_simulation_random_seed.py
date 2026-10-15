@@ -82,5 +82,6 @@ def test_simdataset_is_reproducible_with_distinct_recordings():
     for rec_a, rec_b in zip(dataset_a.dataset, dataset_b.dataset):
         np.testing.assert_array_equal(rec_a["amp"].values, rec_b["amp"].values)
 
-    first, second = dataset_a.dataset
+    first = dataset_a.dataset[0]
+    second = dataset_a.dataset[1]
     assert not np.array_equal(first["amp"].values, second["amp"].values)

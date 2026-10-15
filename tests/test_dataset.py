@@ -34,6 +34,8 @@ pytestmark = pytest.mark.requires_cedalion
 class Recording:
     def __init__(self, meta_data):
         self.meta_data = OrderedDict(meta_data)
+        self.stim = None
+        self.timeseries = {}
 
     def __getitem__(self, key):
         return self.timeseries[key]
@@ -359,7 +361,7 @@ def test_save_bids_demographics_strips_units_from_tsv(tmp_path):
     assert saved["participant_id"].tolist() == ["sub-subj+1", "sub-subj+2"]
     assert demographics["age"][0].units == units.years
 
-    with open(tmp_path / "participants.json") as f:
+    with open(tmp_path / "participants.json", encoding="utf-8") as f:
         sidecar = json.load(f)
     assert sidecar["age"]["Units"] == "year"
 
@@ -382,7 +384,7 @@ def test_save_bids_demographics_keeps_custom_text_and_omits_recording_fields(tmp
     written = pd.read_csv(tmp_path / "participants.tsv", sep="\t")
     assert written.columns.tolist() == ["participant_id", "gender", "study_site"]
     assert written.loc[0, "gender"] == "M"
-    with open(tmp_path / "participants.json") as f:
+    with open(tmp_path / "participants.json", encoding="utf-8") as f:
         sidecar = json.load(f)
     assert sidecar["gender"] == {"Description": "Participant gender"}
     assert sidecar["study_site"] == {"Description": "Recruitment site"}
@@ -406,7 +408,7 @@ def test_write_bids_events_uses_required_column_order_and_units(tmp_path):
     ]
     assert written.loc[0, "trial_type"] == "task"
     assert written.loc[0, "value"] == 3.0
-    with open(events_path.with_suffix(".json")) as f:
+    with open(events_path.with_suffix(".json"), encoding="utf-8") as f:
         sidecar = json.load(f)
     assert sidecar["onset"]["Units"] == "s"
     assert sidecar["duration"]["Units"] == "s"
@@ -437,7 +439,7 @@ def test_write_bids_events_describes_trial_type_levels(tmp_path):
         event_descriptions=event_descriptions,
     )
 
-    with open(events_path.with_suffix(".json")) as f:
+    with open(events_path.with_suffix(".json"), encoding="utf-8") as f:
         sidecar = json.load(f)
     assert sidecar["trial_type"]["Levels"] == event_descriptions
     assert "Description" in sidecar
@@ -452,7 +454,7 @@ def test_write_bids_events_uses_supplied_stimulus_presentation(tmp_path):
 
     write_bids_stim(events, events_path, stimulus_presentation=presentation)
 
-    with open(events_path.with_suffix(".json")) as f:
+    with open(events_path.with_suffix(".json"), encoding="utf-8") as f:
         sidecar = json.load(f)
     assert sidecar["StimulusPresentation"] == presentation
 
@@ -513,7 +515,7 @@ def test_write_bids_dataset_writes_nirs_channel_and_optode_sidecars(tmp_path):
     assert "Added through the DataSet API." in readme_text
     assert "### Experimental design" in readme_text
     assert rec.meta_data["_bids_descriptions"]["readme_include:Methods"] is False
-    with open(tmp_path / "dataset_description.json") as f:
+    with open(tmp_path / "dataset_description.json", encoding="utf-8") as f:
         dataset_description = json.load(f)
     assert dataset_description["Name"] == "Call dataset name"
     assert dataset_description["License"] == "CC-BY-4.0"
@@ -523,7 +525,7 @@ def test_write_bids_dataset_writes_nirs_channel_and_optode_sidecars(tmp_path):
     assert dataset_description["GeneratedBy"] == [{"Name": "Metadata generator"}]
     assert "StimulusPresentation" not in dataset_description
     events_json = next(tmp_path.rglob("*_events.json"))
-    with open(events_json) as f:
+    with open(events_json, encoding="utf-8") as f:
         event_sidecar = json.load(f)
     assert event_sidecar["StimulusPresentation"] == {
         "SoftwareName": "Metadata stimulus software"
@@ -533,7 +535,7 @@ def test_write_bids_dataset_writes_nirs_channel_and_optode_sidecars(tmp_path):
     }
     assert "The subject was tapping their left hand." in event_sidecar["Description"]
 
-    with open(tmp_path / "participants.json") as f:
+    with open(tmp_path / "participants.json", encoding="utf-8") as f:
         participants_sidecar = json.load(f)
     assert participants_sidecar["age"]["Description"] == (
         "Age of the participant in years."
@@ -561,7 +563,7 @@ def test_write_bids_dataset_writes_nirs_channel_and_optode_sidecars(tmp_path):
         "description": "fNIRS Channel between Optodes Source index 1 to "
         "Detector Index 1 at wavelength 760nm",
     }
-    with open(channels_path.with_suffix(".json")) as f:
+    with open(channels_path.with_suffix(".json"), encoding="utf-8") as f:
         assert json.load(f)["Description"]
     assert rec.meta_data["NIRSChannelCount"] == len(channels)
 
@@ -573,11 +575,11 @@ def test_write_bids_dataset_writes_nirs_channel_and_optode_sidecars(tmp_path):
     assert set(optodes["type"]) == {"source", "detector"}
     assert len(optodes) == len(set(channels["source"]) | set(channels["detector"]))
     assert optodes.loc[0, "description"] == "fNIRS Source Optode index 1"
-    with open(optodes_path.with_suffix(".json")) as f:
+    with open(optodes_path.with_suffix(".json"), encoding="utf-8") as f:
         assert json.load(f)["Description"]
 
     coordsystem_path = next(tmp_path.rglob("*_coordsystem.json"))
-    with open(coordsystem_path) as f:
+    with open(coordsystem_path, encoding="utf-8") as f:
         coordsystem = json.load(f)
     assert coordsystem["NIRSCoordinateSystem"] == "Other"
     assert coordsystem["NIRSCoordinateUnits"] == "mm"
@@ -607,21 +609,21 @@ def test_read_bids_dataset_applies_sidecar_overrides(tmp_path):
     participants["study_site"] = "north"
     participants.to_csv(tmp_path / "participants.tsv", sep="\t", index=False)
 
-    with open(tmp_path / "participants.json") as f:
+    with open(tmp_path / "participants.json", encoding="utf-8") as f:
         participants_json = json.load(f)
     participants_json["age"]["Description"] = "Age from participants sidecar."
-    with open(tmp_path / "participants.json", "w") as f:
+    with open(tmp_path / "participants.json", "w", encoding="utf-8") as f:
         json.dump(participants_json, f, indent=4)
 
     root_fnirs_json = tmp_path / "task-finger_nirs.json"
-    with open(root_fnirs_json, "w") as f:
+    with open(root_fnirs_json, "w", encoding="utf-8") as f:
         json.dump({"HierarchyField": "root", "filedescription": "root"}, f)
 
     local_fnirs_json = next(path for path in tmp_path.rglob("*_nirs.json") if path.parent != tmp_path)
-    with open(local_fnirs_json) as f:
+    with open(local_fnirs_json, encoding="utf-8") as f:
         local_metadata = json.load(f)
     local_metadata["filedescription"] = "local"
-    with open(local_fnirs_json, "w") as f:
+    with open(local_fnirs_json, "w", encoding="utf-8") as f:
         json.dump(local_metadata, f)
 
     root_events = pd.DataFrame({
@@ -744,7 +746,7 @@ def test_write_bids_dataset_preserves_existing_snirf_by_default(tmp_path, monkey
     write_bids_dataset(dset, tmp_path)
 
     assert snirf_file.read_text() == "original"
-    with open(fnirs_json) as f:
+    with open(fnirs_json, encoding="utf-8") as f:
         assert json.load(f)["filedescription"] == "updated"
     saved_events = pd.read_csv(events_tsv, sep="\t")
     assert saved_events["trial_type"].tolist() == ["updated_event"]
@@ -807,7 +809,7 @@ def test_bids_rewrite_updates_demographics_and_events_without_changing_snirf(tmp
     assert participants_tsv.loc[0, "age"] == 34
     assert participants_tsv.loc[0, "gender"] == "F"
     assert participants_tsv.loc[0, "study_site"] == "south"
-    with open(tmp_path / "participants.json") as f:
+    with open(tmp_path / "participants.json", encoding="utf-8") as f:
         participants_json = json.load(f)
     assert participants_json["age"] == {
         "Description": "Participant age.",
@@ -824,7 +826,7 @@ def test_bids_rewrite_updates_demographics_and_events_without_changing_snirf(tmp
     assert events["onset"].tolist() == [4.5, 9.0]
     assert events["duration"].tolist() == [1.25, 0.75]
     assert events["value"].tolist() == [2.0, 3.0]
-    with open(events_tsv.with_suffix(".json")) as f:
+    with open(events_tsv.with_suffix(".json"), encoding="utf-8") as f:
         events_json = json.load(f)
     assert events_json["trial_type"]["Levels"] == {
         "right": "Right-hand tapping."
@@ -909,7 +911,7 @@ def test_bids_sidecars_override_snirf_and_missing_sidecars_fall_back(tmp_path):
 
     events_path = next(tmp_path.rglob("*_events.tsv"))
     nirs_json_path = next(tmp_path.rglob("*_nirs.json"))
-    with open(nirs_json_path) as f:
+    with open(nirs_json_path, encoding="utf-8") as f:
         nirs_json = json.load(f)
     assert nirs_json["filedescription"] == "sidecar value"
 

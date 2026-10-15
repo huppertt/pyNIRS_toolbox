@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-from cedalion.math.resample import resample as cedalion_resample
 
 pytest.importorskip("cedalion")
 
+from cedalion.math.resample import resample as cedalion_resample  # noqa: E402
 from cedalion.models.glm.design_matrix import DesignMatrix  # noqa: E402
 from cedalion.models.glm.solve import fit as cedalion_fit  # noqa: E402
 from cedalion.models.glm.solve import predict as cedalion_predict  # noqa: E402

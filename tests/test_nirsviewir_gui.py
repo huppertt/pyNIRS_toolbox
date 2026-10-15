@@ -76,6 +76,9 @@ def test_edit_data_quality_mask_launches_manager(monkeypatch):
     managers = []
 
     class FakeSignal:
+        def __init__(self):
+            self.callback = None
+
         def connect(self, callback):
             self.callback = callback
 

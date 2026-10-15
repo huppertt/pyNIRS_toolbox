@@ -557,5 +557,5 @@ class DataSet:
         Args:
             path (str | Path): The directory path where the BIDS dataset will be saved.
         """
-        from pyBrainAnalyzIR.io.bids import save_dataset_to_bids
-        save_dataset_to_bids(self, path)
+        from pyBrainAnalyzIR.io.bids import write_bids_dataset
+        write_bids_dataset(self, path)

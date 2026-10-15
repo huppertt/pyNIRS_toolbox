@@ -538,8 +538,10 @@ class DataQualityManager(QMainWindow):
             return
         self.thresholds[metric] = value
         for prefix in ("channel", "artifact"):
-            spins = getattr(self, f"_{prefix}_threshold_spins", None)
-            if not spins or metric not in spins:
+            spins: dict[str, QDoubleSpinBox] = getattr(
+                self, f"_{prefix}_threshold_spins", {}
+            )
+            if metric not in spins:
                 continue
             spin = spins[metric]
             if not math.isclose(spin.value(), value):

@@ -9,11 +9,12 @@ import numpy as np
 import pytest
 import xarray as xr
 from types import SimpleNamespace
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QApplication, QInputDialog, QToolButton
 
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
+
+from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QInputDialog, QToolButton  # noqa: E402
 
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
 from pyBrainAnalyzIR.testing import simData  # noqa: E402
