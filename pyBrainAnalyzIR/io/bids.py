@@ -116,7 +116,7 @@ def write_bids_data(data, path: str | Path,
 
     # TODO - the SNIRF writer assumes this order. It shouldn't, but it isn't my code,
     # so I just need to conform to it.
-    stim = data.stim[["trial_type","onset", "duration", "value"]]
+    stim = data.stim[["trial_type", "onset", "duration", "value"]]
 
     if snirffile.exists():
         _assert_snirf_raw_data_matches(snirffile, data)
@@ -147,14 +147,19 @@ def write_bids_data(data, path: str | Path,
         if overwrite_snirf or not derivative_file.exists():
             _write_snirf_with_timeseries(derivative_file, data, derivative_keys, stim)
 
-    info={'TaskName': task,
-          'Description': 'Raw fNIRS amplitude time series for this recording.',
-          'Version': data.meta_data.get('Version', 'unknown'),
-          'MeasurementDate': data.meta_data.get('MeasurementDate', 'unknown'),
-          'MeasurementTime': data.meta_data.get('MeasurementTime', 'unknown'),
-          'SNIRF_createDate': data.meta_data.get('SNIRF_CreateDate', datetime.now().strftime('%Y-%m-%d')),
-          'SNIRF_createTime': data.meta_data.get('SNIRF_createTime', f"{datetime.now().strftime('%H:%M:%S')}Z"),
-          'filedescription': data.meta_data.get('filedescription', 'unknown')
+    info = {
+        'TaskName': task,
+        'Description': 'Raw fNIRS amplitude time series for this recording.',
+        'Version': data.meta_data.get('Version', 'unknown'),
+        'MeasurementDate': data.meta_data.get('MeasurementDate', 'unknown'),
+        'MeasurementTime': data.meta_data.get('MeasurementTime', 'unknown'),
+        'SNIRF_createDate': data.meta_data.get(
+            'SNIRF_CreateDate', datetime.now().strftime('%Y-%m-%d')
+        ),
+        'SNIRF_createTime': data.meta_data.get(
+            'SNIRF_createTime', f"{datetime.now().strftime('%H:%M:%S')}Z"
+        ),
+        'filedescription': data.meta_data.get('filedescription', 'unknown'),
     }
     snirffilejson = folder / (filename + "_nirs.json")
     with open(snirffilejson, 'w') as f:
@@ -397,7 +402,6 @@ def _write_bids_nirs_sidecars(
         json.dump(coordsystem, f, indent=4)
 
 
-
 def write_bids_dataset(dataset, path: str | Path,
                        readme: dict | None = None,
                        dataset_description: dict | None = None,
@@ -500,16 +504,15 @@ def write_bids_dataset(dataset, path: str | Path,
 
         run = str(all_participants[participant_id])
 
- 
         write_bids_data(data, path=path,
-                    participant_id=participant_id,
-                    run=run,
-                    task=_get_task_name(data),
-                    session=_get_session_name(data),
-                    overwrite_snirf=overwrite_snirf,
-                    include_derivatives=include_derivatives,
-                    stimulus_presentation=stimulus_presentation,
-                    event_descriptions=event_descriptions)
+                        participant_id=participant_id,
+                        run=run,
+                        task=_get_task_name(data),
+                        session=_get_session_name(data),
+                        overwrite_snirf=overwrite_snirf,
+                        include_derivatives=include_derivatives,
+                        stimulus_presentation=stimulus_presentation,
+                        event_descriptions=event_descriptions)
 
 
 def _write_snirf_with_timeseries(path: Path, data, keys: list[str], stim: pd.DataFrame) -> None:
@@ -778,7 +781,9 @@ def _bids_participants_json(snirf_file: Path, root: Path) -> dict:
 
 
 def _bids_participant_row(participants: pd.DataFrame, participant_id: str):
-    participant_columns = ['participant_id', 'subject_id', 'subject', 'subjid', 'sub','id','name']
+    participant_columns = [
+        'participant_id', 'subject_id', 'subject', 'subjid', 'sub', 'id', 'name'
+    ]
     for column in participants.columns:
         if column.lower() not in participant_columns:
             continue
@@ -1022,7 +1027,7 @@ def write_bids_stim(
         info.setdefault(column, {"Description": "Additional event information."})
 
     stim.to_csv(Path(path).with_suffix('.tsv'), sep='\t', index=False, na_rep="n/a")
-    
+
     stimfile_json = Path(path).with_suffix(".json")
     info["StimulusPresentation"] = (
         {"SoftwareName": "unknown"}
@@ -1034,16 +1039,17 @@ def write_bids_stim(
 
 
 def _get_participant_id(data):
-    keys = ['subject_id', 'subject', 'subjid', 'participant_id', 'sub','id','name']
+    keys = ['subject_id', 'subject', 'subjid', 'participant_id', 'sub', 'id', 'name']
     return _get_meta_data_value_case_insensitive(data, keys, None)
 
+
 def _get_task_name(data):
-    keys = ['task','taskname']
+    keys = ['task', 'taskname']
     return _get_meta_data_value_case_insensitive(data, keys, 'func')
 
 
 def _get_session_name(data):
-    keys = ['session','session_id','ses']
+    keys = ['session', 'session_id', 'ses']
     return _get_meta_data_value_case_insensitive(data, keys, None)
 
 
@@ -1231,8 +1237,6 @@ def write_bids_dataset_description(path: str | Path, description: dict):
         json.dump(description, f, indent=4)
 
 
-
-
 def add_missing_bids_to_metadata(data, intype='amp'):
     """Add missing BIDS metadata to the existing metadata dictionary.
 
@@ -1253,7 +1257,7 @@ def add_missing_bids_to_metadata(data, intype='amp'):
         defaults = {
             'Manufacturer': {
                 'value': 'n/a',
-                'description': 'The manufacturer of the device used for data acquisition',
+                'description': 'The manufacturer of the device used for data      acquisition',
                 'units': 'n/a',
             },
             'ManufacturersModelName': {
@@ -1384,16 +1388,15 @@ def add_missing_bids_to_metadata(data, intype='amp'):
                 'units': 'n/a',
             },
         }
-        
+
         for key, value in defaults.items():
             if key not in data.meta_data:
                 data.meta_data[key] = value['value']
                 if '_bids_descriptions' not in data.meta_data:
                     data.meta_data['_bids_descriptions'] = {}
-                    
+
                 if key not in data.meta_data['_bids_descriptions']:
                     data.meta_data['_bids_descriptions'][key] = value['description']
-
 
             if value['units'] != 'n/a':
                 # Add the units information to the data.meta_data
@@ -1492,7 +1495,6 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
     demofileJSON = Path(path) / 'participants.json'
     demofileJSON.parent.mkdir(parents=True, exist_ok=True)
 
-
     demo_info = {}
 
     for col, source_column in description_columns.items():
@@ -1505,14 +1507,13 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
             description = bids_descriptions.get(source_column, bids_descriptions.get(col, description))
 
         first_value = demographics[source_column].iloc[0] if not demographics.empty else None
-        if type(first_value) == units.Quantity:
+        if type(first_value) == units.Quantity:  # noqa: E721
             demo_info[col] = {
                 "Description": description,
                 "Units": str(first_value.units)
             }
         else:
             demo_info[col] = {"Description": description}
-      
+
     with open(demofileJSON, 'w') as f:
-        json.dump(demo_info, f,indent=4)
-    
+        json.dump(demo_info, f, indent=4)

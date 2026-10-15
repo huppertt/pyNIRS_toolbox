@@ -10,20 +10,20 @@ from cedalion.math.resample import resample as cedalion_resample
 
 pytest.importorskip("cedalion")
 
-from cedalion.models.glm.design_matrix import DesignMatrix
-from cedalion.models.glm.solve import fit as cedalion_fit
-from cedalion.models.glm.solve import predict as cedalion_predict
-from cedalion.models.glm.solve import _channel_fit as cedalion_channel_fit
+from cedalion.models.glm.design_matrix import DesignMatrix  # noqa: E402
+from cedalion.models.glm.solve import fit as cedalion_fit  # noqa: E402
+from cedalion.models.glm.solve import predict as cedalion_predict  # noqa: E402
+from cedalion.models.glm.solve import _channel_fit as cedalion_channel_fit  # noqa: E402
 
-import pyBrainAnalyzIR.math.glm as local_glm
-import pyBrainAnalyzIR.pipelines.modules.glm as glm_module
-from pyBrainAnalyzIR.pipelines.modules.motion_correction import (
+import pyBrainAnalyzIR.math.glm as local_glm  # noqa: E402
+import pyBrainAnalyzIR.pipelines.modules.glm as glm_module  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.motion_correction import (  # noqa: E402
     _time_inclusion_mask,
 )
-import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
-import pyBrainAnalyzIR.testing.simData as simdata
-from pyBrainAnalyzIR.dataclasses.statistics import Statistics
-from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks
+import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
+import pyBrainAnalyzIR.testing.simData as simdata  # noqa: E402
+from pyBrainAnalyzIR.dataclasses.statistics import Statistics  # noqa: E402
+from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

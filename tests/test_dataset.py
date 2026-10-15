@@ -344,6 +344,7 @@ def test_add_missing_bids_metadata_adds_units_to_single_recording():
     assert rec.meta_data["SamplingFrequency"].units == cedalion.units.hertz
     assert rec.meta_data["RecordingDuration"].magnitude == duration_magnitude
 
+
 def test_save_bids_demographics_strips_units_from_tsv(tmp_path):
     units = cedalion.units
     demographics = pd.DataFrame({

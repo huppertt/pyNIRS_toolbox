@@ -2,7 +2,7 @@
 import numpy as np
 import xarray as xr
 import cedalion
-import cedalion.dataclasses as cdc
+import cedalion.dataclasses as cdc  # noqa: F401
 
 from pyBrainAnalyzIR.forward.mesh import combine_meshes
 from pyBrainAnalyzIR.media.spectra import getspectra

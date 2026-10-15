@@ -7,7 +7,6 @@ chaining/option-lookup behaviour used by ``examples/02_PipelineCreation.ipynb``.
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import xarray as xr
 

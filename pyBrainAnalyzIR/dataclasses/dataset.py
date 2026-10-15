@@ -133,7 +133,7 @@ class DataSet:
                             and rec.meta_data['_bids_descriptions'][key] != "No description available."
                         ):
                             common_key[key] = rec.meta_data['_bids_descriptions'][key]
-                        elif common_key[key] != rec.meta_data['_bids_descriptions'][key]:   
+                        elif common_key[key] != rec.meta_data['_bids_descriptions'][key]:
                             warnings.warn(
                                 f"Description for key '{key}' is inconsistent across recordings. "
                                 "Using the first encountered description."
@@ -513,7 +513,6 @@ class DataSet:
             for idx in range(0, table.shape[0]):
                 self.dataset[idx].meta_data[keys] = table[keys][idx]
         self._sync_bids_descriptions()
-        
 
     def add_demographics_by_match_variable(self, table, matchvariable='subjectID', allow_missing=False):
         """Add demographics by matching a unique recording identifier.
@@ -544,7 +543,6 @@ class DataSet:
                     for key in table.keys():
                         self.dataset[idx].meta_data[key] = table[key][idx2]
         self._sync_bids_descriptions()
-        
 
     def save_bids(self, path: str | Path):
         """Write this dataset to a BIDS directory.

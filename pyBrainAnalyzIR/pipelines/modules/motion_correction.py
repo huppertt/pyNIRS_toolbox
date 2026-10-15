@@ -89,41 +89,51 @@ class MotionCorrectPCA(cedalion_module):
                     '(+- t_mask s before/after detected motion artifact).'
                 ),
             ),
-            'stdev_thresh': NumericOption(7.0, minimum=0,
-                                           description='Threshold for standard deviation used to detect motion artifacts',
-                                           help=(
-                                               'Threshold for standard deviation of the signal '
-                                               'used to detect motion artifacts. Default is 50. '
-                                               'We set it very low to find something in our '
-                                               'good data for demonstration purposes.'
-                                           )),
-            'amp_thresh': NumericOption(5.0, minimum=0,
-                                         description='Threshold for amplitude used to detect motion artifacts',
-                                         help=(
-                                             'Threshold for amplitude of the signal used to '
-                                             'detect motion artifacts. Default is 5.'
-                                         )),
-            'recursive': BooleanOption(False,
-                                        description='Whether to apply recursive PCA-based motion correction',
-                                        help=(
-                                            'If True, the PCA-based motion correction will be '
-                                            'applied recursively until no significant motion '
-                                            'artifacts remain.'
-                                        )),
-            'maxIter': NumericOption(10, minimum=1,
-                                     description='Maximum number of recursive iterations for PCA-based motion correction',
-                                     help=(
-                                         'Maximum number of recursive iterations for PCA-based '
-                                         'motion correction if recursive is set to True.'
-                                     ))
+            'stdev_thresh': NumericOption(
+                7.0,
+                minimum=0,
+                description=(
+                    'Threshold for standard deviation used to detect motion artifacts'
+                ),
+                help=(
+                    'Threshold for standard deviation of the signal used to detect motion '
+                    'artifacts. Default is 50. We set it very low to find something in '
+                    'our good data for demonstration purposes.'
+                ),
+            ),
+            'amp_thresh': NumericOption(
+                5.0,
+                minimum=0,
+                description='Threshold for amplitude used to detect motion artifacts',
+                help=(
+                    'Threshold for amplitude of the signal used to detect motion artifacts. '
+                    'Default is 5.'
+                ),
+            ),
+            'recursive': BooleanOption(
+                False,
+                description='Whether to apply recursive PCA-based motion correction',
+                help=(
+                    'If True, the PCA-based motion correction will be applied recursively '
+                    'until no significant motion artifacts remain.'
+                ),
+            ),
+            'maxIter': NumericOption(
+                10,
+                minimum=1,
+                description=(
+                    'Maximum number of recursive iterations for PCA-based motion correction'
+                ),
+                help=(
+                    'Maximum number of recursive iterations for PCA-based motion correction '
+                    'if recursive is set to True.'
+                ),
+            ),
         })
         self.inputName = 'last'
         self.outputName = 'last'
         self.description = "Perform PCA-based motion correction on fNIRS data"
         self.previous_job = previous_job
-
-       
-
 
     def _runlocal(self, rec):
         if (rec.__class__ == pyBrainAnalyzIR.dataclasses.dataset.DataSet):
@@ -140,15 +150,15 @@ class MotionCorrectPCA(cedalion_module):
             else:
                 outputName = self.outputName
 
-           
-
-            if(self.options['recursive']):
-                 # to identify motion artifacts with these parameters we call the following function
-                ma_mask = quality.id_motion(rec[inputName], 
-                                                        self.options['t_motion'], 
-                                                        self.options['t_mask'], 
-                                                        self.options['stdev_thresh'], 
-                                                        self.options['amp_thresh'])
+            if self.options['recursive']:
+                # Identify motion artifacts using these parameters.
+                ma_mask = quality.id_motion(
+                    rec[inputName],
+                    self.options['t_motion'],
+                    self.options['t_mask'],
+                    self.options['stdev_thresh'],
+                    self.options['amp_thresh'],
+                )
                 ma_mask = _combine_recording_masks(rec, rec[inputName], ma_mask)
                 ma_mask = _time_inclusion_mask(ma_mask)
                 corrected, _, _ = motion_correct.motion_correct_PCA(
@@ -158,15 +168,16 @@ class MotionCorrectPCA(cedalion_module):
                 )
                 rec[outputName] = corrected
             else:
-                rec[outputName] = motion_correct.motion_correct_PCA_recurse(rec[inputName],
-                                                                     nSV=self.options['nSV'],
-                                                                     t_motion=self.options['t_motion'],
-                                                                     t_mask=self.options['t_mask'],
-                                                                     stdev_thresh=self.options['stdev_thresh'],
-                                                                     amp_thresh=self.options['amp_thresh'],
-                                                                     maxIter=self.options['maxIter'])
+                rec[outputName] = motion_correct.motion_correct_PCA_recurse(
+                    rec[inputName],
+                    nSV=self.options['nSV'],
+                    t_motion=self.options['t_motion'],
+                    t_mask=self.options['t_mask'],
+                    stdev_thresh=self.options['stdev_thresh'],
+                    amp_thresh=self.options['amp_thresh'],
+                    maxIter=self.options['maxIter'],
+                )
             return rec
-
 
 
 class splineSG(cedalion_module):

@@ -10,6 +10,7 @@ This is a collection of functions for generating stimulus stiming information us
 
 """
 
+
 def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
                         block_dur=20, block_space=20, ncond=1,
                         randomize_order=False, random_seed=None):
@@ -34,15 +35,13 @@ def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
     tmax = np.max(t) - 2 * block_dur
 
     # onsets
-    onsets = np.arange(tmin, tmax, block_space+block_dur)
+    onsets = np.arange(tmin, tmax, block_space + block_dur)
 
-    nevents=np.int32(np.floor(len(onsets)/ncond))
-    onsets = onsets[:nevents*ncond]
+    nevents = np.int32(np.floor(len(onsets) / ncond))
+    onsets = onsets[:nevents * ncond]
 
     if randomize_order:
         rng.shuffle(onsets)
-
-
     # durations
     dur = block_dur * np.ones_like(onsets)
 
@@ -56,6 +55,7 @@ def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
     stim.sort_values(by="onset", inplace=True)
 
     return stim
+
 
 def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
                      stim_dur=2, stim_space=7, ncond=1, random_seed=None):
