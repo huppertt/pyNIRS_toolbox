@@ -1228,10 +1228,14 @@ def _active_ipython():
 
 def data_quality_manager(
     data: Any,
-    block: Optional[bool] = None,
+    block: Optional[bool] = False,
 ) -> DataQualityManager:
+    """Open the data-quality viewer without blocking by default for notebooks.
+
+    Pass ``block=True`` in a standalone script to run the Qt event loop until
+    the window closes.
+    """
     app = QApplication.instance() or QApplication(sys.argv or ["data_quality_manager"])
-    app.setQuitOnLastWindowClosed(False)
 
     shell = _active_ipython()
     if block is None:
@@ -1250,6 +1254,11 @@ def data_quality_manager(
             shell.enable_gui("qt")
         except Exception:
             block = True
+
+    if block:
+        app.setQuitOnLastWindowClosed(True)
+    elif shell is not None:
+        app.setQuitOnLastWindowClosed(False)
 
     if block:
         app.exec()

@@ -6,9 +6,9 @@ Usage
 
     result = demographics_manager(dataset)  # dataset is returned after closing
 
-In a notebook, the returned window keeps the Qt event loop responsive and
-updates `dataset` when it is closed. In a script, `result` is the edited
-dataset.
+By default, this returns a window that keeps the Qt event loop responsive and
+updates `dataset` when it is closed. In a standalone script, pass
+``block=True`` to wait until the window closes and return the edited dataset.
 """
 from __future__ import annotations
 
@@ -409,6 +409,14 @@ class DictTableEditor(QDialog):
                     # changes where the values are written back.
                     item.setData(ORIGINAL_ROW_ROLE, row)
                 self.table.setItem(row, col, item)
+        self._refresh_header_tooltips()
+
+    def _refresh_header_tooltips(self) -> None:
+        """Show any column description when hovering over its header."""
+        for col, name in enumerate(self._columns):
+            header = self.table.horizontalHeaderItem(col)
+            if header is not None:
+                header.setToolTip(self.column_descriptions.get(name, ""))
 
     def _original_row(self, row: int) -> int:
         """The input-order index of view row `row`."""
@@ -430,6 +438,7 @@ class DictTableEditor(QDialog):
         rename_action = menu.addAction("Rename Column")
         remove_action = menu.addAction("Remove Column")
         menu.addSeparator()
+        replace_action = menu.addAction("Find/Replace...")
         assign_action = menu.addAction("Assign All Values...")
         fill_action = menu.addAction("Fill Missing Values...")
         stats_action = menu.addAction("Show Statistics")
@@ -438,12 +447,47 @@ class DictTableEditor(QDialog):
             self._rename_column(col)
         elif action == remove_action:
             self._remove_column(col)
+        elif action == replace_action:
+            self._find_replace_column(col)
         elif action == assign_action:
             self._assign_all_values(col)
         elif action == fill_action:
             self._fill_missing(col)
         elif action == stats_action:
             self._show_statistics(col)
+
+    def _find_replace_column(self, col: int) -> None:
+        """Replace exact matching cell values in one column."""
+        name = self._columns[col]
+        find_value, ok = QInputDialog.getText(
+            self, "Find/Replace", f"Find value in '{name}':"
+        )
+        if not ok:
+            return
+        replace_value, ok = QInputDialog.getText(
+            self, "Find/Replace", f"Replace '{find_value}' with in '{name}':"
+        )
+        if not ok:
+            return
+        replaced = self._replace_column_values(col, find_value, replace_value)
+        QMessageBox.information(
+            self,
+            "Find/Replace",
+            f"Replaced {replaced} value(s) in '{name}'.",
+        )
+
+    def _replace_column_values(self, col: int, find_value: str, replace_value: str) -> int:
+        """Replace cells whose displayed text exactly matches ``find_value``."""
+        if col < 0 or col >= self.table.columnCount():
+            return 0
+        replaced = 0
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, col)
+            if item is not None and item.text() == find_value:
+                item.setText(replace_value)
+                replaced += 1
+        self._refresh_outlier_highlighting()
+        return replaced
 
     def _assign_all_values(self, col: int) -> None:
         """Set every row of `col` to a single user-supplied value."""
@@ -580,6 +624,7 @@ class DictTableEditor(QDialog):
         if old_name in self.column_descriptions:
             self.column_descriptions[new_name] = self.column_descriptions.pop(old_name)
         self.table.setHorizontalHeaderItem(col, QTableWidgetItem(new_name))
+        self._refresh_header_tooltips()
 
     def _remove_column(self, col: int) -> None:
         name = self._columns[col]
@@ -641,6 +686,7 @@ class DictTableEditor(QDialog):
 
         self.column_units = dialog.selected_units()
         self.column_descriptions = dialog.descriptions()
+        self._refresh_header_tooltips()
         self._refresh_unit_display()
 
     def _refresh_unit_display(self) -> None:
@@ -961,6 +1007,7 @@ class DemographicsManager(DictTableEditor):
         self.setWindowTitle("Demographics Manager")
         self.column_units = self._units_from_rows(rows)
         self.column_descriptions = self._descriptions_from_dataset(dataset)
+        self._refresh_header_tooltips()
         self._refresh_unit_display()
 
     @staticmethod
@@ -1075,6 +1122,7 @@ class DemographicsManager(DictTableEditor):
         self._populate_table(rows)
         self.column_units.update(self._units_from_rows(rows))
         self.column_descriptions = self._descriptions_from_dataset(self.dataset)
+        self._refresh_header_tooltips()
         self._refresh_unit_display()
 
     def reject(self) -> None:
@@ -1096,12 +1144,13 @@ def _release_window(window: DemographicsManager) -> None:
         _OPEN_WINDOWS.remove(window)
 
 
-def demographics_manager(dataset: Any, block: Optional[bool] = None) -> Any:
+def demographics_manager(dataset: Any, block: Optional[bool] = False) -> Any:
     """Launch the demographics manager for ``dataset``.
 
-    In a notebook, the window is returned immediately and edits are applied to
-    ``dataset`` when it is closed. In a script, this blocks and returns the
-    edited dataset.
+    By default, this returns the window immediately for notebook use and
+    integrates with IPython/Jupyter's Qt event loop. Pass ``block=True`` in a
+    standalone script to wait for the window to close and return the edited
+    dataset.
     """
     if not hasattr(dataset, "dataset") or not hasattr(dataset, "get_demographics"):
         raise TypeError("dataset must provide a dataset collection and get_demographics()")
@@ -1109,8 +1158,6 @@ def demographics_manager(dataset: Any, block: Optional[bool] = None) -> Any:
     shell = _active_ipython()
     if block is None:
         block = shell is None
-    if not block:
-        app.setQuitOnLastWindowClosed(False)
     window = DemographicsManager(dataset)
     window.setAttribute(Qt.WA_DeleteOnClose, True)
     _OPEN_WINDOWS.append(window)
@@ -1123,6 +1170,10 @@ def demographics_manager(dataset: Any, block: Optional[bool] = None) -> Any:
             shell.enable_gui("qt")
         except Exception:
             block = True
+    if block:
+        app.setQuitOnLastWindowClosed(True)
+    elif shell is not None:
+        app.setQuitOnLastWindowClosed(False)
     if block:
         app.exec()
         return dataset

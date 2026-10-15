@@ -4,7 +4,6 @@ import cedalion.dataclasses as cdc
 import numpy as np
 import xarray as xr
 from scipy.linalg import toeplitz
-import random
 import scipy.signal
 import cedalion.models.glm as glm
 import cedalion.math
@@ -14,6 +13,7 @@ import pyBrainAnalyzIR.pipelines
 import pyBrainAnalyzIR.pipelines.modules
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
 import pyBrainAnalyzIR.testing.simEvents
+from pyBrainAnalyzIR.testing._random import get_rng
 import pyBrainAnalyzIR.dataclasses.dataset as dataset
 from pyBrainAnalyzIR.forward import ApproxSlab, slab_mesh
 from pyBrainAnalyzIR.media import tissues
@@ -25,15 +25,16 @@ import copy
 units = cedalion.units
 
 
-def randAR(P=5):
+def randAR(P=5, random_seed=None):
     """
     Function to generate random P-th order AR coef for generating data with serial-correlations
     Inputs:
         P: int {default=5}
+        random_seed: optional seed or shared numpy.random.Generator
     Outputs:
         a: numpy array of ar coefficients
     """
-    a = [random.random() for _ in range(P)]
+    a = get_rng(random_seed).random(P)
     a = np.flipud(np.cumsum(a))
     a = a / a.sum() * 0.99
     return a
@@ -147,7 +148,8 @@ def defaultProbe2D(warped=False, shortsep=False):
 
 
 def ARnoise(geo2D=None, measList=None,
-            t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3), P=10, sigma=0.33):
+            t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3), P=10, sigma=0.33,
+            random_seed=None):
     """ This function will simulate fNIRS CW raw amp data with AR noise
     This matches the defaults for the nirs toolbox nirs.modules.simARNoise
 
@@ -159,6 +161,7 @@ def ARnoise(geo2D=None, measList=None,
         t:      time variable.  np.array {Default 0-300s @ 10Hz}
         P:      AR model order (calls randAR(P) to generate) {default 10}
         sigma:  Spatial covariance noise prior {default 0.33}
+        random_seed: optional seed or shared numpy.random.Generator
 
     Outputs:
         rec:    Cedalion recording structure
@@ -169,6 +172,7 @@ def ARnoise(geo2D=None, measList=None,
 
     """
 
+    rng = get_rng(random_seed)
     if geo2D is None or measList is None:
         _geo2D, _measList = defaultProbe2D()
         if geo2D is None:
@@ -187,12 +191,12 @@ def ARnoise(geo2D=None, measList=None,
     # noise mean and spatial covariance
     mu = np.zeros(numchan)
     S = toeplitz([1] + [sigma] * (numchan - 1))
-    e = np.random.multivariate_normal(mu, S, nsamples)
+    e = rng.multivariate_normal(mu, S, nsamples)
     # This noise has spatial covariance (set by sigma) but no temporal correlation yet
 
     # add temporal covariance
     for i in range(numchan):
-        a = randAR(P)  # This generates a random set of AR coeffients to smooth the data
+        a = randAR(P, random_seed=rng)  # Generate AR coefficients to smooth the data.
         e[:, i] = scipy.signal.lfilter(np.ones(P + 1), np.append(1, -a), e[:, i])
 
     # Convert to raw signal
@@ -237,7 +241,7 @@ def _build_recording(data, t, geo2D, measList, geo3D_layout=None):
 
 def Data(noise=None, stim=None, snr=0.5,
          channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
-         modifiers=None):
+         modifiers=None, random_seed=None):
     """
         Function for generating simulated recording with HRF added
 
@@ -251,6 +255,7 @@ def Data(noise=None, stim=None, snr=0.5,
                 SNR to use for generating HRF.  SNR is defined from the whitened innovations of the recording data
             channels:  np.array of indices (matching recording) to add events to
                 If not provides {default None}, then randomly 1/2 of the channels will be selected and used
+            random_seed: optional seed or shared numpy.random.Generator
             basis:  glm basis set to use {default Gamma(tau=0s,sigma=3s,T=3s)}
 
         Outputs:
@@ -262,10 +267,11 @@ def Data(noise=None, stim=None, snr=0.5,
     # I could not figure out why, but when I pass this directly as an input, it ran into wierd referencing issues
     # where the stim kept propogating into later calls of the function. I was unable to figure out why since IMO,
     # this should be the same as calling on the function definition
-    if (noise is None):
-        noise = pyBrainAnalyzIR.testing.simData.ARnoise()
-    if (stim is None):
-        stim = pyBrainAnalyzIR.testing.simEvents.rand_stim_design()
+    rng = get_rng(random_seed)
+    if noise is None:
+        noise = pyBrainAnalyzIR.testing.simData.ARnoise(random_seed=rng)
+    if stim is None:
+        stim = pyBrainAnalyzIR.testing.simEvents.rand_stim_design(random_seed=rng)
 
     # We will add the HRF in chromo space, convert back to raw, and then copy the raw
     # back to the recording.
@@ -291,7 +297,7 @@ def Data(noise=None, stim=None, snr=0.5,
     if (channels is None):
         numchannels = len(data.channel)
         # Generate a random permutation
-        perm = np.random.permutation(np.arange(numchannels))
+        perm = rng.permutation(np.arange(numchannels))
         channels = np.zeros((numchannels, 2))
         half = perm[:np.uint8(np.round(numchannels / 2))]
         channels[half, 0] = 1
@@ -330,9 +336,12 @@ def Data(noise=None, stim=None, snr=0.5,
     rec = job.run(rec)
     rec['amp'] = rec['amp'].transpose('time', 'channel', 'wavelength')
 
-    if (modifiers is not None):
+    if modifiers is not None:
         for mod in modifiers:
-            rec['amp'] = mod(rec['amp'])
+            if mod is simMotionArtifact:
+                rec['amp'] = mod(rec['amp'], random_seed=rng)
+            else:
+                rec['amp'] = mod(rec['amp'])
 
     # Finally, copy the raw data structure back to the original recording
     noise['amp'] = rec['amp']
@@ -347,7 +356,15 @@ def Data(noise=None, stim=None, snr=0.5,
     return noise, truth
 
 
-def simMotionArtifact(data, spikes_per_minute=2, shifts_per_minute=0.5, motionMask=None):
+def simMotionArtifact(
+    data,
+    spikes_per_minute=2,
+    shifts_per_minute=0.5,
+    motionMask=None,
+    random_seed=None,
+):
+    """Add simulated motion artifacts using an optional seed or shared generator."""
+    rng = get_rng(random_seed)
 
     if (hasattr(data, 'wavelength')):
         data = data.transpose('time', 'channel', 'wavelength')
@@ -367,17 +384,17 @@ def simMotionArtifact(data, spikes_per_minute=2, shifts_per_minute=0.5, motionMa
     lst = np.where(motionMask)[0]
     nsamp = len(lst)
 
-    spike_inds = np.random.randint(1, nsamp - 1, size=num_spikes)
-    shift_inds = np.random.randint(1, nsamp - 1, size=num_shifts)
+    spike_inds = rng.integers(1, nsamp - 1, size=num_spikes)
+    shift_inds = rng.integers(1, nsamp - 1, size=num_shifts)
 
-    spike_amp_Z = 10 * np.random.randn(num_spikes)
-    shift_amp_Z = 10 * np.random.randn(num_shifts)
+    spike_amp_Z = 10 * rng.standard_normal(num_spikes)
+    shift_amp_Z = 10 * rng.standard_normal(num_shifts)
 
     mu = np.mean(dd, axis=0)
     stds = np.std(dd, axis=0)
 
     for i in range(num_spikes):
-        width = 9.9 * np.random.rand() + 0.1  # Spike duration of 0.1-10 seconds
+        width = 9.9 * rng.random() + 0.1  # Spike duration of 0.1-10 seconds.
 
         t_peak = time[spike_inds[i]]
         t_start = t_peak - width / 2
@@ -385,9 +402,9 @@ def simMotionArtifact(data, spikes_per_minute=2, shifts_per_minute=0.5, motionMa
         spike_time = np.concatenate((time[t_inds], time[t_inds[-2::-1]])) - t_start
 
         amp = np.abs(spike_amp_Z[i])
-        amp = amp + 0.25 * np.abs(amp) * np.random.randn(len(stds))
+        amp = amp + 0.25 * np.abs(amp) * rng.standard_normal(len(stds))
         amp *= stds
-        amp = amp + (2 * np.random.rand(len(spike_time), len(stds)) - 1) * 0.5 * amp
+        amp = amp + (2 * rng.random((len(spike_time), len(stds))) - 1) * 0.5 * amp
 
         tau = width / 2
         spike_dd = amp ** np.expand_dims((spike_time / tau), axis=1) * np.ones((1, amp.shape[1]))
@@ -406,7 +423,7 @@ def simMotionArtifact(data, spikes_per_minute=2, shifts_per_minute=0.5, motionMa
     # Prevent negative intensities
     while np.any(dd <= 0):
         has_neg = np.any(dd < 0, axis=0)
-        dd[:, has_neg] += np.random.rand(1, np.sum(has_neg)) * np.std(dd[:, has_neg], axis=0)
+        dd[:, has_neg] += rng.random((1, np.sum(has_neg))) * np.std(dd[:, has_neg], axis=0)
 
     data.data = np.reshape(dd, shp)
     return data
@@ -414,14 +431,20 @@ def simMotionArtifact(data, spikes_per_minute=2, shifts_per_minute=0.5, motionMa
 
 def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
                channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
-               modifiers=None):
+               modifiers=None, random_seed=None):
+    """Create a dataset, sharing one random generator across all simulated files.
 
+    Reusing the same ``random_seed`` reproduces the dataset while advancing the
+    generator between files so their simulated contents differ.
+    """
+    rng = get_rng(random_seed)
     dset = dataset.DataSet()
     dset.description = 'Simulated data'
 
     for _ in range(0, num_files):
         data, truth = Data(noise=noise, stim=stim, snr=snr,
-                           channels=channels, basis=basis, modifiers=None)
+                           channels=channels, basis=basis, modifiers=modifiers,
+                           random_seed=rng)
         channels = truth * 1
         dset.import_data(data)
 
@@ -433,13 +456,14 @@ def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
 # nirs.testing.simData_connectivity_shortsep)
 # ---------------------------------------------------------------------------
 
-def _mvnrnd(mu, sigma, n):
+def _mvnrnd(mu, sigma, n, random_seed=None):
     """Draw n samples from N(mu, sigma); tolerates semi-definite sigma (like MATLAB cholcov)."""
+    rng = get_rng(random_seed)
     sigma = (np.asarray(sigma) + np.asarray(sigma).T) / 2
     w, V = np.linalg.eigh(sigma)
     keep = w > np.finfo(float).eps * np.abs(w).max() * len(w)
     T = (V[:, keep] * np.sqrt(w[keep])).T
-    return np.random.randn(n, T.shape[0]) @ T + np.asarray(mu)
+    return rng.standard_normal((n, T.shape[0])) @ T + np.asarray(mu)
 
 
 def _projected_gaussian_cov(J, nodes, sigma, block=2048):
@@ -462,7 +486,7 @@ def _as_dequantified_amp(rec):
     return amp, amp.pint.dequantify().values
 
 
-def connectivity(noise=None, truth=None, pmax=5):
+def connectivity(noise=None, truth=None, pmax=5, random_seed=None):
     """Simulate data with a known (lagged, directed) connectivity pattern.
 
     Port of nirs.testing.simData_connectivity.  The optical density of the noise
@@ -475,6 +499,7 @@ def connectivity(noise=None, truth=None, pmax=5):
                 this function or an array of shape (nchan*nwl, nchan*nwl, pmax+1) using
                 channel-major / wavelength-minor ordering.  {default random with ~10% density}
         pmax:   MVAR model order {default 5}
+        random_seed: optional seed or shared numpy.random.Generator
 
     Outputs:
         rec:    copy of the noise recording with the simulated 'amp' data
@@ -483,8 +508,9 @@ def connectivity(noise=None, truth=None, pmax=5):
                 (lag index 1..pmax+1; as in nirs-toolbox, lag 1 includes the identity term
                 and the last lag is unused).
     """
+    rng = get_rng(random_seed)
     if noise is None:
-        noise = ARnoise(sigma=0)
+        noise = ARnoise(sigma=0, random_seed=rng)
 
     rec = copy.deepcopy(noise)
     amp, raw = _as_dequantified_amp(rec)
@@ -501,7 +527,7 @@ def connectivity(noise=None, truth=None, pmax=5):
     dims = ['channel_to', 'wavelength_to', 'channel_from', 'wavelength_from', 'lag']
     if truth is None:
         fract = .1
-        truth = (np.random.rand(n, n, pmax + 1) > (1 - fract / np.sqrt(n))).astype(float)
+        truth = (rng.random((n, n, pmax + 1)) > (1 - fract / np.sqrt(n))).astype(float)
         truth[:, :, -1] = 0
         truth[:, :, 0] = truth[:, :, 0] + np.eye(n)
         truth = np.clip(truth, -1, 1)
@@ -515,7 +541,7 @@ def connectivity(noise=None, truth=None, pmax=5):
 
     P = np.zeros(truth.shape)
     for i in range(n):
-        a = truth[i] * np.random.randn(n, pmax + 1)
+        a = truth[i] * rng.standard_normal((n, pmax + 1))
         a[i, :] = f[i]
         pos = a > 0
         neg = a < 0
@@ -545,7 +571,7 @@ def connectivity(noise=None, truth=None, pmax=5):
 
 
 def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=None,
-                          warped=False, mesh=None):
+                          warped=False, mesh=None, random_seed=None):
     """Simulate resting-state data with known brain connectivity plus superficial (skin) noise.
 
     Port of nirs.testing.simData_connectivity_shortsep.  Uses the default probe with a
@@ -567,11 +593,13 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
                 source-detector distances used in the simulation) always uses the regular layout, since the
                 warped layout has some long channels shorter than the 1.5 cm short-separation threshold.
         mesh:   cedalion Voxels with the slab nodes {slab_mesh with 5 mm lateral spacing}
+        random_seed: optional seed or shared numpy.random.Generator
 
     Outputs:
         rec:    cedalion Recording with raw 'amp' data
         truth:  xr.DataArray (channel_to, channel_from) over the long-separation channels
     """
+    rng = get_rng(random_seed)
     if t is None:
         t = np.round(np.arange(3001) * 0.1, 3)
     t = np.asarray(t, dtype=float)
@@ -584,7 +612,10 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
     lags = np.atleast_1d(np.asarray(lags, dtype=bool))
 
     geo2D, measList = defaultProbe2D(warped=warped, shortsep=True)
-    geo3D_layout = defaultProbe2D(warped=False, shortsep=True)[0] if warped else None
+    geo3D_layout = (
+        defaultProbe2D(warped=False, shortsep=True)[0]
+        if warped else None
+    )
     wavelengths = measList['wavelength']
     nch = len(measList['channel'])
     nwl = len(wavelengths)
@@ -598,7 +629,7 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
 
     # ---- superficial (skin) noise ----
     if sigma == 0:
-        e = np.random.randn(nsamp, nch, nwl)
+        e = rng.standard_normal((nsamp, nch, nwl))
     else:
         if mesh is None:
             mesh = slab_mesh(origin=(-100., -100., 0.), dim=(5., 5., 2.5), shape=(41, 41, 21),
@@ -612,10 +643,16 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
         superficial = nodes[:, 2] <= 2.5
         C = _projected_gaussian_cov(J[:, superficial], nodes[superficial], sigma)
 
-        a = randAR(pmax)
-        a2 = randAR(pmax)
-        e = scipy.signal.lfilter([1], np.append(1, -a), _mvnrnd(np.zeros(nch * nwl), C, nsamp), axis=0)
-        e2 = scipy.signal.lfilter([1], np.append(1, -a2), _mvnrnd(np.zeros(nch * nwl), C, nsamp), axis=0)
+        a = randAR(pmax, random_seed=rng)
+        a2 = randAR(pmax, random_seed=rng)
+        e = scipy.signal.lfilter(
+            [1], np.append(1, -a),
+            _mvnrnd(np.zeros(nch * nwl), C, nsamp, random_seed=rng), axis=0
+        )
+        e2 = scipy.signal.lfilter(
+            [1], np.append(1, -a2),
+            _mvnrnd(np.zeros(nch * nwl), C, nsamp, random_seed=rng), axis=0
+        )
         e = e.reshape(nsamp, nch, nwl)
         e2 = e2.reshape(nsamp, nch, nwl)
         if nwl > 1:
@@ -632,7 +669,7 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
     else:
         fract = .25
         while True:
-            tr = (np.random.rand(nlong, nlong) > (1 - fract / np.sqrt(nlong))).astype(float)
+            tr = (rng.random((nlong, nlong)) > (1 - fract / np.sqrt(nlong))).astype(float)
             np.fill_diagonal(tr, 1)
             tr = tr + tr.T
             tr = tr / tr.sum(axis=0, keepdims=True)
@@ -648,18 +685,20 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
     et = np.zeros((nsamp, nch, nwl))
     pairs = [(i, j) for i in range(nlong) for j in range(i + 1, nlong) if truth[i, j] != 0]
     for iw in range(nwl):
-        et_w = _mvnrnd(np.zeros(nlong), truth + np.eye(nlong), nsamp)
+        et_w = _mvnrnd(
+            np.zeros(nlong), truth + np.eye(nlong), nsamp, random_seed=rng
+        )
         for shift, use in enumerate(lags):
             if not use:
                 continue
             for i, j in pairs:
-                a = np.random.randn(nsamp)
-                a2 = np.random.randn(nsamp)
+                a = rng.standard_normal(nsamp)
+                a2 = rng.standard_normal(nsamp)
                 a_shift = np.concatenate([np.zeros(shift), a[:nsamp - shift]])
                 a2_shift = np.concatenate([np.zeros(shift), a2[:nsamp - shift]])
                 et_w[:, i] += a + a2_shift
                 et_w[:, j] += a_shift + a2
-        ar = randAR(pmax)
+        ar = randAR(pmax, random_seed=rng)
         et[:, long_idx, iw] = scipy.signal.lfilter([1], np.append(1, -ar), et_w, axis=0)
 
     et[:, long_idx] = snr * 6 * et[:, long_idx] / et[:, long_idx].std(axis=0, ddof=1, keepdims=True)

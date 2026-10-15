@@ -124,25 +124,64 @@ class Statistics:
 
         num_channels = model.shape[0]
         num_types = model.shape[1]
-        num_conds = len(ss[0, 0].params)
+        first_params = ss[0, 0].params
+        num_conds = len(first_params)
+        condition_names = (
+            first_params.index.tolist()
+            if hasattr(first_params, "index")
+            else list(ss[0, 0].model.exog_names)
+        )
         ntps = len(ss[0, 0].resid)
 
         channels = model.channel.values.astype(str).tolist()
         types = model.chromo.values.astype(str).tolist()
-        conds = ss[0, 0].params.index.tolist()
+        conds = condition_names
 
         beta = np.zeros((num_channels, num_types, num_conds), dtype=ss[0, 0].params.dtype)
         stderr = np.zeros((num_channels, num_types, num_conds), dtype=ss[0, 0].params.dtype)
-        resid = np.ones((num_channels, num_types, ntps), dtype=ss[0, 0].resid.dtype)
+        has_aligned_residuals = any(
+            hasattr(result, "_pybrain_full_resid")
+            for result in ss.reshape(-1)
+        )
+        if has_aligned_residuals:
+            ntps = max(
+                np.asarray(
+                    getattr(result, "_pybrain_full_resid", result.resid)
+                ).size
+                for result in ss.reshape(-1)
+            )
+            resid = np.full(
+                (num_channels, num_types, ntps), np.nan, dtype=float
+            )
+        else:
+            resid = np.ones(
+                (num_channels, num_types, ntps), dtype=ss[0, 0].resid.dtype
+            )
 
-        covB = ss[0, 0].cov_params() * 0
+        if has_aligned_residuals:
+            covB = np.zeros((num_conds, num_conds), dtype=float)
+            covariance_fit_count = 0
+        else:
+            covB = ss[0, 0].cov_params() * 0
 
         for i in range(0, num_channels):
             for j in range(0, num_types):
-                beta[i, j, :] = ss[i, j].params.to_numpy()
-                resid[i, j, :] = ss[i, j].resid
-                covB += ss[i, j].cov_params()
+                beta[i, j, :] = np.asarray(ss[i, j].params)
+                residual = getattr(ss[i, j], "_pybrain_full_resid", ss[i, j].resid)
+                resid[i, j, :np.asarray(residual).size] = residual
+                result_covariance = np.asarray(ss[i, j].cov_params())
+                if has_aligned_residuals:
+                    if np.isfinite(result_covariance).all():
+                        covB += result_covariance
+                        covariance_fit_count += 1
+                else:
+                    covB += ss[i, j].cov_params()
                 stderr[i, j, :] = ss[i, j].bse
+
+        if has_aligned_residuals and covariance_fit_count:
+            covB /= covariance_fit_count
+        elif has_aligned_residuals:
+            covB[:] = np.nan
 
         # labels must follow the (channel, type, condition) order of beta.flatten()
         channelsFull = np.repeat(np.asarray(channels, dtype=object), num_types * num_conds)
@@ -152,9 +191,39 @@ class Statistics:
         beta = beta.flatten()
         stderr = stderr.flatten()
         resid = resid.reshape((-1, ntps))
-        cov = np.kron(np.corrcoef(resid), covB.to_numpy() / (num_channels * num_types))
-
-        cov = cov @ np.diag(stderr**2 / np.diag(cov))
+        if has_aligned_residuals:
+            flattened_resid = resid.reshape((-1, ntps))
+            correlations = np.eye(flattened_resid.shape[0])
+            for row in range(flattened_resid.shape[0]):
+                for col in range(row):
+                    common = np.isfinite(flattened_resid[row]) & np.isfinite(
+                        flattened_resid[col]
+                    )
+                    if common.sum() >= 2:
+                        left = flattened_resid[row, common]
+                        right = flattened_resid[col, common]
+                        if np.std(left) > 0 and np.std(right) > 0:
+                            correlations[row, col] = correlations[col, row] = (
+                                np.corrcoef(left, right)[0, 1]
+                            )
+            resid_correlation = correlations
+        else:
+            resid_correlation = np.corrcoef(resid.reshape((-1, ntps)))
+        cov = np.kron(
+            resid_correlation, np.asarray(covB) / (num_channels * num_types)
+        )
+        if has_aligned_residuals:
+            variance = np.diag(cov)
+            scale = np.full(stderr.shape, np.nan)
+            valid_scale = (
+                np.isfinite(stderr)
+                & np.isfinite(variance)
+                & (variance > 0)
+            )
+            scale[valid_scale] = stderr[valid_scale] / np.sqrt(variance[valid_scale])
+            cov = cov * scale[:, None] * scale[None, :]
+        else:
+            cov = cov @ np.diag(stderr**2 / np.diag(cov))
 
         self.covariance = xr.DataArray(cov,
                                        coords={
@@ -179,7 +248,18 @@ class Statistics:
                                     },
                                   dims=['indices']
                                   )
-        self.dof = ss[0, 0].nobs - len(ss[0, 0].params)
+        if has_aligned_residuals:
+            channel_dofs = []
+            for result in ss.reshape(-1):
+                effective_nobs = min(
+                    getattr(result, "_pybrain_valid_count", result.nobs),
+                    result.nobs,
+                )
+                if effective_nobs > 0:
+                    channel_dofs.append(effective_nobs - len(result.params))
+            self.dof = max(0, min(channel_dofs)) if channel_dofs else 0
+        else:
+            self.dof = ss[0, 0].nobs - len(ss[0, 0].params)
 
     def table(self):
 

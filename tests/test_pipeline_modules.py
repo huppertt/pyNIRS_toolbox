@@ -7,7 +7,9 @@ chaining/option-lookup behaviour used by ``examples/02_PipelineCreation.ipynb``.
 """
 from __future__ import annotations
 
+import numpy as np
 import pytest
+import xarray as xr
 
 pytest.importorskip("cedalion")
 
@@ -15,6 +17,7 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (  # noqa: E402
     OptionsDict,
     OptionVariable,
 )
+from pyBrainAnalyzIR.testing import simData  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.events as events        # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.filters as filters      # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.glm as glm              # noqa: E402
@@ -22,6 +25,7 @@ import pyBrainAnalyzIR.pipelines.modules.mixedeffects as mixed   # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.motion_correction as mc  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.utilities as util      # noqa: E402
+import pyBrainAnalyzIR.pipelines.modules.data_masking as masks   # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 
@@ -54,6 +58,18 @@ ALL_MODULES = [
     util.DiscardTypes,
     util.KeepTypes,
     util.RemoveTooLongDistance,
+    masks.PeakSpectralPowerMask,
+    masks.ScalpCouplingIndexMask,
+    masks.SignalToNoiseRatioMask,
+    masks.MeanAmplitudeMask,
+    masks.SourceDetectorDistanceMask,
+    masks.GlobalVarianceTemporalDerivativeMask,
+    masks.MotionArtifactDetectionMask,
+    masks.MotionMaskRefinement,
+    masks.StandardDeviationOutlierMask,
+    masks.GradientOutlierMask,
+    masks.CombinedOutlierMask,
+    masks.BaselineShiftMask,
 ]
 
 MODULE_IDS = [cls.__name__ for cls in ALL_MODULES]
@@ -74,6 +90,8 @@ def test_module_declares_advanced_flag(cls):
     job = cls()
     assert "advanced_module" in vars(job)
     assert isinstance(job.advanced_module, bool)
+    if cls.__module__.endswith(".data_masking"):
+        assert job.advanced_module
 
 
 @pytest.mark.parametrize("cls", ALL_MODULES, ids=MODULE_IDS)
@@ -121,6 +139,92 @@ def test_reset_all_options_round_trips(cls):
     job.reset_all_options()
     for key, opt in job.options.options().items():
         assert opt.is_default, f"{cls.__name__}.{key} is not at its default"
+
+
+def test_motion_artifact_mask_module_runs_on_dataset_and_stores_boolean_masks():
+    dataset, _truth = simData.simdataset(
+        num_files=2, snr=5, random_seed=2026
+    )
+    module = masks.MotionArtifactDetectionMask()
+
+    returned = module.run(dataset)
+
+    assert returned is dataset
+    assert all("motion_artifact_detection" in recording.masks for recording in dataset.dataset)
+    for recording in dataset.dataset:
+        mask = recording.masks["motion_artifact_detection"]
+        assert mask.dtype == bool
+        assert mask.dims == ("time", "channel")
+
+
+def test_motion_correct_pca_combines_recording_quality_masks(monkeypatch):
+    recording, _truth = simData.Data(snr=10, random_seed=2026)
+    data = recording.timeseries["amp"]
+    detected_mask = xr.ones_like(data, dtype=bool)
+    detected_mask.values[3, 0, 0] = False
+    detected_mask.values[4, 1, 0] = False
+
+    stored_mask = xr.ones_like(data.isel(wavelength=0, drop=True), dtype=bool)
+    stored_mask.values[3, 1] = False
+    stored_mask.values[5, 0] = False
+    recording.set_mask("existing_quality", stored_mask)
+
+    captured = {}
+
+    def fake_id_motion(*args, **kwargs):
+        return detected_mask
+
+    def fake_motion_correct(data, tInc, nSV):
+        captured.update(tInc=tInc, nSV=nSV)
+        return data, None, None
+
+    monkeypatch.setattr(mc.quality, "id_motion", fake_id_motion)
+    monkeypatch.setattr(
+        mc.motion_correct, "motion_correct_PCA", fake_motion_correct
+    )
+    module = mc.MotionCorrectPCA()
+    module.inputName = "amp"
+    module.outputName = "amp"
+    module.options["recursive"] = True
+
+    returned = module.run(recording)
+
+    assert returned is recording
+    actual_mask = captured["tInc"].broadcast_like(data)
+    expected_mask = detected_mask & stored_mask.broadcast_like(data)
+    xr.testing.assert_equal(actual_mask, expected_mask)
+    xr.testing.assert_equal(recording.timeseries["amp"], data)
+
+
+MASK_MODULES = [
+    masks.PeakSpectralPowerMask,
+    masks.ScalpCouplingIndexMask,
+    masks.SignalToNoiseRatioMask,
+    masks.MeanAmplitudeMask,
+    masks.SourceDetectorDistanceMask,
+    masks.GlobalVarianceTemporalDerivativeMask,
+    masks.MotionArtifactDetectionMask,
+    masks.MotionMaskRefinement,
+    masks.StandardDeviationOutlierMask,
+    masks.GradientOutlierMask,
+    masks.CombinedOutlierMask,
+    masks.BaselineShiftMask,
+]
+
+
+@pytest.mark.parametrize("cls", MASK_MODULES, ids=lambda cls: cls.__name__)
+def test_quality_mask_module_generates_a_canonical_boolean_mask(cls):
+    recording, _truth = simData.Data(snr=10, random_seed=2026)
+    module = cls()
+
+    returned = module.run(recording)
+
+    assert returned is recording
+    mask = recording.masks[module.mask_key]
+    assert mask.dtype == bool
+    assert mask.dims == ("time", "channel")
+    assert mask.sizes["time"] == recording.timeseries["amp"].sizes["time"]
+    assert mask.sizes["channel"] == recording.timeseries["amp"].sizes["channel"]
 
 
 @pytest.mark.parametrize("cls", ALL_MODULES, ids=MODULE_IDS)

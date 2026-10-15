@@ -9,9 +9,10 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
 
-from PySide6.QtWidgets import QMenuBar, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QDialog, QMenuBar, QMessageBox  # noqa: E402
 
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
+from pyBrainAnalyzIR.vis.bids_info_manager import BidsInfoManager  # noqa: E402
 
 nirsview = importlib.import_module("pyBrainAnalyzIR.vis.NIRSviewIR")
 
@@ -47,6 +48,176 @@ def test_file_menu_actions_are_flat():
         "Load File",
         "Exit",
     ]
+
+
+def test_edit_data_menu_puts_bids_information_first():
+    window = nirsview.NIRSviewIRWindow(DataSet([Recording()]))
+    menu_bar = window.findChild(QMenuBar)
+    edit_data_menu = next(
+        action.menu() for action in menu_bar.actions()
+        if action.text() == "Edit Data"
+    )
+
+    assert [action.text() for action in edit_data_menu.actions()] == [
+        "Edit BIDS information",
+        "Edit Demographics",
+        "Edit Stimulus Timing",
+        "Edit Data Quality Mask",
+    ]
+
+
+def test_edit_data_quality_mask_launches_manager(monkeypatch):
+    dset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dset)
+    manager_module = importlib.import_module(
+        "pyBrainAnalyzIR.vis.data_masking_manager"
+    )
+    calls = []
+    managers = []
+
+    class FakeSignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeManager:
+        submitted = FakeSignal()
+
+    def open_manager(dataset, block):
+        calls.append((dataset, block))
+        manager = FakeManager()
+        managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(manager_module, "data_masking_manager", open_manager)
+
+    window._open_data_masking_manager()
+
+    assert calls == [(dset, False)]
+    assert not window.data_changed
+    managers[0].submitted.callback()
+    assert window.data_changed
+
+
+def test_edit_data_quality_mask_without_recordings_shows_message(monkeypatch):
+    window = nirsview.NIRSviewIRWindow(DataSet())
+    messages = []
+    monkeypatch.setattr(
+        nirsview.QMessageBox,
+        "information",
+        lambda *args: messages.append(args),
+    )
+
+    window._open_data_masking_manager()
+
+    assert messages
+    assert messages[0][1] == "Edit Data Quality Mask"
+
+
+def test_edit_bids_information_saves_both_templates(monkeypatch):
+    dset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dset)
+    calls = []
+
+    class FakeBidsInfoManager:
+        def __init__(self, dataset, parent):
+            assert dataset is dset
+            assert parent is window
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def readme_values(self):
+            return {"Overview": "Edited overview."}
+
+        def readme_include_values(self):
+            return {"Overview": False}
+
+        def dataset_description_values(self):
+            return {"Name": "Edited dataset."}
+
+    monkeypatch.setattr(
+        "pyBrainAnalyzIR.vis.bids_info_manager.BidsInfoManager",
+        FakeBidsInfoManager,
+    )
+    original_add_readme = dset.add_meta_readme
+    original_add_readme_include = dset.add_meta_readme_include
+    original_add_description = dset.add_meta_dataset_description
+
+    def add_readme(values):
+        calls.append(("readme", values))
+        original_add_readme(values)
+
+    def add_description(values):
+        calls.append(("dataset_description", values))
+        original_add_description(values)
+
+    def add_readme_include(values):
+        calls.append(("readme_include", values))
+        original_add_readme_include(values)
+
+    monkeypatch.setattr(dset, "add_meta_readme", add_readme)
+    monkeypatch.setattr(dset, "add_meta_readme_include", add_readme_include)
+    monkeypatch.setattr(dset, "add_meta_dataset_description", add_description)
+
+    window._edit_bids_information()
+
+    assert calls == [
+        ("readme", {"Overview": "Edited overview."}),
+        ("readme_include", {"Overview": False}),
+        ("dataset_description", {"Name": "Edited dataset."}),
+    ]
+    descriptors = dset.dataset[0].meta_data["_bids_descriptors"]
+    descriptions = dset.dataset[0].meta_data["_bids_descriptions"]
+    assert descriptors["readme"]["Overview"] == "Edited overview."
+    assert descriptors["dataset_description"]["Name"] == "Edited dataset."
+    assert descriptions["readme_include:Overview"] is False
+    assert window.data_changed is True
+
+
+def test_bids_info_editor_uses_dataset_values_and_preserves_structured_fields():
+    dset = DataSet([Recording()])
+    dset.add_meta_readme({"Overview": "Stored overview."})
+    dset.add_meta_dataset_description({
+        "Name": "Stored dataset",
+        "Authors": ["A. Researcher", "B. Scientist"],
+        "StimulusPresentation": {"SoftwareName": "PsychoPy"},
+    })
+    dialog = BidsInfoManager(dset)
+
+    assert dialog.tabs.tabText(0) == "ReadMe"
+    assert dialog.tabs.tabText(1) == "Dataset Description"
+    assert dialog._editors["ReadMe"]["Overview"].toPlainText() == "Stored overview."
+    assert dialog._editors["Dataset Description"]["Name"].toPlainText() == (
+        "Stored dataset"
+    )
+    assert dialog._editors["Dataset Description"]["Authors"].toPlainText() == (
+        "A. Researcher\nB. Scientist"
+    )
+    assert dialog._editors["Dataset Description"][
+        "StimulusPresentation"
+    ].toPlainText() == '{\n  "SoftwareName": "PsychoPy"\n}'
+    assert all(dialog.readme_include_values().values())
+
+    dialog._editors["ReadMe"]["Overview"].setPlainText("Updated overview.")
+    dialog._readme_checkboxes["Overview"].setChecked(False)
+    dialog._editors["Dataset Description"]["Authors"].setPlainText(
+        "First Author\nSecond Author"
+    )
+    dialog._editors["Dataset Description"]["StimulusPresentation"].setPlainText(
+        '{"SoftwareName": "Presentation"}'
+    )
+    dialog._accept_if_valid()
+
+    assert dialog.result() == QDialog.Accepted
+    assert dialog.readme_values()["Overview"] == "Updated overview."
+    assert dialog.readme_include_values()["Overview"] is False
+    assert dialog.dataset_description_values()["Authors"] == [
+        "First Author",
+        "Second Author",
+    ]
+    assert dialog.dataset_description_values()["StimulusPresentation"] == {
+        "SoftwareName": "Presentation"
+    }
 
 
 def test_demographics_panel_hides_bids_descriptions():

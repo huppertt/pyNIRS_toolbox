@@ -3,6 +3,10 @@ from pyBrainAnalyzIR.vis.pipeline_manager import pipeline_manager
 from pyBrainAnalyzIR.vis.stimulus_manager import stimulus_manager
 from pyBrainAnalyzIR.vis.demographics_manager import DemographicsManager, demographics_manager
 from pyBrainAnalyzIR.vis.data_quality_manager import DataQualityManager, data_quality_manager
+from pyBrainAnalyzIR.vis.data_masking_manager import (
+    DataMaskingManager,
+    data_masking_manager,
+)
 
 __all__ = [
     "NIRSviewIR",
@@ -12,4 +16,6 @@ __all__ = [
     "demographics_manager",
     "DataQualityManager",
     "data_quality_manager",
+    "DataMaskingManager",
+    "data_masking_manager",
 ]

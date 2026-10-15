@@ -1,6 +1,7 @@
 
 import pandas as pd
 import numpy as np
+from pyBrainAnalyzIR.testing._random import get_rng
 
 """
 This is a collection of functions for generating stimulus stiming information used in the simData function
@@ -10,7 +11,8 @@ This is a collection of functions for generating stimulus stiming information us
 """
 
 def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
-                        block_dur=20, block_space=20, ncond=1,randomize_order=False):
+                        block_dur=20, block_space=20, ncond=1,
+                        randomize_order=False, random_seed=None):
     """
         This function generates a blocked design
 
@@ -19,15 +21,13 @@ def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
             block_dur: duration of blocks (float; seconds) {default 20s}
             block_space: (float seconds) {default 20s}.  This is the average time between the onsets of blocks
             ncond:  Number of conditions to simulate {default 1}. Blocks are named "A","B",...
+            random_seed: optional seed or shared numpy.random.Generator
 
         Outputs:
             stim design: pandas.DataFrame
     """
-    t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3)
-    block_dur=20
-    block_space=20
-    ncond=2
-    randomize_order=False
+    rng = get_rng(random_seed)
+    t = np.asarray(t)
 
     # min max times
     tmin = np.min(t) + 1 * block_dur
@@ -40,7 +40,7 @@ def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
     onsets = onsets[:nevents*ncond]
 
     if randomize_order:
-        np.random.shuffle(onsets)
+        rng.shuffle(onsets)
 
 
     # durations
@@ -58,7 +58,7 @@ def blocked_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
     return stim
 
 def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
-                     stim_dur=2, stim_space=7, ncond=1):
+                     stim_dur=2, stim_space=7, ncond=1, random_seed=None):
     """
         This function generates a random event-related design
 
@@ -67,11 +67,13 @@ def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
             stim_dur: duration of events (float; seconds) {default 2s}
             stim_space: (float seconds) {default 7s}.  This is the average time between the onsets of events
             ncond:  Number of conditions to simulate {default 1}. Events are named "A","B",...
+            random_seed: optional seed or shared numpy.random.Generator
 
         Outputs:
             stim design: pandas.DataFrame
     """
 
+    rng = get_rng(random_seed)
     # min max times
     tmin = np.min(t) + 1 * stim_dur
     tmax = np.max(t) - 2 * stim_dur
@@ -80,7 +82,7 @@ def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
     nrnd = round(2 * (tmax - tmin) / stim_space)
 
     # random times between tasks
-    dt = stim_space / 2 + np.random.exponential(stim_space / 2, nrnd)
+    dt = stim_space / 2 + rng.exponential(stim_space / 2, nrnd)
 
     # onsets
     onset = tmin + np.cumsum(np.concatenate(([0], dt)))
@@ -94,7 +96,7 @@ def rand_stim_design(t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3),
 
     # output
     stim = {}
-    r = np.random.randint(1, ncond + 1)
+    r = rng.integers(1, ncond + 1)
 
     stim = pd.DataFrame()
     for i in range(1, ncond + 1):

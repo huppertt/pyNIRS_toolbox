@@ -6,9 +6,9 @@ Usage
 
     NIRSviewIR(dataset)
 
-In a script this blocks until the window is closed.  Inside a Jupyter/IPython
-notebook the Qt event loop is integrated with the kernel instead, so the call
-returns immediately and the notebook stays responsive.
+By default, this returns immediately and integrates Qt's event loop with a
+Jupyter/IPython kernel. In a standalone script, pass ``block=True`` to run
+the event loop until the window closes.
 
 From the command line, with a pickled `DataSet`::
 
@@ -311,11 +311,17 @@ class NIRSviewIRWindow(QMainWindow):
 
         # Edit Data menu
         edit_data_menu = menu_bar.addMenu("Edit Data")
+        edit_data_menu.addAction("Edit BIDS information").triggered.connect(
+            self._edit_bids_information
+        )
         edit_data_menu.addAction("Edit Demographics").triggered.connect(
             self.edit_demographics
         )
         edit_data_menu.addAction("Edit Stimulus Timing").triggered.connect(
             self._edit_stimulus_timing
+        )
+        edit_data_menu.addAction("Edit Data Quality Mask").triggered.connect(
+            self._open_data_masking_manager
         )
 
         # Analysis menu
@@ -729,6 +735,17 @@ class NIRSviewIRWindow(QMainWindow):
 
         data_quality_manager(self.dataset, block=False)
 
+    def _open_data_masking_manager(self) -> None:
+        if not getattr(self.dataset, "dataset", []):
+            QMessageBox.information(
+                self, "Edit Data Quality Mask", "No recordings loaded."
+            )
+            return
+        from pyBrainAnalyzIR.vis.data_masking_manager import data_masking_manager
+
+        manager = data_masking_manager(self.dataset, block=False)
+        manager.submitted.connect(self._mark_dataset_changed)
+
     def _edit_stimulus_timing(self) -> None:
         """Open the Stimulus Manager and refresh the view with its result."""
         from pyBrainAnalyzIR.vis.stimulus_manager import edit_stimulus_events
@@ -745,6 +762,35 @@ class NIRSviewIRWindow(QMainWindow):
         self._set_status(
             "Stimulus timing updated." if updated else "Stimulus editing cancelled."
         )
+
+    def _edit_bids_information(self) -> None:
+        """Edit the dataset README and dataset-description metadata."""
+        if not getattr(self.dataset, "dataset", []):
+            QMessageBox.information(
+                self, "Edit BIDS Information", "No recordings are loaded."
+            )
+            return
+
+        from pyBrainAnalyzIR.vis.bids_info_manager import BidsInfoManager
+
+        dialog = BidsInfoManager(self.dataset, self)
+        if not dialog.exec():
+            return
+        try:
+            self.dataset.add_meta_readme(dialog.readme_values())
+            self.dataset.add_meta_readme_include(dialog.readme_include_values())
+            self.dataset.add_meta_dataset_description(
+                dialog.dataset_description_values()
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Edit BIDS Information",
+                f"Could not save BIDS information:\n{exc}",
+            )
+            return
+
+        self._mark_dataset_changed()
+        self._set_status("BIDS information updated.")
 
     def _edit_pipeline(self) -> None:
         self._set_status("Opening Pipeline Manager…")
@@ -1588,21 +1634,17 @@ def _active_ipython():
 
 def NIRSviewIR(
     dataset: Any,
-    block: Optional[bool] = None,
+    block: Optional[bool] = False,
     plot_on_scalp: bool = True,
 ) -> "NIRSviewIRWindow":
     """Launch the NIRSviewIR browser for `dataset` (a `DataSet` instance).
 
-    `block` defaults to True in plain scripts and False under IPython/Jupyter,
-    where the Qt event loop is instead hooked into the kernel.  The window is
-    returned so it can be inspected or closed programmatically.
+    `block` defaults to False for notebook use, where the Qt event loop is
+    integrated with the kernel. Pass ``block=True`` in a standalone script to
+    run the Qt event loop until the window closes. The window is returned so
+    it can be inspected or closed programmatically.
     """
     app = QApplication.instance() or QApplication(sys.argv or ["NIRSviewIR"])
-    # Closing the last window must not quit the shared QApplication, otherwise
-    # the kernel's qt event-loop integration is torn down and a second call to
-    # NIRSviewIR() in the same session hangs/crashes the kernel.
-    app.setQuitOnLastWindowClosed(False)
-
     shell = _active_ipython()
     if block is None:
         block = shell is None
@@ -1622,6 +1664,13 @@ def NIRSviewIR(
             shell.enable_gui("qt")
         except Exception:
             block = True   # kernel cannot host the Qt loop; fall back to blocking
+
+    # Keep the shared Qt application alive for integrated IPython use, but let
+    # a normal blocking command-line launch exit when its last window closes.
+    if block:
+        app.setQuitOnLastWindowClosed(True)
+    elif shell is not None:
+        app.setQuitOnLastWindowClosed(False)
 
     if block:
         app.exec()

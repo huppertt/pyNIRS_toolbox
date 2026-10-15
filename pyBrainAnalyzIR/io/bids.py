@@ -1,5 +1,10 @@
 from pathlib import Path
+import copy
+import re
+import shutil
+import subprocess
 import pandas as pd
+import numpy as np
 import json
 from collections import OrderedDict
 from cedalion.dataclasses.geometry import PointType
@@ -7,6 +12,7 @@ import cedalion.xrutils as xrutils
 
 from cedalion.io.snirf import read_snirf, write_snirf
 from datetime import datetime
+from typing import Any
 
 from cedalion import units
 import pyBrainAnalyzIR
@@ -17,30 +23,121 @@ import pyBrainAnalyzIR.dataclasses.dataset as dataset
 This dataset is organized according to the Brain Imaging Data Structure (BIDS) standard. For more information about BIDS, please visit [https://bids.neuroimaging.io/](https://bids.neuroimaging.io/).  # noqa: E501
 """
 
+
+def validate_bids_folder(folder: str | Path, timeout: float = 300) -> dict[str, Any]:
+    """Validate a BIDS dataset using the official BIDS Validator CLI.
+
+    The validator runs locally and emits its JSON report. Install the official
+    ``bids-validator`` or ``bids-validator-deno`` command, or install Deno to
+    run the validator from JSR. The first Deno run may need network access to
+    download the validator.
+
+    Args:
+        folder: Path to the BIDS dataset root.
+        timeout: Maximum time in seconds to wait for validation.
+
+    Returns:
+        The JSON report produced by the BIDS Validator.
+
+    Raises:
+        FileNotFoundError: If the dataset folder or validator executable is
+            unavailable.
+        ValueError: If ``folder`` is not a directory or ``timeout`` is not
+            positive.
+        RuntimeError: If the validator does not produce a JSON report.
+        subprocess.TimeoutExpired: If validation exceeds ``timeout``.
+    """
+    dataset_path = Path(folder).expanduser()
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"BIDS folder does not exist: {dataset_path}")
+    if not dataset_path.is_dir():
+        raise ValueError(f"BIDS path must be a folder: {dataset_path}")
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+
+    dataset_path = dataset_path.resolve()
+    validator = shutil.which("bids-validator") or shutil.which("bids-validator-deno")
+    if validator:
+        command = [validator, str(dataset_path), "--format", "json"]
+    else:
+        deno = shutil.which("deno")
+        if not deno:
+            raise FileNotFoundError(
+                "The BIDS Validator was not found. Install the official "
+                "'bids-validator' command or the Deno runtime."
+            )
+        command = [
+            deno, "run", "-ERWN", "jsr:@bids/validator",
+            str(dataset_path), "--format", "json",
+        ]
+
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        details = result.stderr.strip() or result.stdout.strip() or "No output"
+        raise RuntimeError(
+            "The BIDS Validator did not return a JSON report "
+            f"(exit status {result.returncode}): {details}"
+        ) from exc
+
+    if not isinstance(report, dict):
+        raise RuntimeError("The BIDS Validator JSON report must be an object")
+    return report
+
+
 def write_bids_data(data, path: str | Path,
                     participant_id: str,
                     run: str,
                     task: str = 'func',
                     session: str | None = None,
                     overwrite_snirf: bool = False,
-                    include_derivatives: bool = True):
-    """Write individual data to a BIDS-compliant directory."""
-    if session is None:
-        folder = Path(path) / f"sub-{participant_id}"
-        filename = f"sub-{participant_id}_task-{task}_run-{run}"
-    else:
-        folder = Path(path) / f"sub-{participant_id}" / f"ses-{session}"
-        filename = f"sub-{participant_id}_ses-{session}_task-{task}_run-{run}"
+                    include_derivatives: bool = True,
+                    stimulus_presentation: dict[str, Any] | None = None,
+                    event_descriptions: dict[str, str] | None = None):
+    """Write individual data and NIRS channel/optode sidecars in BIDS format."""
+    participant_id = _bids_label(participant_id)
+    task = _bids_label(task)
+    run = _bids_label(run)
+    if session is not None:
+        session = _bids_label(session)
 
-    snirffile = folder / (filename + "_fnirs.snirf")
-    snirffile.parent.mkdir(parents=True, exist_ok=True)
+    folder, filename, snirffile = _bids_nirs_paths(
+        path, participant_id, run, task, session
+    )
+    legacy_snirffile = folder / (filename + "_fnirs.snirf")
+    _migrate_legacy_bids_file(legacy_snirffile, snirffile)
 
     # TODO - the SNIRF writer assumes this order.  It shouldn't assume, but it isn't my code so I just need to conform to it.
     stim = data.stim[["trial_type","onset", "duration", "value"]]
 
-    if overwrite_snirf or not snirffile.exists():
+    if snirffile.exists():
+        _assert_snirf_raw_data_matches(snirffile, data)
+    else:
+        snirffile.parent.mkdir(parents=True, exist_ok=True)
         _write_snirf_with_timeseries(snirffile, data, ["amp"], stim)
-    write_bids_stim(stim.copy(), path=folder / (filename + "_events.tsv"))
+    _write_bids_nirs_sidecars(
+        data,
+        folder,
+        filename,
+        participant_id,
+        session,
+    )
+    events_path = folder / (filename + "_events.tsv")
+    write_bids_stim(
+        data.stim.copy(),
+        path=events_path,
+        stimulus_presentation=stimulus_presentation,
+        event_descriptions=event_descriptions,
+    )
+    (folder / (filename + "_stim.tsv")).unlink(missing_ok=True)
+    (folder / (filename + "_stim.json")).unlink(missing_ok=True)
 
     derivative_keys = _derivative_timeseries_keys(data)
     if include_derivatives and derivative_keys:
@@ -50,6 +147,7 @@ def write_bids_data(data, path: str | Path,
             _write_snirf_with_timeseries(derivative_file, data, derivative_keys, stim)
 
     info={'TaskName': task,
+          'Description': 'Raw fNIRS amplitude time series for this recording.',
           'Version': data.meta_data.get('Version', 'unknown'),
           'MeasurementDate': data.meta_data.get('MeasurementDate', 'unknown'),
           'MeasurementTime': data.meta_data.get('MeasurementTime', 'unknown'),
@@ -57,9 +155,245 @@ def write_bids_data(data, path: str | Path,
           'SNIRF_createTime': data.meta_data.get('SNIRF_createTime', f"{datetime.now().strftime('%H:%M:%S')}Z"),
           'filedescription': data.meta_data.get('filedescription', 'unknown')
     }
-    snirffilejson = folder / (filename + "_fnirs.json")
+    snirffilejson = folder / (filename + "_nirs.json")
     with open(snirffilejson, 'w') as f:
         json.dump(info, f, indent=4)
+    (folder / (filename + "_fnirs.json")).unlink(missing_ok=True)
+
+
+def _bids_nirs_paths(
+    path: str | Path,
+    participant_id: str,
+    run: str,
+    task: str,
+    session: str | None,
+) -> tuple[Path, str, Path]:
+    participant_id = _bids_label(participant_id)
+    task = _bids_label(task)
+    run = _bids_label(run)
+    if session is not None:
+        session = _bids_label(session)
+
+    if session is None:
+        folder = Path(path) / f"sub-{participant_id}"
+        filename = f"sub-{participant_id}_task-{task}_run-{run}"
+    else:
+        folder = Path(path) / f"sub-{participant_id}" / f"ses-{session}"
+        filename = f"sub-{participant_id}_ses-{session}_task-{task}_run-{run}"
+    return folder, filename, folder / f"{filename}_nirs.snirf"
+
+
+def _arrays_equal(left, right) -> bool:
+    try:
+        return bool(np.array_equal(left, right, equal_nan=True))
+    except TypeError:
+        return bool(np.array_equal(left, right))
+
+
+def _assert_snirf_raw_data_matches(snirf_file: Path, data) -> None:
+    """Reject reuse of a raw SNIRF path for a different amplitude time course."""
+    recordings = read_snirf(snirf_file)
+    if not recordings:
+        raise ValueError(f"Cannot verify existing SNIRF file: {snirf_file}")
+    if "amp" not in getattr(recordings[0], "timeseries", {}):
+        raise ValueError(
+            f"Existing SNIRF file has no raw 'amp' time course: {snirf_file}"
+        )
+
+    existing = recordings[0]["amp"]
+    incoming = data["amp"]
+    existing_dims = getattr(existing, "dims", None)
+    incoming_dims = getattr(incoming, "dims", None)
+    if existing_dims is not None and incoming_dims is not None:
+        if set(existing_dims) != set(incoming_dims):
+            raise ValueError(
+                f"Raw amplitude dimensions differ from existing SNIRF file: {snirf_file}"
+            )
+        if any(
+            existing.sizes[dim] != incoming.sizes[dim]
+            for dim in incoming_dims
+        ):
+            raise ValueError(
+                f"Raw amplitude dimensions differ from existing SNIRF file: {snirf_file}"
+            )
+        existing = existing.transpose(*incoming_dims)
+    elif existing_dims != incoming_dims:
+        raise ValueError(
+            f"Raw amplitude dimensions differ from existing SNIRF file: {snirf_file}"
+        )
+
+    if hasattr(existing, "pint") and hasattr(incoming, "pint"):
+        existing = existing.pint.to(incoming.pint.units)
+        existing_values = np.asarray(existing.pint.magnitude)
+        incoming_values = np.asarray(incoming.pint.magnitude)
+    else:
+        existing_values = np.asarray(getattr(existing, "values", existing))
+        incoming_values = np.asarray(getattr(incoming, "values", incoming))
+
+    if existing_values.shape != incoming_values.shape or not _arrays_equal(
+        existing_values, incoming_values
+    ):
+        raise ValueError(
+            "Raw amplitude time course differs from the existing SNIRF file; "
+            f"raw SNIRF files are immutable: {snirf_file}"
+        )
+
+    existing_coords = getattr(existing, "coords", {})
+    incoming_coords = getattr(incoming, "coords", {})
+    if ("time" in existing_coords) != ("time" in incoming_coords):
+        raise ValueError(
+            f"Raw amplitude time coordinates differ from existing SNIRF file: {snirf_file}"
+        )
+    if "time" in existing_coords and not _arrays_equal(
+        np.asarray(existing_coords["time"].values),
+        np.asarray(incoming_coords["time"].values),
+    ):
+        raise ValueError(
+            f"Raw amplitude time coordinates differ from existing SNIRF file: {snirf_file}"
+        )
+
+
+def _write_bids_nirs_sidecars(
+    data,
+    folder: Path,
+    filename: str,
+    participant_id: str,
+    session: str | None,
+) -> None:
+    """Write the linked channels, optodes, and coordinate-system files."""
+    ts = data["amp"]
+    required_coords = {"source", "detector", "wavelength"}
+    missing_coords = required_coords.difference(ts.coords)
+    missing_dims = {"channel", "wavelength"}.difference(ts.dims)
+    if missing_coords or missing_dims:
+        raise ValueError(
+            "Cannot write BIDS NIRS channel sidecar; missing timeseries "
+            f"coordinate(s): {sorted(missing_coords)}, dimension(s): "
+            f"{sorted(missing_dims)}"
+        )
+
+    sources = [str(value) for value in ts.source.values]
+    detectors = [str(value) for value in ts.detector.values]
+    wavelengths = ts.wavelength.values
+    if (
+        len(sources) != ts.sizes["channel"]
+        or len(detectors) != ts.sizes["channel"]
+        or len(wavelengths) == 0
+    ):
+        raise ValueError(
+            "Cannot write BIDS NIRS channel sidecar; source, detector, and "
+            "wavelength coordinates do not match the timeseries dimensions"
+        )
+
+    channel_units = format(ts.pint.units, "~")
+    source_indices = {
+        label: index for index, label in enumerate(dict.fromkeys(sources), start=1)
+    }
+    detector_indices = {
+        label: index for index, label in enumerate(dict.fromkeys(detectors), start=1)
+    }
+    channel_rows = [
+        {
+            "name": str(ts.channel.values[channel_index]),
+            "type": "NIRSCWAMPLITUDE",
+            "source": source,
+            "detector": detector,
+            "wavelength_nominal": wavelength.item()
+            if hasattr(wavelength, "item") else wavelength,
+            "units": channel_units,
+            "description": (
+                "fNIRS Channel between Optodes Source index "
+                f"{source_indices[source]} to Detector Index "
+                f"{detector_indices[detector]} at wavelength "
+                f"{wavelength:g}nm"
+            ),
+        }
+        for channel_index, (source, detector) in enumerate(zip(sources, detectors))
+        for wavelength in wavelengths
+    ]
+    channels = pd.DataFrame(
+        channel_rows,
+        columns=[
+            "name",
+            "type",
+            "source",
+            "detector",
+            "wavelength_nominal",
+            "units",
+            "description",
+        ],
+    )
+
+    optode_types: dict[str, str] = {}
+    for label in sources:
+        optode_types[label] = "source"
+    for label in detectors:
+        if optode_types.get(label) == "source":
+            raise ValueError(f"NIRS optode label is both a source and detector: {label}")
+        optode_types[label] = "detector"
+
+    optode_labels = list(optode_types)
+    positions = (
+        data.geo3d.sel(label=optode_labels)
+        .pint.to(units.millimeter)
+        .pint.magnitude
+    )
+    if positions.ndim != 2 or positions.shape[1] not in (2, 3):
+        raise ValueError(
+            "Cannot write BIDS optode sidecar; expected 2D or 3D optode positions"
+        )
+
+    optode_rows = []
+    for index, label in enumerate(optode_labels):
+        position = positions[index]
+        optode_type = optode_types[label]
+        optode_type_labels = sources if optode_type == "source" else detectors
+        type_index = list(dict.fromkeys(optode_type_labels)).index(label) + 1
+        optode_rows.append({
+            "name": label,
+            "type": optode_type,
+            "x": position[0],
+            "y": position[1],
+            "z": position[2] if positions.shape[1] == 3 else "n/a",
+            "description": (
+                f"fNIRS {optode_type.capitalize()} Optode index {type_index}"
+            ),
+        })
+
+    channels.to_csv(folder / f"{filename}_channels.tsv", sep="\t", index=False)
+    sidecar_prefix = f"sub-{participant_id}"
+    if session is not None:
+        sidecar_prefix += f"_ses-{session}"
+    pd.DataFrame(
+        optode_rows,
+        columns=["name", "type", "x", "y", "z", "description"],
+    ).to_csv(folder / f"{sidecar_prefix}_optodes.tsv", sep="\t", index=False)
+
+    with open(folder / f"{filename}_channels.json", "w") as f:
+        json.dump({
+            "Description": (
+                "fNIRS channels defined by source-detector pairs and nominal "
+                "wavelengths."
+            )
+        }, f, indent=4)
+    with open(folder / f"{sidecar_prefix}_optodes.json", "w") as f:
+        json.dump({
+            "Description": (
+                "fNIRS source and detector optode positions in the coordinate "
+                "system described by the accompanying coordsystem.json."
+            )
+        }, f, indent=4)
+
+    coordsystem = {
+        "NIRSCoordinateSystem": "Other",
+        "NIRSCoordinateUnits": "mm",
+        "NIRSCoordinateSystemDescription": (
+            "Coordinates are expressed in the recording's native optode "
+            "coordinate frame. A standardized reference system is not inferred."
+        ),
+    }
+    with open(folder / f"{sidecar_prefix}_coordsystem.json", "w") as f:
+        json.dump(coordsystem, f, indent=4)
 
 
 
@@ -69,13 +403,59 @@ def write_bids_dataset(dataset, path: str | Path,
                        overwrite_snirf: bool = False,
                        include_derivatives: bool = True):
 
-    """Write the dataset to a BIDS-compliant directory."""
+    """Write the dataset to a BIDS-compliant directory.
+
+    Existing raw SNIRF files are immutable. Their amplitude time courses must
+    match the recordings being saved; metadata and BIDS sidecars are refreshed
+    without rewriting the raw files. ``overwrite_snirf`` only controls existing
+    derivative SNIRF files.
+    """
 
     if readme is None:
-        readme = bids_README_template()
+        readme = dataset.readme()
+    else:
+        readme = {**dataset.readme(), **readme}
+    readme_include = dataset.readme_include()
+    readme = {
+        section: content
+        for section, content in readme.items()
+        if readme_include.get(section, True)
+    }
     if dataset_description is None:
-        dataset_description = bids_dataset_description_template()
+        dataset_description = dataset.data_description()
+    else:
+        dataset_description = {**dataset.data_description(), **dataset_description}
 
+    stimulus_presentation = dataset_description.pop(
+        "StimulusPresentation", {"SoftwareName": "unknown"}
+    )
+    descriptions = dataset.dataset[0].meta_data.get("_bids_descriptions", {})
+    event_descriptions = {
+        key.removeprefix("event:"): value
+        for key, value in descriptions.items()
+        if key.startswith("event:")
+    }
+
+    participant_runs = {}
+    for index, data in enumerate(dataset.dataset):
+        participant_id = _get_participant_id(data)
+        if participant_id is None:
+            participant_id = str(index)
+        participant_id = _bids_label(participant_id)
+        participant_runs[participant_id] = participant_runs.get(participant_id, 0) + 1
+        _, filename, snirf_file = _bids_nirs_paths(
+            path,
+            participant_id,
+            str(participant_runs[participant_id]),
+            _get_task_name(data),
+            _get_session_name(data),
+        )
+        legacy_file = snirf_file.with_name(
+            filename + "_fnirs.snirf"
+        )
+        existing_file = snirf_file if snirf_file.exists() else legacy_file
+        if existing_file.exists():
+            _assert_snirf_raw_data_matches(existing_file, data)
 
     write_bids_readme(path=path, readme=readme)
     write_bids_dataset_description(path=path, description=dataset_description)
@@ -87,7 +467,21 @@ def write_bids_dataset(dataset, path: str | Path,
     else:
         bids_dataset_description = None
 
-    save_bids_demographics(demographics=dataset.get_demographics(),
+    demographics = dataset.get_demographics()
+    participant_columns = {
+        "participant_id", "subject_id", "subject", "subjid", "sub", "id", "name"
+    }
+    if not any(column.lower() in participant_columns for column in demographics.columns):
+        demographics.insert(
+            0,
+            "subject",
+            [
+                _get_participant_id(data) or str(index)
+                for index, data in enumerate(dataset.dataset)
+            ],
+        )
+
+    save_bids_demographics(demographics=demographics,
                            path=path,
                            bids_descriptions=bids_dataset_description)
 
@@ -97,7 +491,8 @@ def write_bids_dataset(dataset, path: str | Path,
         participant_id = _get_participant_id(data)
         if participant_id is None:
             participant_id = str(i)
-            
+        participant_id = _bids_label(participant_id)
+
         if participant_id not in all_participants:
             all_participants[participant_id] = 0
         all_participants[participant_id] += 1
@@ -111,7 +506,9 @@ def write_bids_dataset(dataset, path: str | Path,
                     task=_get_task_name(data),
                     session=_get_session_name(data),
                     overwrite_snirf=overwrite_snirf,
-                    include_derivatives=include_derivatives)
+                    include_derivatives=include_derivatives,
+                    stimulus_presentation=stimulus_presentation,
+                    event_descriptions=event_descriptions)
 
 
 def _write_snirf_with_timeseries(path: Path, data, keys: list[str], stim: pd.DataFrame) -> None:
@@ -139,6 +536,32 @@ def _derivative_snirf_path(root: Path, raw_snirf_file: Path) -> Path:
     return root / "bids_derivatives" / relative.with_name(derivative_name)
 
 
+def _bids_label(value: str) -> str:
+    """Convert a local identifier to the character set allowed for BIDS labels."""
+    label = str(value)
+    if label.startswith("sub-"):
+        label = label[4:]
+    label = re.sub(r"[^0-9A-Za-z+]", "+", label)
+    if not label:
+        raise ValueError("BIDS entity labels must contain at least one valid character")
+    return label
+
+
+def _migrate_legacy_bids_file(legacy_path: Path, bids_path: Path) -> None:
+    """Move a legacy `_fnirs` file to its BIDS `_nirs` name without altering data."""
+    if not legacy_path.exists():
+        return
+    if bids_path.exists():
+        if legacy_path.read_bytes() != bids_path.read_bytes():
+            raise FileExistsError(
+                f"Both legacy and BIDS-named files exist with different contents: "
+                f"{legacy_path} and {bids_path}"
+            )
+        legacy_path.unlink()
+        return
+    legacy_path.replace(bids_path)
+
+
 def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
     """Read a NIRS-BIDS dataset folder into a :class:`DataSet`.
 
@@ -146,6 +569,9 @@ def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
     loaded, so sidecar files take precedence over the embedded SNIRF metadata.
     Standard ``*_events.tsv`` files override SNIRF stimulus data; legacy
     ``*_stim.tsv`` files are still read when no events file is present.
+    Channels, optode geometry, and coordinate units are also restored from
+    their BIDS sidecars when those files are available; absent sidecars leave
+    the corresponding SNIRF values untouched.
     Matching sidecars are applied from the dataset root toward the local data
     folder, allowing more local files to override inherited parent files.
     """
@@ -155,20 +581,42 @@ def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
     if not root.is_dir():
         raise ValueError(f"BIDS path must be a folder: {root}")
 
-    snirf_files = sorted(root.rglob("*_fnirs.snirf"))
+    snirf_files = sorted(set(root.rglob("*_nirs.snirf")) | set(root.rglob("*_fnirs.snirf")))
     if not snirf_files:
-        raise FileNotFoundError(f"No *_fnirs.snirf files found in: {root}")
+        raise FileNotFoundError(f"No *_nirs.snirf or legacy *_fnirs.snirf files found in: {root}")
 
     dset = dataset.DataSet()
     description_path = root / "dataset_description.json"
+    descriptors: dict[str, Any] = {
+        "readme": _read_bids_readme(root / "README.md"),
+        "dataset_description": {},
+    }
     if description_path.exists():
         with open(description_path) as f:
             dataset_description = json.load(f)
+        if isinstance(dataset_description, dict):
+            descriptors["dataset_description"] = dataset_description.copy()
+            descriptors["dataset_description"].setdefault(
+                "StimulusPresentation", {"SoftwareName": "unknown"}
+            )
+        else:
+            raise ValueError("dataset_description.json must contain a JSON object")
         dset.description = dataset_description.get("Name", dset.description)
+    event_json_files = sorted(root.rglob("*_events.json"))
+    for event_json in event_json_files:
+        with open(event_json) as f:
+            event_sidecar = json.load(f)
+        stimulus_presentation = event_sidecar.get("StimulusPresentation")
+        if stimulus_presentation is not None:
+            descriptors["dataset_description"]["StimulusPresentation"] = (
+                stimulus_presentation
+            )
+            break
 
     for snirf_file in snirf_files:
         loaded = read_bids_data(snirf_file, root, include_derivatives=include_derivatives)
         for rec in loaded:
+            rec.meta_data["_bids_descriptors"] = copy.deepcopy(descriptors)
             dset.import_data(rec)
 
     return dset
@@ -187,9 +635,10 @@ def read_bids_data(
         if include_derivatives:
             _merge_bids_derivatives(rec, snirf_file, root)
         entities = _bids_entities_from_path(snirf_file, root)
-        _apply_bids_fnirs_json_metadata(rec, snirf_file, root, entities)
         _apply_bids_participants_metadata(rec, snirf_file, root, entities)
+        _apply_bids_fnirs_json_metadata(rec, snirf_file, root, entities)
         _apply_bids_stim_metadata(rec, snirf_file, root, entities)
+        _apply_bids_probe_metadata(rec, snirf_file, root, entities)
     return loaded
 
 
@@ -278,9 +727,10 @@ def _bids_entities_match(candidate_entities: dict, target_entities: dict) -> boo
 
 
 def _apply_bids_fnirs_json_metadata(rec, snirf_file: Path, root: Path, entities: dict) -> None:
-    for sidecar in _bids_sidecars_for_suffix(snirf_file, root, "fnirs", ".json", entities):
-        with open(sidecar) as f:
-            rec.meta_data.update(json.load(f))
+    for suffix in ("fnirs", "nirs"):
+        for sidecar in _bids_sidecars_for_suffix(snirf_file, root, suffix, ".json", entities):
+            with open(sidecar) as f:
+                rec.meta_data.update(json.load(f))
 
 
 def _apply_bids_participants_metadata(rec, snirf_file: Path, root: Path, entities: dict) -> None:
@@ -365,20 +815,219 @@ def _apply_bids_stim_metadata(rec, snirf_file: Path, root: Path, entities: dict)
     rec.stim = stim
 
 
-def write_bids_stim(stim: pd.DataFrame, path: str | Path):
+def _apply_bids_probe_metadata(
+    rec, snirf_file: Path, root: Path, entities: dict
+) -> None:
+    channel_files = _bids_sidecars_for_suffix(
+        snirf_file, root, "channels", ".tsv", entities
+    )
+    if channel_files:
+        channels = pd.read_csv(channel_files[-1], sep="\t", keep_default_na=False)
+        _apply_bids_channels_tsv(rec, channels)
+
+    optode_files = _bids_sidecars_for_suffix(
+        snirf_file, root, "optodes", ".tsv", entities
+    )
+    if not optode_files:
+        return
+
+    coordinate_system = {}
+    for sidecar in _bids_sidecars_for_suffix(
+        snirf_file, root, "coordsystem", ".json", entities
+    ):
+        with open(sidecar) as f:
+            values = json.load(f)
+        if not isinstance(values, dict):
+            raise ValueError(f"Coordinate-system sidecar must contain an object: {sidecar}")
+        coordinate_system.update(values)
+
+    optodes = pd.read_csv(optode_files[-1], sep="\t", keep_default_na=False)
+    _apply_bids_optodes_tsv(rec, optodes, coordinate_system)
+
+
+def _apply_bids_channels_tsv(rec, channels: pd.DataFrame) -> None:
+    required = {"name", "source", "detector", "wavelength_nominal"}
+    missing = required.difference(channels.columns)
+    if missing:
+        raise ValueError(
+            f"BIDS channels.tsv is missing required column(s): {sorted(missing)}"
+        )
+    if "amp" not in getattr(rec, "timeseries", {}):
+        return
+
+    ts = rec["amp"]
+    if not {"channel", "wavelength"}.issubset(ts.dims):
+        raise ValueError("SNIRF amplitude timeseries must have channel and wavelength dimensions")
+
+    channel_names = list(pd.unique(channels["name"].astype(str)))
+    wavelengths = list(
+        pd.unique(pd.to_numeric(channels["wavelength_nominal"], errors="raise"))
+    )
+    expected_rows = len(channel_names) * len(wavelengths)
+    if (
+        len(channels) != expected_rows
+        or len(channel_names) != ts.sizes["channel"]
+        or len(wavelengths) != ts.sizes["wavelength"]
+    ):
+        raise ValueError(
+            "BIDS channels.tsv channel/wavelength rows do not match the SNIRF "
+            "amplitude dimensions"
+        )
+
+    sources = []
+    detectors = []
+    for channel_name in channel_names:
+        rows = channels[channels["name"].astype(str) == channel_name]
+        if rows["source"].nunique() != 1 or rows["detector"].nunique() != 1:
+            raise ValueError(
+                f"BIDS channels.tsv has inconsistent source/detector for {channel_name}"
+            )
+        if set(pd.to_numeric(rows["wavelength_nominal"], errors="raise")) != set(
+            wavelengths
+        ):
+            raise ValueError(
+                f"BIDS channels.tsv has incomplete wavelengths for {channel_name}"
+            )
+        sources.append(str(rows.iloc[0]["source"]))
+        detectors.append(str(rows.iloc[0]["detector"]))
+
+    ts = ts.assign_coords(
+        channel=("channel", channel_names),
+        source=("channel", sources),
+        detector=("channel", detectors),
+        wavelength=("wavelength", wavelengths),
+    )
+    if "units" in channels:
+        channel_units = list(pd.unique(channels["units"].astype(str)))
+        if len(channel_units) != 1:
+            raise ValueError("BIDS channels.tsv contains inconsistent channel units")
+        unit_name = channel_units[0]
+        if unit_name and unit_name != "n/a":
+            ts = ts.copy(data=ts.pint.magnitude * units.Unit(unit_name))
+    rec["amp"] = ts
+
+
+def _apply_bids_optodes_tsv(
+    rec, optodes: pd.DataFrame, coordinate_system: dict
+) -> None:
+    required = {"name", "type", "x", "y"}
+    missing = required.difference(optodes.columns)
+    if missing:
+        raise ValueError(
+            f"BIDS optodes.tsv is missing required column(s): {sorted(missing)}"
+        )
+
+    geo = getattr(rec, "geo3d", None)
+    if geo is None:
+        return
+    if "label" not in geo.dims or "pos" not in geo.dims:
+        raise ValueError("SNIRF probe geometry must have label and pos dimensions")
+    if len(optodes) != geo.sizes["label"]:
+        raise ValueError("BIDS optodes.tsv row count does not match SNIRF probe geometry")
+
+    position_columns = ["x", "y"]
+    if geo.sizes["pos"] == 3:
+        if "z" not in optodes:
+            raise ValueError("BIDS optodes.tsv is missing the z coordinate")
+        position_columns.append("z")
+    elif geo.sizes["pos"] != 2:
+        raise ValueError("SNIRF probe geometry must have two or three position dimensions")
+
+    position_values = optodes[position_columns].apply(
+        pd.to_numeric, errors="coerce"
+    ).to_numpy(dtype=float)
+    if not np.isfinite(position_values).all():
+        raise ValueError("BIDS optodes.tsv contains missing or invalid coordinates")
+
+    coordinate_unit = coordinate_system.get("NIRSCoordinateUnits", "mm")
+    positions = (
+        position_values * units.Unit(coordinate_unit)
+    ).to(units.millimeter).magnitude
+    point_types = []
+    for value in optodes["type"].astype(str):
+        if value.lower() == "source":
+            point_types.append(PointType.SOURCE)
+        elif value.lower() == "detector":
+            point_types.append(PointType.DETECTOR)
+        else:
+            raise ValueError(f"Unsupported BIDS optode type: {value}")
+
+    geo = geo.pint.to(units.millimeter).copy(
+        data=positions * units.millimeter
+    )
+    rec.geo3d = geo.assign_coords(
+        label=("label", optodes["name"].astype(str).tolist()),
+        type=("label", point_types),
+    )
+
+
+def write_bids_stim(
+    stim: pd.DataFrame,
+    path: str | Path,
+    stimulus_presentation: dict[str, Any] | None = None,
+    event_descriptions: dict[str, str] | None = None,
+):
     """Write stimulus information using the BIDS events.tsv schema."""
-    stim = stim[["trial_type", "onset", "duration", "value"]]
+    stim = stim.copy()
+    rename = {}
+    if "trial_type" not in stim and "name" in stim:
+        rename["name"] = "trial_type"
+    if "value" not in stim and "amplitude" in stim:
+        rename["amplitude"] = "value"
+    stim.rename(columns=rename, inplace=True)
+    required_columns = ["onset", "duration"]
+    missing_columns = [column for column in required_columns if column not in stim]
+    if missing_columns:
+        raise ValueError(f"BIDS events data is missing required column(s): {missing_columns}")
+
+    ordered_columns = required_columns
+    if "trial_type" in stim:
+        ordered_columns = [*ordered_columns, "trial_type"]
+    ordered_columns.extend(column for column in stim.columns if column not in ordered_columns)
+    stim = stim[ordered_columns]
 
     info = {
-        "trial_type": {"Description": "Type or name of the event."},
-        "onset": {"Description": "Onset of the event.", "Units": "seconds"},
-        "duration": {"Description": "Duration of the event.", "Units": "seconds"},
-        "value": {"Description": "Amplitude of the event."},
+        "Description": (
+            "Events recorded for this task. "
+            + (
+                " ".join(
+                    f"{event_type}: {description}"
+                    for event_type, description in event_descriptions.items()
+                )
+                if event_descriptions
+                else "The table contains event onset, duration, and condition information."
+            )
+        ),
+        "onset": {"Description": "Onset of the event.", "Units": "s"},
+        "duration": {"Description": "Duration of the event.", "Units": "s"},
     }
+    if "trial_type" in stim:
+        trial_type_info = {
+            "Description": "Task condition or event type associated with the event.",
+        }
+        if event_descriptions:
+            event_types = {str(value) for value in stim["trial_type"].dropna().unique()}
+            levels = {
+                str(eventkey): description
+                for eventkey, description in event_descriptions.items()
+                if str(eventkey) in event_types
+            }
+            if levels:
+                trial_type_info["Levels"] = levels
+        info["trial_type"] = trial_type_info
+    if "value" in stim:
+        info["value"] = {"Description": "Amplitude of the event."}
+    for column in stim.columns:
+        info.setdefault(column, {"Description": "Additional event information."})
 
-    stim.to_csv(Path(path).with_suffix('.tsv'), sep='\t', index=False)
+    stim.to_csv(Path(path).with_suffix('.tsv'), sep='\t', index=False, na_rep="n/a")
     
     stimfile_json = Path(path).with_suffix(".json")
+    info["StimulusPresentation"] = (
+        {"SoftwareName": "unknown"}
+        if stimulus_presentation is None
+        else stimulus_presentation
+    )
     with open(stimfile_json, "w") as f:
         json.dump(info, f, indent=4)
 
@@ -490,10 +1139,13 @@ def bids_dataset_description_template():
     bids_dataset_description_template['License'] = "CC0"
     bids_dataset_description_template['Authors'] = ["Author 1", "Author 2"]
     bids_dataset_description_template['Acknowledgements'] = "Acknowledgements"
-    bids_dataset_description_template['How To Acknowledge'] = "How to acknowledge"
+    bids_dataset_description_template['HowToAcknowledge'] = "How to acknowledge"
     bids_dataset_description_template['Funding'] = ["Funding source 1", "Funding source 2"]
     bids_dataset_description_template['ReferencesAndLinks'] = ["Reference 1", "Reference 2"]
-    bids_dataset_description_template['DatasetDOI'] = "doi"
+    bids_dataset_description_template['GeneratedBy'] = [{"Name": "unknown"}]
+    bids_dataset_description_template['StimulusPresentation'] = {
+        "SoftwareName": "unknown"
+    }
 
     return bids_dataset_description_template
 
@@ -532,6 +1184,36 @@ def write_bids_readme(path: str | Path, readme: dict):
             if key in readme:
                 f.write(f"### {key}\n")
                 f.write(f"{readme[key]}\n\n")
+
+
+def _read_bids_readme(path: Path) -> dict[str, str]:
+    """Read section headings and bodies from a BIDS README markdown file."""
+    if not path.exists():
+        return {}
+
+    sections: dict[str, list[str]] = {}
+    preamble: list[str] = []
+    current_section = None
+    with open(path) as f:
+        for line in f:
+            heading = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line.rstrip())
+            if heading:
+                current_section = heading.group(1)
+                sections.setdefault(current_section, [])
+            elif current_section is not None:
+                sections[current_section].append(line.rstrip())
+            else:
+                preamble.append(line.rstrip())
+
+    result = {title: "\n".join(body).strip() for title, body in sections.items()}
+    preamble_text = "\n".join(preamble).strip()
+    if preamble_text:
+        result["Overview"] = (
+            f"{preamble_text}\n\n{result['Overview']}"
+            if result.get("Overview")
+            else preamble_text
+        )
+    return result
 
 
 def write_bids_dataset_description(path: str | Path, description: dict):
@@ -585,7 +1267,14 @@ def add_missing_bids_to_metadata(data, intype='amp'):
                     'NIRSPlacementScheme': {'value':'n/a','description':'The NIRS placement scheme used.','units': 'n/a'},
                     'RecordingDuration': {'value': (data[intype].time[-1] - data[intype].time[0]).values, 'description': 'The duration of the recording.','units': units.seconds},
                     'SamplingFrequency': {'value': 1 / (data[intype].time[1] - data[intype].time[0]).values, 'description': 'The sampling frequency of the recording.','units': units.hertz},
-                    'NIRSChannelCount': {'value': len(data[intype].channel), 'description': 'The number of NIRS channels.','units': 'n/a'},
+                    'NIRSChannelCount': {
+                        'value': (
+                            len(data[intype].channel)
+                            * len(data[intype].wavelength)
+                        ),
+                        'description': 'The number of NIRS channels.',
+                        'units': 'n/a',
+                    },
                     'NIRSSourceOptodeCount': {'value': sum((data.geo2d.type == PointType(1).SOURCE).values), 'description': 'The number of NIRS source optodes.','units': 'n/a'},
                     'NIRSDetectorOptodeCount': {'value': sum((data.geo2d.type == PointType(1).DETECTOR).values), 'description': 'The number of NIRS detector optodes.','units': 'n/a'},
                     'ShortChannelCount': {'value': sum((xrutils.norm(data.geo3d.loc[data[intype].source] - data.geo3d.loc[data[intype].detector],  # noqa: E501
@@ -639,9 +1328,61 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
     if not isinstance(path, (str, Path)):
         raise ValueError("path must be a string or Path")
 
+    participant_columns = {
+        'participant_id', 'subject_id', 'subject', 'subjid', 'sub', 'id', 'name'
+    }
+    recording_columns = {
+        "task", "taskname", "session", "session_id", "ses", "run", "run_id"
+    }
+    id_column = next(
+        (column for column in demographics.columns if column.lower() in participant_columns),
+        None,
+    )
+    if id_column is None:
+        raise ValueError("demographics must include a participant or subject ID column")
+
+    participant_demographics = pd.DataFrame(index=demographics.index)
+    participant_demographics['participant_id'] = demographics[id_column].map(
+        lambda value: f"sub-{_bids_label(value)}"
+    )
+    description_columns = {'participant_id': id_column}
+    for column in demographics.columns:
+        if (
+            column == id_column
+            or column.lower() in participant_columns
+            or column.lower() in recording_columns
+        ):
+            continue
+        participant_demographics[column] = demographics[column]
+        description_columns[column] = column
+
+    participant_demographics = participant_demographics.reset_index(drop=True)
+    duplicate_ids = participant_demographics["participant_id"].duplicated(keep=False)
+    if duplicate_ids.any():
+        repeated = participant_demographics.loc[duplicate_ids]
+        conflicts = [
+            column
+            for column in participant_demographics.columns
+            if column != "participant_id"
+            and repeated.groupby("participant_id", dropna=False)[column]
+            .agg(lambda values: values.astype(str).nunique())
+            .gt(1)
+            .any()
+        ]
+        if conflicts:
+            raise ValueError(
+                "Repeated participants have conflicting demographic values in "
+                f"column(s): {conflicts}"
+            )
+        participant_demographics = participant_demographics.drop_duplicates(
+            subset="participant_id", keep="first"
+        )
+
     demofileTSV = Path(path) / 'participants.tsv'
     demofileTSV.parent.mkdir(parents=True, exist_ok=True)
-    _strip_units_from_demographics(demographics).to_csv(demofileTSV, sep='\t', index=False)
+    _strip_units_from_demographics(participant_demographics).to_csv(
+        demofileTSV, sep='\t', index=False, na_rep="n/a"
+    )
 
     # Now save the JSON sidecar file with the column descriptions
     demofileJSON = Path(path) / 'participants.json'
@@ -650,21 +1391,23 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
 
     demo_info = {}
 
-    for col in demographics.columns:
-        description='n/a'
-        if bids_descriptions is not None and col in bids_descriptions:
-            description = bids_descriptions[col]
+    for col, source_column in description_columns.items():
+        description = (
+            "Unique BIDS participant identifier."
+            if col == "participant_id"
+            else "No description available."
+        )
+        if bids_descriptions is not None:
+            description = bids_descriptions.get(source_column, bids_descriptions.get(col, description))
 
-        if type(demographics[col][0]) == units.Quantity:
+        first_value = demographics[source_column].iloc[0] if not demographics.empty else None
+        if type(first_value) == units.Quantity:
             demo_info[col] = {
                 "Description": description,
-                "Units": str(demographics[col][0].units)
+                "Units": str(first_value.units)
             }
         else:
-            demo_info[col] = {
-                "Description": description,
-                "Units": "n/a"
-            }
+            demo_info[col] = {"Description": description}
       
     with open(demofileJSON, 'w') as f:
         json.dump(demo_info, f,indent=4)

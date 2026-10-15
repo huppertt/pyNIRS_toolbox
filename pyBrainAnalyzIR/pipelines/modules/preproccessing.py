@@ -5,6 +5,7 @@ import cedalion.nirs
 import xarray as xr
 import cedalion.math.resample
 import pyBrainAnalyzIR.dataclasses.dataset
+from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
 from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, StringOption, ListOption, ObjectOption, BooleanOption)
@@ -62,7 +63,14 @@ class resample(cedalion_module):
             else:
                 outputName = self.outputName
 
-            rec[outputName] = cedalion.math.resample.resample(rec[inputName], self.options['Fs'])
+            data = rec[inputName]
+            masks = getattr(rec, "masks", {})
+            resampled, resampled_masks = resample_with_quality_masks(
+                data, self.options["Fs"], masks
+            )
+            rec[outputName] = resampled
+            for key, mask in resampled_masks.items():
+                rec.set_mask(key, mask, overwrite=True)
             return rec
 
 

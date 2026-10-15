@@ -1,4 +1,5 @@
 import cedalion.nirs
+import xarray as xr
 import pyBrainAnalyzIR.pipelines
 import cedalion.sigproc.motion_correct as motion_correct
 import pyBrainAnalyzIR.sigproc.TDDR
@@ -12,6 +13,29 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
 import cedalion.sigproc.quality as quality
 
 units = cedalion.units
+
+
+def _combine_recording_masks(rec, data, mask):
+    """Combine stored clean/bad flags with a generated Cedalion quality mask."""
+    for name, recording_mask in getattr(rec, "masks", {}).items():
+        if not isinstance(recording_mask, xr.DataArray):
+            raise TypeError(f"Recording mask {name!r} must be an xarray DataArray.")
+        extra_dims = set(recording_mask.dims) - set(data.dims)
+        if extra_dims:
+            raise ValueError(
+                f"Recording mask {name!r} has dimensions {sorted(extra_dims)} "
+                "that are not present in the motion-correction input."
+            )
+        try:
+            aligned_mask, _ = xr.align(recording_mask, data, join="exact", copy=False)
+        except ValueError as exc:
+            raise ValueError(
+                f"Recording mask {name!r} coordinates do not match the "
+                "motion-correction input."
+            ) from exc
+
+        mask = mask & aligned_mask.broadcast_like(data).astype(bool)
+    return mask
 
 
 
@@ -78,11 +102,13 @@ class MotionCorrectPCA(cedalion_module):
                                                         self.options['t_mask'], 
                                                         self.options['stdev_thresh'], 
                                                         self.options['amp_thresh'])
-                rec[outputName] = motion_correct.motion_correct_PCA(rec[inputName],
-                                                                     nSV=self.options['nSV'],
-                                                                     tInc=ma_mask,
-                                                                     recursive=True,
-                                                                     max_iter=self.options['max_iter'])
+                ma_mask = _combine_recording_masks(rec, rec[inputName], ma_mask)
+                corrected, _, _ = motion_correct.motion_correct_PCA(
+                    rec[inputName],
+                    nSV=self.options['nSV'],
+                    tInc=ma_mask,
+                )
+                rec[outputName] = corrected
             else:
                 rec[outputName] = motion_correct.motion_correct_PCA_recurse(rec[inputName],
                                                                      nSV=self.options['nSV'],

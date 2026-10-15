@@ -6,9 +6,9 @@ Usage
 
     stimulus_manager(dataset)
 
-In a script this blocks until the window is closed.  Inside a Jupyter/IPython
-notebook the Qt event loop is integrated with the kernel instead, so the call
-returns immediately and the notebook stays responsive.
+By default, this returns immediately and integrates Qt's event loop with a
+Jupyter/IPython kernel. In a standalone script, pass ``block=True`` to run
+the event loop until the window closes.
 
 From the command line, with a pickled `DataSet`::
 
@@ -859,6 +859,69 @@ class FileSelectionDialog(QDialog):
         return [i for i, cb in enumerate(self.checkboxes) if cb.isChecked()]
 
 
+class EventDescriptionsDialog(QDialog):
+    """View and edit BIDS descriptions for every event type in a dataset."""
+
+    def __init__(self, dataset: Any, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Event Descriptions")
+        self.resize(700, 450)
+
+        descriptions: Dict[str, str] = {}
+        event_types: List[str] = []
+        for rec in getattr(dataset, "dataset", []):
+            stim = getattr(rec, "stim", None)
+            if isinstance(stim, pd.DataFrame) and "trial_type" in stim:
+                for value in stim["trial_type"].dropna():
+                    event_type = str(value)
+                    if event_type not in event_types:
+                        event_types.append(event_type)
+
+            metadata_descriptions = getattr(rec, "meta_data", {}).get(
+                "_bids_descriptions", {}
+            )
+            for key, description in metadata_descriptions.items():
+                if key.startswith("event:"):
+                    descriptions.setdefault(key.removeprefix("event:"), str(description))
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "Enter a description for each task/event type. Existing descriptions "
+            "are shown and can be edited."
+        ))
+        self.table = QTableWidget(len(event_types), 2, self)
+        self.table.setHorizontalHeaderLabels(["Task Name", "Description"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        for row, event_type in enumerate(event_types):
+            name_item = QTableWidgetItem(event_type)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(
+                row, 1, QTableWidgetItem(descriptions.get(event_type, ""))
+            )
+        layout.addWidget(self.table)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def event_descriptions(self) -> Dict[str, str]:
+        """Return non-empty descriptions keyed by event type."""
+        result = {}
+        for row in range(self.table.rowCount()):
+            event_type = self.table.item(row, 0).text()
+            item = self.table.item(row, 1)
+            description = item.text().strip() if item is not None else ""
+            if description:
+                result[event_type] = description
+        return result
+
+
 class StimulusManagerWindow(QMainWindow):
     # True when the user pressed Update, False when the edits were discarded.
     finished = Signal(bool)
@@ -895,6 +958,10 @@ class StimulusManagerWindow(QMainWindow):
         file_menu = menu_bar.addMenu("File")
         file_menu.addAction("Export to Excel").triggered.connect(self._export_to_excel)
         file_menu.addAction("Import from Excel").triggered.connect(self._import_from_excel)
+        bids_info_menu = menu_bar.addMenu("Bids Info")
+        bids_info_menu.addAction("Add Descriptions").triggered.connect(
+            self._add_event_descriptions
+        )
         validate_menu = menu_bar.addMenu("Validate")
         self._highlight_action = validate_menu.addAction("Highlight outliers")
         self._highlight_action.setCheckable(True)
@@ -1186,6 +1253,18 @@ class StimulusManagerWindow(QMainWindow):
     def _on_type_changed(self, key: str) -> None:
         if self.rec is not None and key:
             self._update_summary(self.file_list.currentRow(), key)
+
+    def _add_event_descriptions(self) -> None:
+        dialog = EventDescriptionsDialog(self.dataset, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        descriptions = dialog.event_descriptions()
+        for event_type, description in descriptions.items():
+            self.dataset.add_meta_events_description(event_type, description)
+        self._status_bar.showMessage(
+            f"Saved descriptions for {len(descriptions)} task/event type(s)."
+        )
 
     # ------------------------------------------------------- stimulus filter
 
@@ -1825,13 +1904,13 @@ def _active_ipython():
     return get_ipython()
 
 
-def stimulus_manager(dataset: Any, block: Optional[bool] = None) -> Any:
+def stimulus_manager(dataset: Any, block: Optional[bool] = False) -> Any:
     """Launch the Stimulus Manager for `dataset` (a `DataSet` instance).
 
-    `block` defaults to True in plain scripts and False under IPython/Jupyter,
-    where the Qt event loop is instead hooked into the kernel.  When blocking,
-    the (possibly edited) dataset is returned once the window closes; otherwise
-    the window itself is returned so it can be inspected programmatically.
+    By default this returns the window immediately for notebook use and
+    integrates with IPython/Jupyter's Qt event loop. Pass ``block=True`` in a
+    standalone script to wait for the window to close and return the (possibly
+    edited) dataset.
     """
     app = QApplication.instance() or QApplication(sys.argv or ["stimulus_manager"])
 
@@ -1854,6 +1933,11 @@ def stimulus_manager(dataset: Any, block: Optional[bool] = None) -> Any:
             shell.enable_gui("qt")
         except Exception:
             block = True   # kernel cannot host the Qt loop; fall back to blocking
+
+    if block:
+        app.setQuitOnLastWindowClosed(True)
+    elif shell is not None:
+        app.setQuitOnLastWindowClosed(False)
 
     if block:
         app.exec()

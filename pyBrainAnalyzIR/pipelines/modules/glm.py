@@ -1,8 +1,9 @@
 import cedalion.nirs
 
 
-import cedalion.models.glm as glm
-from cedalion.models.glm import basis_functions
+import pyBrainAnalyzIR.math.glm as glm
+from pyBrainAnalyzIR.math.glm import basis_functions
+from pyBrainAnalyzIR.math.glm.solve import _recording_quality_mask
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
 import pyBrainAnalyzIR
 import pyBrainAnalyzIR.dataclasses.dataset
@@ -162,11 +163,16 @@ class GLM(cedalion_module):
                     & glm.design_matrix.drift_regressors(ts_long, drift_order=self.options['drift_order'])
                 )
 
+            quality_mask = None
+            if getattr(rec, "masks", None):
+                quality_mask = _recording_quality_mask(ts_long, rec.masks)
+
             result = glm.fit(ts_long,
                              design_matrix=design_matrix,
                              noise_model=self.options['noise_model'],
                              max_jobs=self.options['max_jobs'],
-                             verbose=self.options['verbose'])
+                             verbose=self.options['verbose'],
+                             quality_mask=quality_mask)
 
             stats = pyBrainAnalyzIR.dataclasses.statistics.Statistics(result)
             stats.head_model = rec.head_model
