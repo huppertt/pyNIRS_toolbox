@@ -381,7 +381,6 @@ def _control_icon(kind: str, direction: int) -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(QPen(QColor("#333333"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-    center_x = size / 2
     center_y = size / 2
 
     if kind == "Reset":
@@ -757,7 +756,10 @@ class DataMaskingManager(QMainWindow):
     @staticmethod
     def _manual_tool_summary(tool_name: str) -> str:
         if tool_name == _MANUAL_TOOLS[0]:
-            return "Right-click a channel label, trace, or probe channel to choose which recordings should mask that channel."
+            return (
+                "Right-click a channel label, trace, or probe channel to choose which "
+                "recordings should mask that channel."
+            )
         if tool_name == _MANUAL_TOOLS[1]:
             return "Right-click and drag across the time-series plot to mask that time range for every channel."
         return "Right-click and drag across the time-series plot to mask that range for the currently selected channel."
@@ -1268,7 +1270,10 @@ class DataMaskingManager(QMainWindow):
         self.stimulus_ax.clear()
         events = getattr(recording, "stim", None)
         if events is None or not isinstance(events, pd.DataFrame) or events.empty:
-            self.stimulus_ax.text(0.5, 0.5, "No stimulus events", ha="center", va="center", transform=self.stimulus_ax.transAxes)
+            self.stimulus_ax.text(
+                0.5, 0.5, "No stimulus events", ha="center", va="center",
+                transform=self.stimulus_ax.transAxes,
+            )
             self.stimulus_ax.set_yticks([])
         else:
             trial_types = events.get("trial_type", pd.Series(["event"] * len(events))).astype(str)

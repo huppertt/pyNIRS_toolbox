@@ -20,7 +20,7 @@ class input_data(cedalion_module):
     transform data.
     Tests: ``tests/test_pipeline_modules.py``.
     """
-    
+
     def __init__(self, previous_job=None):
         self.name = "Input Data"
         self.advanced_module = True
@@ -35,6 +35,7 @@ class input_data(cedalion_module):
 
     def _runlocal(self, rec):
         return rec
+
 
 class resample(cedalion_module):
     """Resample a recording while carrying its quality flags to the new time grid.

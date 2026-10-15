@@ -114,8 +114,9 @@ def write_bids_data(data, path: str | Path,
     legacy_snirffile = folder / (filename + "_fnirs.snirf")
     _migrate_legacy_bids_file(legacy_snirffile, snirffile)
 
-    # TODO - the SNIRF writer assumes this order.  It shouldn't assume, but it isn't my code so I just need to conform to it.
-    stim = data.stim[["trial_type","onset", "duration", "value"]]
+    # TODO - the SNIRF writer assumes this order. It shouldn't, but it isn't my code,
+    # so I just need to conform to it.
+    stim = data.stim[["trial_type", "onset", "duration", "value"]]
 
     if snirffile.exists():
         _assert_snirf_raw_data_matches(snirffile, data)
@@ -146,14 +147,19 @@ def write_bids_data(data, path: str | Path,
         if overwrite_snirf or not derivative_file.exists():
             _write_snirf_with_timeseries(derivative_file, data, derivative_keys, stim)
 
-    info={'TaskName': task,
-          'Description': 'Raw fNIRS amplitude time series for this recording.',
-          'Version': data.meta_data.get('Version', 'unknown'),
-          'MeasurementDate': data.meta_data.get('MeasurementDate', 'unknown'),
-          'MeasurementTime': data.meta_data.get('MeasurementTime', 'unknown'),
-          'SNIRF_createDate': data.meta_data.get('SNIRF_CreateDate', datetime.now().strftime('%Y-%m-%d')),
-          'SNIRF_createTime': data.meta_data.get('SNIRF_createTime', f"{datetime.now().strftime('%H:%M:%S')}Z"),
-          'filedescription': data.meta_data.get('filedescription', 'unknown')
+    info = {
+        'TaskName': task,
+        'Description': 'Raw fNIRS amplitude time series for this recording.',
+        'Version': data.meta_data.get('Version', 'unknown'),
+        'MeasurementDate': data.meta_data.get('MeasurementDate', 'unknown'),
+        'MeasurementTime': data.meta_data.get('MeasurementTime', 'unknown'),
+        'SNIRF_createDate': data.meta_data.get(
+            'SNIRF_CreateDate', datetime.now().strftime('%Y-%m-%d')
+        ),
+        'SNIRF_createTime': data.meta_data.get(
+            'SNIRF_createTime', f"{datetime.now().strftime('%H:%M:%S')}Z"
+        ),
+        'filedescription': data.meta_data.get('filedescription', 'unknown'),
     }
     snirffilejson = folder / (filename + "_nirs.json")
     with open(snirffilejson, 'w') as f:
@@ -396,7 +402,6 @@ def _write_bids_nirs_sidecars(
         json.dump(coordsystem, f, indent=4)
 
 
-
 def write_bids_dataset(dataset, path: str | Path,
                        readme: dict | None = None,
                        dataset_description: dict | None = None,
@@ -499,16 +504,15 @@ def write_bids_dataset(dataset, path: str | Path,
 
         run = str(all_participants[participant_id])
 
- 
         write_bids_data(data, path=path,
-                    participant_id=participant_id,
-                    run=run,
-                    task=_get_task_name(data),
-                    session=_get_session_name(data),
-                    overwrite_snirf=overwrite_snirf,
-                    include_derivatives=include_derivatives,
-                    stimulus_presentation=stimulus_presentation,
-                    event_descriptions=event_descriptions)
+                        participant_id=participant_id,
+                        run=run,
+                        task=_get_task_name(data),
+                        session=_get_session_name(data),
+                        overwrite_snirf=overwrite_snirf,
+                        include_derivatives=include_derivatives,
+                        stimulus_presentation=stimulus_presentation,
+                        event_descriptions=event_descriptions)
 
 
 def _write_snirf_with_timeseries(path: Path, data, keys: list[str], stim: pd.DataFrame) -> None:
@@ -777,7 +781,9 @@ def _bids_participants_json(snirf_file: Path, root: Path) -> dict:
 
 
 def _bids_participant_row(participants: pd.DataFrame, participant_id: str):
-    participant_columns = ['participant_id', 'subject_id', 'subject', 'subjid', 'sub','id','name']
+    participant_columns = [
+        'participant_id', 'subject_id', 'subject', 'subjid', 'sub', 'id', 'name'
+    ]
     for column in participants.columns:
         if column.lower() not in participant_columns:
             continue
@@ -1021,7 +1027,7 @@ def write_bids_stim(
         info.setdefault(column, {"Description": "Additional event information."})
 
     stim.to_csv(Path(path).with_suffix('.tsv'), sep='\t', index=False, na_rep="n/a")
-    
+
     stimfile_json = Path(path).with_suffix(".json")
     info["StimulusPresentation"] = (
         {"SoftwareName": "unknown"}
@@ -1033,16 +1039,17 @@ def write_bids_stim(
 
 
 def _get_participant_id(data):
-    keys = ['subject_id', 'subject', 'subjid', 'participant_id', 'sub','id','name']
+    keys = ['subject_id', 'subject', 'subjid', 'participant_id', 'sub', 'id', 'name']
     return _get_meta_data_value_case_insensitive(data, keys, None)
 
+
 def _get_task_name(data):
-    keys = ['task','taskname']
+    keys = ['task', 'taskname']
     return _get_meta_data_value_case_insensitive(data, keys, 'func')
 
 
 def _get_session_name(data):
-    keys = ['session','session_id','ses']
+    keys = ['session', 'session_id', 'ses']
     return _get_meta_data_value_case_insensitive(data, keys, None)
 
 
@@ -1230,8 +1237,6 @@ def write_bids_dataset_description(path: str | Path, description: dict):
         json.dump(description, f, indent=4)
 
 
-
-
 def add_missing_bids_to_metadata(data, intype='amp'):
     """Add missing BIDS metadata to the existing metadata dictionary.
 
@@ -1240,56 +1245,158 @@ def add_missing_bids_to_metadata(data, intype='amp'):
         intype (str): The type of data to be processed (default is 'amp').
     """
 
-    # The NIRS-BIDS validator requires certain fields to be present in the metadata, even if they are not strictly necessary for the BIDS specification or the SNIRF standard. This function adds those required fields with default values if they are missing.
+    # The NIRS-BIDS validator requires certain fields to be present in the metadata,
+    # even if they are not strictly necessary for the BIDS specification or the SNIRF
+    # standard. This function adds those required fields with default values if missing.
 
     if (data.__class__ == pyBrainAnalyzIR.dataclasses.dataset.DataSet):
         for r in data.dataset:
             add_missing_bids_to_metadata(r, intype=intype)
         return
     else:
-        defaults = {'Manufacturer': {'value':'n/a','description':'The manufacturer of the device used for data      acquisition','units': 'n/a'},
-                    'ManufacturersModelName': {'value':'n/a','description':'The model name of the device used for data acquisition.','units': 'n/a'},
-                    'SoftwareVersions': {'value':'n/a','description':'The software versions of the device used for data acquisition','units': 'n/a'},
-                    'DeviceSerialNumber': {'value':'n/a','description':'The serial number of the device used for data acquisition.','units': 'n/a'},
-                    'HardwareFilters': {'value':'n/a','description':'The hardware filters used in the device.','units': 'n/a'},
-                    'SourceType': {'value':'n/a','description':'The type of source used in the device.','units': 'n/a'},
-                    'DetectorType': {'value':'n/a','description':'The type of detector used in the device.','units': 'n/a'},
-                    'InstitutionName': {'value':'n/a','description':'The name of the institution where the data was acquired.','units': 'n/a'},
-                    'InstitutionAddress': {'value':'n/a','description':'The address of the institution where the data was acquired.','units': 'n/a'},
-                    'InstitutionalDepartmentName': {'value':'n/a','description':'The department of the institution where the data was acquired.','units': 'n/a'},
-                    'CapManufacturer': {'value':'n/a','description':'The manufacturer of the cap used in the study.','units': 'n/a'},
-                    'CapManufacturersModelName': {'value':'n/a','description':'The model name of the cap used in the study.','units': 'n/a' },
-                    'HeadCircumference': {'value':'n/a','description':'The head circumference of the subject.','units': units.centimeter},
-                    'SubjectArtefactDescription': {'value':'n/a','description':'Description of any artefacts related to the subject.','units': 'n/a'    },
-                    'TaskDescription': {'value':'n/a','description':'Description of the task performed by the subject.','units': 'n/a'},
-                    'Instructions': {'value':'n/a','description':'Instructions given to the subject.','units': 'n/a'},
-                    'CogPOID': {'value':'n/a','description':'The CogPO ID associated with the task.','units': 'n/a'},
-                    'NIRSPlacementScheme': {'value':'n/a','description':'The NIRS placement scheme used.','units': 'n/a'},
-                    'RecordingDuration': {'value': (data[intype].time[-1] - data[intype].time[0]).values, 'description': 'The duration of the recording.','units': units.seconds},
-                    'SamplingFrequency': {'value': 1 / (data[intype].time[1] - data[intype].time[0]).values, 'description': 'The sampling frequency of the recording.','units': units.hertz},
-                    'NIRSChannelCount': {
-                        'value': (
-                            len(data[intype].channel)
-                            * len(data[intype].wavelength)
-                        ),
-                        'description': 'The number of NIRS channels.',
-                        'units': 'n/a',
-                    },
-                    'NIRSSourceOptodeCount': {'value': sum((data.geo2d.type == PointType(1).SOURCE).values), 'description': 'The number of NIRS source optodes.','units': 'n/a'},
-                    'NIRSDetectorOptodeCount': {'value': sum((data.geo2d.type == PointType(1).DETECTOR).values), 'description': 'The number of NIRS detector optodes.','units': 'n/a'},
-                    'ShortChannelCount': {'value': sum((xrutils.norm(data.geo3d.loc[data[intype].source] - data.geo3d.loc[data[intype].detector],  # noqa: E501
-                                                           data.geo3d.points.crs) < units.millimeter * 15).values), 'description': 'The number of short channels.','units': 'n/a'},
-                    }
-        
+        defaults = {
+            'Manufacturer': {
+                'value': 'n/a',
+                'description': 'The manufacturer of the device used for data      acquisition',
+                'units': 'n/a',
+            },
+            'ManufacturersModelName': {
+                'value': 'n/a',
+                'description': 'The model name of the device used for data acquisition.',
+                'units': 'n/a',
+            },
+            'SoftwareVersions': {
+                'value': 'n/a',
+                'description': 'The software versions of the device used for data acquisition',
+                'units': 'n/a',
+            },
+            'DeviceSerialNumber': {
+                'value': 'n/a',
+                'description': 'The serial number of the device used for data acquisition.',
+                'units': 'n/a',
+            },
+            'HardwareFilters': {
+                'value': 'n/a',
+                'description': 'The hardware filters used in the device.',
+                'units': 'n/a',
+            },
+            'SourceType': {
+                'value': 'n/a',
+                'description': 'The type of source used in the device.',
+                'units': 'n/a',
+            },
+            'DetectorType': {
+                'value': 'n/a',
+                'description': 'The type of detector used in the device.',
+                'units': 'n/a',
+            },
+            'InstitutionName': {
+                'value': 'n/a',
+                'description': 'The name of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'InstitutionAddress': {
+                'value': 'n/a',
+                'description': 'The address of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'InstitutionalDepartmentName': {
+                'value': 'n/a',
+                'description': 'The department of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'CapManufacturer': {
+                'value': 'n/a',
+                'description': 'The manufacturer of the cap used in the study.',
+                'units': 'n/a',
+            },
+            'CapManufacturersModelName': {
+                'value': 'n/a',
+                'description': 'The model name of the cap used in the study.',
+                'units': 'n/a',
+            },
+            'HeadCircumference': {
+                'value': 'n/a',
+                'description': 'The head circumference of the subject.',
+                'units': units.centimeter,
+            },
+            'SubjectArtefactDescription': {
+                'value': 'n/a',
+                'description': 'Description of any artefacts related to the subject.',
+                'units': 'n/a',
+            },
+            'TaskDescription': {
+                'value': 'n/a',
+                'description': 'Description of the task performed by the subject.',
+                'units': 'n/a',
+            },
+            'Instructions': {
+                'value': 'n/a',
+                'description': 'Instructions given to the subject.',
+                'units': 'n/a',
+            },
+            'CogPOID': {
+                'value': 'n/a',
+                'description': 'The CogPO ID associated with the task.',
+                'units': 'n/a',
+            },
+            'NIRSPlacementScheme': {
+                'value': 'n/a',
+                'description': 'The NIRS placement scheme used.',
+                'units': 'n/a',
+            },
+            'RecordingDuration': {
+                'value': (data[intype].time[-1] - data[intype].time[0]).values,
+                'description': 'The duration of the recording.',
+                'units': units.seconds,
+            },
+            'SamplingFrequency': {
+                'value': 1 / (data[intype].time[1] - data[intype].time[0]).values,
+                'description': 'The sampling frequency of the recording.',
+                'units': units.hertz,
+            },
+            'NIRSChannelCount': {
+                'value': (
+                    len(data[intype].channel)
+                    * len(data[intype].wavelength)
+                ),
+                'description': 'The number of NIRS channels.',
+                'units': 'n/a',
+            },
+            'NIRSSourceOptodeCount': {
+                'value': sum((data.geo2d.type == PointType(1).SOURCE).values),
+                'description': 'The number of NIRS source optodes.',
+                'units': 'n/a',
+            },
+            'NIRSDetectorOptodeCount': {
+                'value': sum((data.geo2d.type == PointType(1).DETECTOR).values),
+                'description': 'The number of NIRS detector optodes.',
+                'units': 'n/a',
+            },
+            'ShortChannelCount': {
+                'value': sum(
+                    (
+                        xrutils.norm(
+                            data.geo3d.loc[data[intype].source]
+                            - data.geo3d.loc[data[intype].detector],
+                            data.geo3d.points.crs,
+                        )
+                        < units.millimeter * 15
+                    ).values
+                ),
+                'description': 'The number of short channels.',
+                'units': 'n/a',
+            },
+        }
+
         for key, value in defaults.items():
             if key not in data.meta_data:
                 data.meta_data[key] = value['value']
                 if '_bids_descriptions' not in data.meta_data:
                     data.meta_data['_bids_descriptions'] = {}
-                    
+
                 if key not in data.meta_data['_bids_descriptions']:
                     data.meta_data['_bids_descriptions'][key] = value['description']
-
 
             if value['units'] != 'n/a':
                 # Add the units information to the data.meta_data
@@ -1388,7 +1495,6 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
     demofileJSON = Path(path) / 'participants.json'
     demofileJSON.parent.mkdir(parents=True, exist_ok=True)
 
-
     demo_info = {}
 
     for col, source_column in description_columns.items():
@@ -1401,14 +1507,13 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
             description = bids_descriptions.get(source_column, bids_descriptions.get(col, description))
 
         first_value = demographics[source_column].iloc[0] if not demographics.empty else None
-        if type(first_value) == units.Quantity:
+        if type(first_value) == units.Quantity:  # noqa: E721
             demo_info[col] = {
                 "Description": description,
                 "Units": str(first_value.units)
             }
         else:
             demo_info[col] = {"Description": description}
-      
+
     with open(demofileJSON, 'w') as f:
-        json.dump(demo_info, f,indent=4)
-    
+        json.dump(demo_info, f, indent=4)

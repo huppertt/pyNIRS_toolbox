@@ -107,7 +107,8 @@ def test_mask_display_mode_applies_to_channel_detail_and_heatmap():
     event.ydata = float((ydata[0] + ydata[-1]) / 2)
     window._on_channel_plot_click(event)
 
-    detail_ax, metric_ax = window.channel_detail_figure.axes
+    detail_ax = window.channel_detail_figure.axes[0]
+    metric_ax = window.channel_detail_figure.axes[1]
     assert "mask" in detail_ax.get_title()
     assert [label.get_text() for label in metric_ax.get_yticklabels()] == [
         "tainted",
@@ -176,7 +177,8 @@ def test_right_click_single_channel_plot_draws_channel_detail():
     assert window._channel_detail_selection == (0, "snr", 0)
     assert not window.channel_detail_canvas.isHidden()
     assert len(window.channel_detail_figure.axes) == 2
-    detail_ax, metric_ax = window.channel_detail_figure.axes
+    detail_ax = window.channel_detail_figure.axes[0]
+    metric_ax = window.channel_detail_figure.axes[1]
     assert "normalized amplitude and SNR" in detail_ax.get_title()
     assert len(detail_ax.lines) == 2
     assert all(line.get_linewidth() <= 0.9 for line in detail_ax.lines)
@@ -194,7 +196,7 @@ def test_channel_detail_disabled_for_multiple_channel_quality_plots():
     window = DataQualityManager(rec)
     window._channel_metric_checks["sci"].setChecked(True)
 
-    assert window._channel_line_map == {}
+    assert not window._channel_line_map
     assert window.channel_detail_canvas.isHidden()
 
 

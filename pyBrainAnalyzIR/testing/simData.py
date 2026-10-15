@@ -74,7 +74,8 @@ def defaultProbe2D(warped=False, shortsep=False):
     sourcePos = np.ones((9, 2))
     detectorPos = np.ones((8, 2))
     if warped:
-        # I made this slightly warped version to make it easier to debug and visualize resting state data (so all the lines are not on top of each other)
+        # I made this slightly warped version to make it easier to debug and visualize
+        # resting state data (so all the lines are not on top of each other)
         sourcePos[:, 0] = [-75.8, -61.9, -43.7, -22.6, 0, 22.6, 43.7, 61.9, 75.8]
         sourcePos[:, 1] = [-92.6, -56.2, -28.4, -9.2, 0., -9.2, -28.4, -56.2, -92.6]
 

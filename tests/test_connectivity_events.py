@@ -66,7 +66,7 @@ def test_event_windows_trim_transitions_and_add_rest():
     assert windows['task'] == [(40.0, 80.0), (160.0, 200.0)]
     # the 29.9 s of rest at the start is too short; 90-150 and 210-300 are used
     assert windows['rest'] == [(100.0, 140.0), (220.0, 290.0)]
-    assert skipped == []
+    assert not skipped
 
 
 def test_event_windows_skip_short_conditions():

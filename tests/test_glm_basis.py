@@ -46,7 +46,7 @@ def test_default_basis_is_the_gamma_preset():
 def test_every_preset_resolves_to_its_basis_class(key, cls):
     job = glm.GLM()
     job.options["basis_function"] = key
-    assert type(job.options["basis_function"]) is cls
+    assert type(job.options["basis_function"]) is cls  # pylint: disable=unidiomatic-typecheck
     assert job.options.option("basis_function").preset_name == key
 
 

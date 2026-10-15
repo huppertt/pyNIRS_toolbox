@@ -63,9 +63,11 @@ def _canonical_mask(mask: xr.DataArray, data: xr.DataArray) -> xr.DataArray:
     if "time" in mask.dims and "time" in mask.coords and "time" in data.coords:
         try:
             mask = mask.reindex(time=data["time"], method="nearest")
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as exc:
             if mask.sizes["time"] != data.sizes["time"]:
-                raise ValueError("The generated mask time coordinate does not align with amp.")
+                raise ValueError(
+                    "The generated mask time coordinate does not align with amp."
+                ) from exc
 
     values = np.ones((data.sizes["time"], data.sizes["channel"]), dtype=bool)
     for channel_index in range(data.sizes["channel"]):
@@ -116,7 +118,7 @@ class _QualityMaskModule:
     mask_key = "quality_mask"
 
     def __init__(self, previous_job=None):
-        cedalion_module.__init__(self, previous_job)
+        super().__init__(previous_job)
         self.name = type(self).name
         self.advanced_module = True
         self.inputName = "amp"

@@ -5,17 +5,17 @@
 import cedalion.dataclasses as cdc
 from cedalion.datasets import DATASETS
 import cedalion.io
-import os.path
-import pickle
-from gzip import GzipFile
-from pathlib import Path
-import pandas as pd
+import os.path  # noqa: F401
+import pickle  # noqa: F401
+from gzip import GzipFile  # noqa: F401
+from pathlib import Path  # noqa: F401
+import pandas as pd  # noqa: F401
 
 import pooch
-import xarray as xr
+import xarray as xr  # noqa: F401
 import pyBrainAnalyzIR.dataclasses.dataset as dataset
 
-DatasetsValid=[
+DatasetsValid = [
     'fingertapping.zip',
     'fingertappingDOT.zip',
     'multisubject-fingertapping.zip',
@@ -31,10 +31,10 @@ def get_data(dataset_zip: str) -> cdc.Recording:
 
     fnames = DATASETS.fetch(dataset_zip, processor=pooch.Unzip())
 
-    dset=dataset.DataSet()
+    dset = dataset.DataSet()
 
     for file in fnames:
-        
+
         if file.endswith(".snirf"):
             rec = cedalion.io.read_snirf(file)[0]
 
