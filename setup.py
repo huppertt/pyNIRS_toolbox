@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name='pyBrainAnalyzIR',
-    packages=find_packages(['pyBrainAnalyzIR']),
+    packages=find_packages(),
     version='0.1.0',
     description='Brain AnalyzIR Wrapper for Cedalion',
     author='T Huppert',

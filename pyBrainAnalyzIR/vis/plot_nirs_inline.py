@@ -117,7 +117,13 @@ def _draw_optode_labels(ax, geo2d, sources: set[str], detectors: set[str]) -> No
 
 
 def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
-    """Draw the probe and return channel line handles in data.channel order."""
+    """Draw the probe and return channel line handles in data.channel order.
+
+    Direct callers: :func:`plot`.
+    Direct dependencies: ``matplotlib.axes.Axes`` and Cedalion's scalp-projection
+    helper when scalp landmarks are available.
+    Tests: ``tests/test_plot_nirs_inline.py``.
+    """
     geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else None
     if geo2d is None:
         plot_on_scalp = False
@@ -155,6 +161,19 @@ def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
 
 
 def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
+    """Plot a recording's probe and selected channel time series interactively.
+
+    Clicking a channel selects it; right-clicking adds or removes channels from
+    the selection. ``type`` selects the recording's named time series.
+
+    Notebook examples: ``examples/01_SimulatingData.ipynb``,
+    ``examples/02_PipelineCreation.ipynb``, ``examples/10_BIDS_Formats.ipynb``,
+    ``examples/11_Loading_CedalionExampleData.ipynb``, and
+    ``examples/13_Demonstrating_Data_Properties.ipynb``.
+    Direct callers: notebook users.
+    Direct dependencies: :func:`draw_probe` and ``matplotlib.pyplot``.
+    Tests: ``tests/test_plot_nirs_inline.py``.
+    """
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), width_ratios=[1, 3])
 

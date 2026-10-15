@@ -1,9 +1,8 @@
 # Development / CI dependencies.
 #
-# NOTE: cedalion is not published on PyPI and is installed from source, so it
-# is deliberately absent here.  The test-suite skips the tests that need it
-# (see tests/conftest.py), which keeps CI fast while still covering the pure
-# python parts of the package such as the option-variable data classes.
+# NOTE: cedalion is not published on PyPI and is installed from source, and
+# MATLAB is a licensed local dependency. Tests requiring either are excluded
+# from hosted CI and can be selected locally with pytest markers.
 pytest>=7.0
 flake8>=6.0
 pylint>=3.0,<4.0

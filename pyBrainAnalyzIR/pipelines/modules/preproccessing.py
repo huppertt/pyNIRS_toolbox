@@ -12,8 +12,14 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
 
 
 class input_data(cedalion_module):
-    # Module to handle input data
-    # This is needed so you can specify the input timeseries name for the pipeline within the pipeline_manager GUI
+    """Select which existing recording time series enters a pipeline.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``.
+    Direct callers: notebook users and the pipeline manager.
+    Direct dependency: the recording's named time series; this step does not
+    transform data.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     
     def __init__(self, previous_job=None):
         self.name = "Input Data"
@@ -31,7 +37,16 @@ class input_data(cedalion_module):
         return rec
 
 class resample(cedalion_module):
-    # Module to resample the input fNIRS signal to a specified sampling frequency
+    """Resample a recording while carrying its quality flags to the new time grid.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``,
+    ``examples/07_StatisticsDataClass_Format.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users and connected pipeline steps.
+    Direct dependency: :func:`pyBrainAnalyzIR.math.resampling.resample_with_quality_masks`.
+    Tests: ``tests/test_glm_quality_masks.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "Resample"
         self.advanced_module = False
@@ -41,7 +56,9 @@ class resample(cedalion_module):
                                 description='Target sampling frequency (Hz)',
                                 help='The data are resampled to this sampling rate. '
                                      'Must be strictly positive; values well below the '
-                                     'original rate will low-pass the data.'),
+                                     'original rate will low-pass the data. Existing '
+                                     'quality masks and NaNs are interpolated only for '
+                                     'filtering, then restored as NaNs on the output grid.'),
         })
         self.inputName = 'last'
         self.outputName = 'last'
@@ -75,7 +92,16 @@ class resample(cedalion_module):
 
 
 class intensity_opticaldensity(cedalion_module):
-    # Module to convert raw intensity data to optical density
+    """Convert measured light intensity into optical-density changes.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``,
+    ``examples/07_StatisticsDataClass_Format.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users and connected GLM pipeline steps.
+    Direct dependency: ``cedalion.nirs.int2od``.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_analysis_pipeline.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "Calculate Optical Density"
         self.advanced_module = False
@@ -98,6 +124,14 @@ class intensity_opticaldensity(cedalion_module):
 
 
 class opticaldensity_intensity(cedalion_module):
+    """Convert optical-density data back to intensity values.
+
+    Notebook examples: ``examples/01_SimulatingData.ipynb``.
+    Direct callers: simulated-data construction in
+    ``pyBrainAnalyzIR.testing.simData.Data`` and notebook users.
+    Direct dependency: ``cedalion.nirs.od2int``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to convert optical density data back to raw intensity
     def __init__(self, previous_job=None):
         self.name = "Calculate Raw Data from OD"
@@ -132,6 +166,14 @@ class opticaldensity_intensity(cedalion_module):
 
 
 class conc2od(cedalion_module):
+    """Convert hemoglobin concentration changes into optical density.
+
+    Notebook examples: ``examples/01_SimulatingData.ipynb``.
+    Direct callers: ``pyBrainAnalyzIR.testing.simData.Data`` and notebook
+    users.
+    Direct dependency: ``cedalion.nirs.conc2od``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to convert concentration data to optical density
     def __init__(self, previous_job=None):
         self.name = "Calculate OD from Concentration"
@@ -170,6 +212,17 @@ class conc2od(cedalion_module):
 
 
 class mbll(cedalion_module):
+    """Convert optical-density changes into hemoglobin concentration changes.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``,
+    ``examples/07_StatisticsDataClass_Format.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users and connected GLM steps.
+    Direct dependency: Cedalion's modified Beer-Lambert implementation,
+    ``cedalion.nirs.od2conc``.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_analysis_pipeline.py``.
+    """
     # Module to calculate concentration changes using the Modified Beer-Lambert Law
     def __init__(self, previous_job=None):
         self.name = "Calculate Modified Beer-Lambert"
@@ -208,6 +261,13 @@ class mbll(cedalion_module):
 
 
 class TrimBaseline(cedalion_module):
+    """Remove a selected baseline interval before further analysis.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: the recording time series and stimulus table.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.TrimBaseline
     def __init__(self, previous_job=None):
         self.name = "Trim Pre/Post Baseline"

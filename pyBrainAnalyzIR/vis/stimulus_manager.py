@@ -1905,12 +1905,20 @@ def _active_ipython():
 
 
 def stimulus_manager(dataset: Any, block: Optional[bool] = False) -> Any:
-    """Launch the Stimulus Manager for `dataset` (a `DataSet` instance).
+    """Open the editor for reviewing and changing event timing and labels.
 
-    By default this returns the window immediately for notebook use and
-    integrates with IPython/Jupyter's Qt event loop. Pass ``block=True`` in a
-    standalone script to wait for the window to close and return the (possibly
-    edited) dataset.
+    The editor works with the dataset's event tables. By default, the window
+    is returned immediately for notebook use; ``block=True`` waits for the
+    editor to close and returns the dataset.
+
+    Notebook examples: no dedicated tutorial yet; see ``examples/10_BIDS_Formats.ipynb``
+    for the role of event labels in BIDS.
+    Direct callers: notebook users and
+    ``NIRSviewIRWindow._edit_stimulus_timing``.
+    Direct dependencies: :class:`StimulusManagerWindow` and
+    :func:`_active_ipython`.
+    Tests: ``tests/test_stimulus_manager_gui.py`` and
+    ``tests/test_nirsviewir_gui.py``.
     """
     app = QApplication.instance() or QApplication(sys.argv or ["stimulus_manager"])
 

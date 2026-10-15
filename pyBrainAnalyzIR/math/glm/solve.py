@@ -186,7 +186,18 @@ def fit(
     verbose: bool = False,
     quality_mask: xr.DataArray | None = None,
 ):
-    """Fit a design matrix, excluding recording quality-mask samples when supplied."""
+    """Fit channel-wise GLMs to a time series and design matrix.
+
+    If ``quality_mask`` is provided, bad samples are excluded independently
+    for each channel. Without missing samples, estimator behavior matches
+    Cedalion's GLM solver.
+
+    Direct callers: :class:`pyBrainAnalyzIR.pipelines.modules.glm.GLM` and
+    callers in ``tests/test_glm_quality_masks.py`` and ``tests/test_glm_basis.py``.
+    Direct dependencies: ``DesignMatrix.iter_computational_groups`` and
+    :func:`_channel_fit`.
+    Tests: ``tests/test_glm_quality_masks.py`` and ``tests/test_glm_basis.py``.
+    """
     ts = ts.pint.dequantify()
     dim3_name = xrutils.other_dim(design_matrix.common, "time", "regressor")
 
@@ -255,7 +266,13 @@ def predict(
     thetas: xr.DataArray,
     design_matrix: DesignMatrix,
 ) -> cdt.NDTimeSeries:
-    """Predict the time series from the design matrix and fitted coefficients."""
+    """Predict a time series using a design matrix and fitted coefficients.
+
+    Direct callers: ``tests/test_glm_quality_masks.py``.
+    Direct dependencies: ``DesignMatrix.iter_computational_groups`` and
+    ``xarray.dot``.
+    Tests: ``tests/test_glm_quality_masks.py``.
+    """
     dim3_name = xrutils.other_dim(design_matrix.common, "time", "regressor")
     prediction = defaultdict(list)
 

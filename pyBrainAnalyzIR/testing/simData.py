@@ -41,27 +41,16 @@ def randAR(P=5, random_seed=None):
 
 
 def defaultProbe2D(warped=False, shortsep=False):
-    """
-    This function returns a default simple 2D probe.  This is the same default used in the NIRS-toolbox
+    """Build the toolbox's standard 2D source-detector layout and channel list.
 
-    S1  S2  S3  S4  S5  S6  S7  S8  S9
-      D1  D2  D3  D4  D5  D6  D7  D8
+    Set ``warped`` for a curved layout or ``shortsep`` to add a short-separation
+    detector beside each source.
 
-      Inputs:
-            warped:   bool {default False}. Use a curved layout that is easier to visualize for connectivity
-            shortsep: bool {default False}. Add a short-separation detector (D9-D17) ~7mm from each source
-                      (S1D9 ... S9D17), matching the probe in nirs.testing.simData_connectivity_shortsep
-      Outputs:  geo2d structure
-                Dictionary containing:
-                        sourceLabels:  List[np._str]
-                        detectorLabels: List[np._str]
-                        channel: xr.DataArray
-                        source: xr.DataArray
-                        detector: xr.DataArray
-                        wavelength: List[float]
-
-    TODO:   Add geo3d structure
-            Add input arguements to all customization
+    Notebook examples: ``examples/01_SimulatingData.ipynb`` and
+    ``examples/13_Demonstrating_Data_Properties.ipynb``.
+    Direct callers: :func:`ARnoise` and notebook simulation workflows.
+    Direct dependencies: ``xarray.DataArray`` and Cedalion point-type definitions.
+    Tests: ``tests/test_connectivity_simulation.py``.
     """
 
     dims = ["label", "pos"]
@@ -150,26 +139,18 @@ def defaultProbe2D(warped=False, shortsep=False):
 def ARnoise(geo2D=None, measList=None,
             t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3), P=10, sigma=0.33,
             random_seed=None):
-    """ This function will simulate fNIRS CW raw amp data with AR noise
-    This matches the defaults for the nirs toolbox nirs.modules.simARNoise
+    """Generate raw-intensity fNIRS data with spatial and autoregressive noise.
 
-    Inputs:
-        geo2d.  2d probe structure.     {Default calls defaultProbe()}
-        measList: Dictionary containing {Default calls defaultProbe()}
-                channel: xr.DataArray
-                wavelength: List[float]
-        t:      time variable.  np.array {Default 0-300s @ 10Hz}
-        P:      AR model order (calls randAR(P) to generate) {default 10}
-        sigma:  Spatial covariance noise prior {default 0.33}
-        random_seed: optional seed or shared numpy.random.Generator
+    The defaults create a 2D probe and a 300-second, 10 Hz recording.
+    ``random_seed`` can be an integer or a shared NumPy generator.
 
-    Outputs:
-        rec:    Cedalion recording structure
-
-    TODO:
-        Test with probes other than the defaultProbe()
-        Add cedalion verifier checks
-
+    Notebook examples: ``examples/01_SimulatingData.ipynb`` and
+    ``examples/13_Demonstrating_Data_Properties.ipynb``.
+    Direct callers: :func:`Data` and notebook simulation workflows.
+    Direct dependencies: :func:`defaultProbe2D`, :func:`randAR`, and
+    :func:`_build_recording`.
+    Tests: ``tests/test_connectivity_simulation.py``,
+    ``tests/test_ported_modules.py``, and ``tests/test_simulation_random_seed.py``.
     """
 
     rng = get_rng(random_seed)
@@ -242,26 +223,26 @@ def _build_recording(data, t, geo2D, measList, geo3D_layout=None):
 def Data(noise=None, stim=None, snr=0.5,
          channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
          modifiers=None, random_seed=None):
-    """
-        Function for generating simulated recording with HRF added
+    """Add simulated task responses to a recording and return the response truth.
 
-        Inputs:
-            noise:  cedalion recording class.
-                This is the data to use to add the synthetic HRF to.  This may be either a simulated noise recording or
-                real data.  {Default use cedalion.testing.simData.ARnoise()}
-            stim:   stim events pd.DataFrame
-                This is the timing to use for generating the HRF.  {Default use simEvents.rand_stim_design()}
-            snr:    float {default 0.5}
-                SNR to use for generating HRF.  SNR is defined from the whitened innovations of the recording data
-            channels:  np.array of indices (matching recording) to add events to
-                If not provides {default None}, then randomly 1/2 of the channels will be selected and used
-            random_seed: optional seed or shared numpy.random.Generator
-            basis:  glm basis set to use {default Gamma(tau=0s,sigma=3s,T=3s)}
+    When omitted, ``noise`` and ``stim`` are generated automatically. The
+    returned truth array marks which channel/chromophore combinations received
+    a response.
 
-        Outputs:
-            rec:    recording with the HRF added to the amp (raw) timecourse
-            truth:  xr.DataArray indicating (binary) where the simulated HRF was added
-                Note- the HRF is added in chromo space and passed back to OD and raw timecourses
+    Notebook examples: ``examples/01_SimulatingData.ipynb``,
+    ``examples/08_GroupAnalysis.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: :func:`simdataset` and notebook simulation workflows.
+    Direct dependencies: :func:`ARnoise`, ``simEvents.rand_stim_design``,
+    ``cedalion.nirs.int2od``, ``prep.mbll``, ``cedalion.models.glm.fit``,
+    ``cedalion.models.glm.predict``,
+    ``prep.conc2od``, and ``prep.opticaldensity_intensity``.
+    Tests: ``tests/test_simulation_random_seed.py``,
+    ``tests/test_pipeline_modules.py``, and ``tests/test_dataset.py``.
+
+    Returns:
+        A recording containing the simulated response and an array marking
+        which channels and chromophores received that response.
     """
 
     # I could not figure out why, but when I pass this directly as an input, it ran into wierd referencing issues
@@ -363,7 +344,15 @@ def simMotionArtifact(
     motionMask=None,
     random_seed=None,
 ):
-    """Add simulated motion artifacts using an optional seed or shared generator."""
+    """Add spike-like and step-like movement artifacts to a time series.
+
+    Notebook examples: ``examples/01_SimulatingData.ipynb``,
+    ``examples/13_Demonstrating_Data_Properties.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: :func:`Data` when listed in ``modifiers`` and notebook users.
+    Direct dependencies: ``numpy.random.Generator`` and NumPy array operations.
+    Tests: ``tests/test_simulation_random_seed.py``.
+    """
     rng = get_rng(random_seed)
 
     if (hasattr(data, 'wavelength')):
@@ -432,10 +421,18 @@ def simMotionArtifact(
 def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
                channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
                modifiers=None, random_seed=None):
-    """Create a dataset, sharing one random generator across all simulated files.
+    """Create multiple simulated recordings in one :class:`DataSet`.
 
     Reusing the same ``random_seed`` reproduces the dataset while advancing the
     generator between files so their simulated contents differ.
+
+    Notebook examples: ``examples/01_SimulatingData.ipynb``,
+    ``examples/03_ROC_Analysis.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook simulation and quality-mask workflows.
+    Direct dependencies: :func:`Data` and ``pyBrainAnalyzIR.dataclasses.dataset.DataSet``.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_simulation_random_seed.py``.
     """
     rng = get_rng(random_seed)
     dset = dataset.DataSet()

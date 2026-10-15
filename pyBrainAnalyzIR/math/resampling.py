@@ -43,6 +43,13 @@ def resample_with_quality_masks(
 
     Invalid source points are restored as NaN at their nearest output sample, and the
     recording's clean/bad masks are projected to that same output time grid.
+
+    Direct callers:
+    :class:`pyBrainAnalyzIR.pipelines.modules.preproccessing.resample`.
+    Direct dependencies: ``cedalion.math.resample.resample`` for complete data and
+    :func:`pyBrainAnalyzIR.math.glm.solve._recording_quality_mask` for mask alignment.
+    Tests: ``tests/test_glm_quality_masks.py``; the public pipeline step is also
+    covered by ``tests/test_pipeline_modules.py``.
     """
     data_plain = data.pint.dequantify()
     time = np.asarray(data_plain.time, dtype=float)

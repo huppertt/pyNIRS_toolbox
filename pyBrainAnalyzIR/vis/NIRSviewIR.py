@@ -1637,12 +1637,21 @@ def NIRSviewIR(
     block: Optional[bool] = False,
     plot_on_scalp: bool = True,
 ) -> "NIRSviewIRWindow":
-    """Launch the NIRSviewIR browser for `dataset` (a `DataSet` instance).
+    """Open the interactive browser for a :class:`~pyBrainAnalyzIR.dataclasses.dataset.DataSet`.
 
-    `block` defaults to False for notebook use, where the Qt event loop is
-    integrated with the kernel. Pass ``block=True`` in a standalone script to
-    run the Qt event loop until the window closes. The window is returned so
-    it can be inspected or closed programmatically.
+    The window lets users review recordings, analysis results, and dataset
+    metadata. The default returns the window immediately, which is convenient
+    in a notebook; ``block=True`` waits until the window closes when launching
+    from a standalone script. ``plot_on_scalp`` controls the probe display.
+
+    Notebook examples: ``examples/06_Example_GUI_use.ipynb`` and
+    ``examples/11_Loading_CedalionExampleData.ipynb``.
+    Direct callers: notebook users; ``NIRSviewIRWindow._edit_stimulus_timing``,
+    ``NIRSviewIRWindow._open_data_quality_manager``, and
+    ``NIRSviewIRWindow._open_data_masking_manager`` open related tools.
+    Direct dependencies: :class:`NIRSviewIRWindow` and
+    :func:`_active_ipython` for notebook integration.
+    Tests: ``tests/test_nirsviewir_gui.py``.
     """
     app = QApplication.instance() or QApplication(sys.argv or ["NIRSviewIR"])
     shell = _active_ipython()

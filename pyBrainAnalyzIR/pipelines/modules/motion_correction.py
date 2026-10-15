@@ -38,11 +38,26 @@ def _combine_recording_masks(rec, data, mask):
     return mask
 
 
-
+def _time_inclusion_mask(mask):
+    """Collapse channel and subtype flags to the time mask expected by Cedalion PCA."""
+    if "time" not in mask.dims:
+        raise ValueError("The PCA motion mask must include a time dimension.")
+    other_dims = [dim for dim in mask.dims if dim != "time"]
+    if other_dims:
+        mask = mask.all(dim=other_dims)
+    return mask.astype(bool)
 
 
 class MotionCorrectPCA(cedalion_module):
-    # Module to perform PCA-based motion correction on fNIRS data
+    """Reduce motion-related components using detected artifact intervals.
+
+    Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: ``cedalion.sigproc.quality.id_motion`` and
+    ``cedalion.sigproc.motion_correct.motion_correct_PCA``.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_glm_quality_masks.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "PCA Based Motion Correction (hmrR_MotionCorrectPCA.m)"
         self.advanced_module = True
@@ -103,6 +118,7 @@ class MotionCorrectPCA(cedalion_module):
                                                         self.options['stdev_thresh'], 
                                                         self.options['amp_thresh'])
                 ma_mask = _combine_recording_masks(rec, rec[inputName], ma_mask)
+                ma_mask = _time_inclusion_mask(ma_mask)
                 corrected, _, _ = motion_correct.motion_correct_PCA(
                     rec[inputName],
                     nSV=self.options['nSV'],
@@ -122,6 +138,14 @@ class MotionCorrectPCA(cedalion_module):
 
 
 class splineSG(cedalion_module):
+    """Correct motion artifacts using spline interpolation and smoothing.
+
+    Notebook examples: no dedicated example yet; see ``examples/02_PipelineCreation.ipynb``
+    for how to connect preprocessing steps.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: Cedalion's spline-based motion-correction routine.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to perform spline-based motion correction on fNIRS data
     def __init__(self, previous_job=None):
         self.name = "Spline Based Motion Correction"
@@ -167,6 +191,15 @@ class splineSG(cedalion_module):
 
 
 class TDDR(cedalion_module):
+    """Reduce motion artifacts with the temporal derivative distribution repair method.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` and
+    ``examples/08_GroupAnalysis.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :func:`pyBrainAnalyzIR.sigproc.TDDR.TDDR`.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_analysis_pipeline.py``.
+    """
     # Module to perform Temporal Derivative Distribution Repair (TDDR) motion correction on fNIRS data
     def __init__(self, previous_job=None):
         self.name = "TDDR"
@@ -217,6 +250,14 @@ class TDDR(cedalion_module):
 
 
 class Wavelet(cedalion_module):
+    """Correct motion artifacts using a wavelet-based method.
+
+    Notebook examples: no dedicated example yet; see ``examples/02_PipelineCreation.ipynb``
+    for pipeline construction.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :mod:`pyBrainAnalyzIR.sigproc.Wavelet`.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to perform wavelet-based motion correction on fNIRS data
     def __init__(self, previous_job=None):
         self.name = "Remove Trend & Motion with Wavelets"

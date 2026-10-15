@@ -37,7 +37,6 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run the test suite
-        # cedalion is not available on PyPI, so the tests that need it are
-        # skipped automatically (see tests/conftest.py).  The remaining tests
-        # cover the option-variable data classes and other pure python code.
-        run: pytest --color=yes
+        # Keep tests requiring local Cedalion or MATLAB installations out of
+        # hosted CI; run those with plain `pytest` in a suitable local setup.
+        run: pytest --color=yes -m "not requires_cedalion and not requires_matlab"

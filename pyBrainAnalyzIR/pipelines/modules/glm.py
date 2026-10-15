@@ -63,7 +63,18 @@ def get_basis_function(basis=DEFAULT_BASIS):
 
 
 class GLM(cedalion_module):
-    # Module to fit a General Linear Model (GLM) to fNIRS data
+    """Estimate event-related responses with a first-level general linear model.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb``,
+    ``examples/07_StatisticsDataClass_Format.ipynb``, and
+    ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users, analysis pipelines, and
+    ``pyBrainAnalyzIR.testing.channelROC``.
+    Direct dependencies: local :func:`pyBrainAnalyzIR.math.glm.fit` and
+    :class:`pyBrainAnalyzIR.dataclasses.statistics.Statistics`.
+    Tests: ``tests/test_glm_quality_masks.py``,
+    ``tests/test_analysis_pipeline.py``, and ``tests/test_pipeline_modules.py``.
+    """
     # AR-IRLS
     # Barker, Jeffrey W., Ardalan Aarabi, and Theodore J. Huppert.
     # "Autoregressive model based algorithm for correcting motion and
@@ -85,7 +96,10 @@ class GLM(cedalion_module):
                                              "ordinary least-squares; 'ar_irls' is the "
                                              'autoregressive iteratively-reweighted '
                                              'least-squares model, which is robust to '
-                                             'motion and serially-correlated noise.'),
+                                             'motion and serially-correlated noise. '
+                                             'Recording quality masks are applied '
+                                             'automatically; masked samples are omitted '
+                                             'from each channel fit.'),
             'ar_order': NumericOption(30, minimum=0, integer_only=True,
                                       description='Autoregressive model order',
                                       help='Maximum order of the autoregressive noise '

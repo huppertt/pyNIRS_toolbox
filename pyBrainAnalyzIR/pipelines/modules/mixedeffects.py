@@ -39,6 +39,15 @@ def is_numeric(x):
 
 
 class MixedEffects(cedalion_module):
+    """Fit a group-level model to first-level participant results.
+
+    Notebook examples: ``examples/08_GroupAnalysis.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`pyBrainAnalyzIR.math.mixed_effects.fitlme` and
+    :meth:`~pyBrainAnalyzIR.dataclasses.dataset.DataSet.get_demographics`.
+    Tests: ``tests/test_analysis_pipeline.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     # Module to fit a Mixed Effects Model for Group Level analysis to fNIRS data
     def __init__(self, previous_job=None):
         self.name = "Mixed Effects Model"

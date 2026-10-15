@@ -11,12 +11,23 @@ from typing import Any
 
 @dataclass
 class DataSet:
-    """Main container for holding multiple recording datatypes.
+    """Collection of recordings and dataset-level analysis results.
 
-    The `DataSet` class holds data adjunct objects.
+    A ``DataSet`` is the main object passed between pipeline steps and the
+    interactive viewers. It also keeps demographics and BIDS descriptions
+    synchronized across its recordings.
 
-    Attributes:
-
+    Notebook examples: ``examples/04_EditingDemographics.ipynb``,
+    ``examples/08_GroupAnalysis.ipynb``, ``examples/10_BIDS_Formats.ipynb``,
+    and ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: pipeline modules, BIDS readers/writers in
+    ``pyBrainAnalyzIR.io.bids``, and the GUI launchers in
+    ``pyBrainAnalyzIR.vis``.
+    Direct dependencies: recording objects stored in ``dataset``,
+    :class:`~pyBrainAnalyzIR.dataclasses.statistics.Statistics`, pandas
+    demographics tables, and ``pyBrainAnalyzIR.io.bids`` for BIDS export.
+    Tests: ``tests/test_dataset.py``, ``tests/test_analysis_pipeline.py``,
+    and ``tests/test_data_masking_manager.py``.
     """
     description: str = field(default_factory=str)
     statistics: OrderedDict[str, pyBrainAnalyzIR.dataclasses.statistics.Statistics] = field(default_factory=OrderedDict)
@@ -85,6 +96,14 @@ class DataSet:
         self.statistics[key] = value
 
     def import_data(self, data):
+        """Add one recording or a list of recordings to this collection.
+
+        Notebook examples: ``examples/04_EditingDemographics.ipynb`` and
+        ``examples/08_GroupAnalysis.ipynb``.
+        Direct callers: the dataset constructor and BIDS dataset reader.
+        Direct dependency: :meth:`_sync_bids_descriptions`.
+        Tests: ``tests/test_dataset.py``.
+        """
         if (data.__class__ == list):
             for d in data:
                 self.dataset.append(d)
@@ -142,11 +161,22 @@ class DataSet:
             rec.meta_data['_bids_descriptions'] = common_key
 
     def add_meta_data_description(self, key: str, description: str):
-        """Add or update a description for a specific metadata key across all recordings.
+        """Describe a metadata field for BIDS documentation.
 
         Args:
             key (str): The metadata key for which to add or update the description.
             description (str): The description to associate with the specified key.
+
+        The description is shared across recordings and stored in the
+        toolbox-managed ``_bids_descriptions`` metadata.
+
+        Notebook examples: no current example calls this method directly;
+        ``examples/10_BIDS_Formats.ipynb`` covers BIDS writing.
+        Direct callers: ``DemographicsManager`` saves the edited field
+        descriptions through this method.
+        Direct dependency: :meth:`_sync_bids_descriptions`.
+        Tests: ``tests/test_dataset.py`` and
+        ``tests/test_demographics_manager_gui.py``.
         """
         self._sync_bids_descriptions()
         self.dataset[0].meta_data['_bids_descriptions'][key] = description
@@ -158,6 +188,14 @@ class DataSet:
         Args:
             eventkey: Value used for the event's ``trial_type`` column.
             description: Description of that event type or task condition.
+
+        Notebook examples: no current example calls this method directly;
+        ``examples/10_BIDS_Formats.ipynb`` demonstrates BIDS events.
+        Direct callers: ``EventDescriptionsDialog`` saves event descriptions
+        through this method.
+        Direct dependency: :meth:`_sync_bids_descriptions`.
+        Tests: ``tests/test_dataset.py`` and
+        ``tests/test_stimulus_manager_gui.py``.
         """
         if not isinstance(eventkey, str) or not eventkey.strip():
             raise ValueError("eventkey must be a non-empty string")
@@ -254,6 +292,15 @@ class DataSet:
         return include
 
     def get_stimulus_info(self) -> dict:
+        """Summarize event types and their descriptions across recordings.
+
+        Notebook examples: ``examples/10_BIDS_Formats.ipynb``.
+        Direct callers: ``BidsInfoManager`` uses this summary when editing
+        dataset-level BIDS information.
+        Direct dependencies: recording stimulus tables and
+        ``_bids_descriptions`` metadata.
+        Tests: ``tests/test_dataset.py``.
+        """
         """Summarize trial types and event statistics across recordings."""
         event_columns = [
             "trial_type",
@@ -386,6 +433,14 @@ class DataSet:
         return DataSet._normalize_demographics_unit_value(value), None
 
     def add_demographics_units(self, key: str, unit: Any):
+        """Attach or remove a measurement unit for one demographic column.
+
+        Notebook examples: ``examples/08_GroupAnalysis.ipynb``.
+        Direct callers: ``DemographicsManager`` applies chosen units by
+        calling this method.
+        Direct dependencies: :meth:`get_demographics` and recording metadata.
+        Tests: ``tests/test_dataset.py``.
+        """
         """Add or update units for a metadata key across all recordings.
 
         Args:
@@ -409,6 +464,16 @@ class DataSet:
                 rec.meta_data[key] = magnitude * unit
 
     def get_demographics(self):
+        """Return participant metadata as a table, one row per recording.
+
+        Notebook examples: ``examples/08_GroupAnalysis.ipynb`` and
+        ``examples/09_RestingStateConnectivity.ipynb``.
+        Direct callers: demographics and quality GUIs, group-analysis
+        examples, and BIDS export.
+        Direct dependencies: recording ``meta_data`` and pandas.
+        Tests: ``tests/test_dataset.py`` and
+        ``tests/test_analysis_pipeline.py``.
+        """
         demographics = []
         for rec in self.dataset:
             demo = {}
@@ -421,6 +486,16 @@ class DataSet:
         return pd.DataFrame(demographics)
 
     def add_demographics_by_index(self, table):
+        """Add participant columns when table rows match recording order.
+
+        Notebook examples: ``examples/04_EditingDemographics.ipynb``,
+        ``examples/06_Example_GUI_use.ipynb``, and
+        ``examples/08_GroupAnalysis.ipynb``.
+        Direct callers: notebook users and
+        :meth:`add_demographics_by_match_variable` for aligned table updates.
+        Direct dependencies: pandas DataFrame row order and recording metadata.
+        Tests: ``tests/test_dataset.py``.
+        """
         if (table.shape[0] != len(self.dataset)):
             warnings.warn("Length of table does not match dataset.")
             return
@@ -432,6 +507,16 @@ class DataSet:
         
 
     def add_demographics_by_match_variable(self, table, matchvariable='subjectID', allow_missing=False):
+        """Add demographics by matching a unique recording identifier.
+
+        Use this method when the supplied rows are not in recording order.
+        Each table row is matched to recording metadata using ``matchvariable``.
+
+        Notebook examples: ``examples/08_GroupAnalysis.ipynb``.
+        Direct callers: notebook users.
+        Direct dependencies: pandas DataFrame matching and recording metadata.
+        Tests: ``tests/test_dataset.py``.
+        """
         cur_demo = self.get_demographics()
         if (matchvariable not in cur_demo.keys()):
             warnings.warn("Match variable is not currently in the demographics")
@@ -453,6 +538,13 @@ class DataSet:
         
 
     def save_bids(self, path: str | Path):
+        """Write this dataset to a BIDS directory.
+
+        Notebook examples: ``examples/10_BIDS_Formats.ipynb``.
+        Direct callers: notebook users and the NIRSviewIR save workflow.
+        Direct dependency: :func:`pyBrainAnalyzIR.io.bids.write_bids_dataset`.
+        Tests: ``tests/test_dataset.py`` and ``tests/test_bids_validator.py``.
+        """
         """Save the dataset in BIDS format.
 
         Args:

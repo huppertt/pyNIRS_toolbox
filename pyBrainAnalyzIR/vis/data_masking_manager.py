@@ -411,6 +411,18 @@ def _control_icon(kind: str, direction: int) -> QIcon:
 
 
 class DataMaskingManager(QMainWindow):
+    """Interactive reviewer for creating, previewing, and applying quality masks.
+
+    Users can inspect channel time courses, build automatic or manual masks,
+    and submit or cancel the staged changes.
+
+    Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: :func:`data_masking_manager` and
+    ``NIRSviewIRWindow._open_data_masking_manager``.
+    Direct dependencies: recording ``masks``/``set_mask`` data and
+    :class:`~pyBrainAnalyzIR.dataclasses.dataset.DataSet`.
+    Tests: ``tests/test_data_masking_manager.py``.
+    """
     """Browse signals and build channel/time masks from Cedalion quality tools."""
 
     submitted = Signal()
@@ -1899,9 +1911,17 @@ def data_masking_manager(
 ) -> DataMaskingManager:
     """Open the data masking viewer for a DataSet or a single recording.
 
-    By default, this returns immediately for notebook use and integrates with
-    IPython/Jupyter's Qt event loop. Pass ``block=True`` in a standalone
-    script to run the Qt event loop until the window closes.
+    The viewer can review existing masks and stage additional automatic or
+    manual edits. Submitting applies the staged changes; cancelling leaves the
+    recordings unchanged. By default, the window is returned immediately for
+    notebook use; pass ``block=True`` in a standalone script to wait for it to
+    close.
+
+    Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users and
+    ``NIRSviewIRWindow._open_data_masking_manager``.
+    Direct dependency: :class:`DataMaskingManager`.
+    Tests: ``tests/test_data_masking_manager.py``.
     """
     app = QApplication.instance() or QApplication([])
     shell = _active_ipython()

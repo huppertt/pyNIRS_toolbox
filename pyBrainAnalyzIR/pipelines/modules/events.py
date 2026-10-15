@@ -12,6 +12,15 @@ from pyBrainAnalyzIR.utils.data_selection import (
 
 
 class rename_stims(cedalion_module):
+    """Change a stimulus/event label throughout a recording or dataset.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` shows how to
+    connect pipeline steps; a dedicated event-editing example is listed in
+    ``TODO.md``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: the recording's stimulus table.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to rename stimulus events according to a specified mapping
     def __init__(self, previous_job=None):
         self.name = "Rename Stims"
@@ -46,6 +55,14 @@ class rename_stims(cedalion_module):
 
 
 class remove_stims(cedalion_module):
+    """Remove selected stimulus events from a recording or dataset.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` shows pipeline
+    construction; see ``TODO.md`` for an event-editing tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: the recording's stimulus table.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to remove specified stimulus events from the dataset
     def __init__(self, previous_job=None):
         self.name = "Remove Stims"
@@ -78,6 +95,14 @@ class remove_stims(cedalion_module):
 
 
 class keep_stims(cedalion_module):
+    """Keep only selected stimulus events in a recording or dataset.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` shows pipeline
+    construction; see ``TODO.md`` for an event-editing tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: the recording's stimulus table.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to keep only specified stimulus events in the dataset
     def __init__(self, previous_job=None):
         self.name = "Keep Stims"
@@ -177,6 +202,16 @@ def _merge_stim_gaps(stim, fs, max_samples, min_isi):
 
 
 class RemoveStimGaps(cedalion_module):
+    """Merge nearby events of the same type when their gap is short.
+
+    Notebook examples: no direct use yet; see ``TODO.md`` for an event-editing
+    tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`_merge_stim_gaps` and
+    :func:`_sampling_rate`.
+    Tests: ``tests/test_connectivity_events.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.RemoveStimGaps
     def __init__(self, previous_job=None):
         self.name = "Remove Gaps in Stim Blocks"
@@ -231,6 +266,14 @@ class RemoveStimGaps(cedalion_module):
 
 
 class RemoveShortStims(cedalion_module):
+    """Remove stimulus events shorter than a chosen duration.
+
+    Notebook examples: no direct use yet; see ``TODO.md`` for an event-editing
+    tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: the recording's stimulus table.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.RemoveShortStims
     def __init__(self, previous_job=None):
         self.name = "Remove Short Stims"
@@ -272,6 +315,16 @@ def _filter_conditions(obj, is_kept):
 
 
 class DiscardStims(cedalion_module):
+    """Remove selected event conditions from recordings and statistics.
+
+    Notebook examples: no direct use yet; see ``TODO.md`` for an event-editing
+    tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`_filter_conditions` and
+    :func:`_all_condition_names`.
+    Tests: ``tests/test_connectivity_events.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.DiscardStims
     def __init__(self, previous_job=None):
         self.name = "Discard Stim Conditions"
@@ -299,6 +352,15 @@ class DiscardStims(cedalion_module):
 
 
 class KeepStims(cedalion_module):
+    """Keep only selected event conditions in recordings and statistics.
+
+    Notebook examples: no direct use yet; see ``TODO.md`` for an event-editing
+    tutorial request.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`_filter_conditions` and
+    :func:`_all_condition_names`.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.KeepStims
     def __init__(self, previous_job=None):
         self.name = "Keep Just These Stims"

@@ -155,6 +155,14 @@ class _QualityMaskModule:
 
 
 class PeakSpectralPowerMask(_QualityMaskModule, cedalion_module):
+    """Flag channels whose pulse-band spectral power is below threshold.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.psp``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Peak spectral power mask"
     mask_key = "peak_spectral_power"
 
@@ -194,6 +202,14 @@ class PeakSpectralPowerMask(_QualityMaskModule, cedalion_module):
 
 
 class ScalpCouplingIndexMask(_QualityMaskModule, cedalion_module):
+    """Flag channels with a weak scalp-coupling index.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.sci``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Scalp-coupling index mask"
     mask_key = "scalp_coupling_index"
 
@@ -232,6 +248,14 @@ class ScalpCouplingIndexMask(_QualityMaskModule, cedalion_module):
 
 
 class SignalToNoiseRatioMask(_QualityMaskModule, cedalion_module):
+    """Flag channels whose signal-to-noise ratio is below threshold.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.snr``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Signal-to-noise ratio mask"
     mask_key = "signal_to_noise_ratio"
 
@@ -249,6 +273,14 @@ class SignalToNoiseRatioMask(_QualityMaskModule, cedalion_module):
 
 
 class MeanAmplitudeMask(_QualityMaskModule, cedalion_module):
+    """Flag channels whose mean light intensity is outside the selected range.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.mean_amp``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Mean amplitude range mask"
     mask_key = "mean_amplitude"
 
@@ -278,6 +310,14 @@ class MeanAmplitudeMask(_QualityMaskModule, cedalion_module):
 
 
 class SourceDetectorDistanceMask(_QualityMaskModule, cedalion_module):
+    """Flag channels outside the selected source-detector distance range.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.sd_dist``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Source-detector distance mask"
     mask_key = "source_detector_distance"
 
@@ -307,6 +347,14 @@ class SourceDetectorDistanceMask(_QualityMaskModule, cedalion_module):
 
 
 class GlobalVarianceTemporalDerivativeMask(_QualityMaskModule, cedalion_module):
+    """Flag time points with unusually large global signal changes.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for applying a quality mask.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.gvtd``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Global variance of temporal derivative mask"
     mask_key = "global_variance_temporal_derivative"
 
@@ -334,6 +382,15 @@ class GlobalVarianceTemporalDerivativeMask(_QualityMaskModule, cedalion_module):
 
 
 class MotionArtifactDetectionMask(_QualityMaskModule, cedalion_module):
+    """Find abrupt changes in the signal that may be caused by movement.
+
+    Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
+    Direct callers: notebook users, pipeline-manager users, and
+    :class:`~pyBrainAnalyzIR.vis.data_masking_manager.DataMaskingManager`.
+    Direct dependency: ``cedalion.sigproc.quality.id_motion``.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_glm_quality_masks.py``.
+    """
     name = "Motion artifact detection mask"
     mask_key = "motion_artifact_detection"
 
@@ -370,6 +427,15 @@ class MotionArtifactDetectionMask(_QualityMaskModule, cedalion_module):
 
 
 class MotionMaskRefinement(_QualityMaskModule, cedalion_module):
+    """Combine movement flags by channel or across all channels.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for motion masking.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: ``cedalion.sigproc.quality.id_motion`` and
+    ``cedalion.sigproc.quality.id_motion_refine``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Motion-mask refinement"
     mask_key = "motion_mask_refinement"
 
@@ -415,6 +481,14 @@ class MotionMaskRefinement(_QualityMaskModule, cedalion_module):
 
 
 class StandardDeviationOutlierMask(_QualityMaskModule, cedalion_module):
+    """Flag channel samples that are unusual in a rolling standard-deviation view.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for quality-mask use.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.detect_outliers_std``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Standard-deviation outlier mask"
     mask_key = "standard_deviation_outliers"
 
@@ -439,6 +513,14 @@ class StandardDeviationOutlierMask(_QualityMaskModule, cedalion_module):
 
 
 class GradientOutlierMask(_QualityMaskModule, cedalion_module):
+    """Flag unusually large changes between adjacent signal samples.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for quality-mask use.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.detect_outliers_grad``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Gradient outlier mask"
     mask_key = "gradient_outliers"
 
@@ -455,6 +537,14 @@ class GradientOutlierMask(_QualityMaskModule, cedalion_module):
 
 
 class CombinedOutlierMask(_QualityMaskModule, cedalion_module):
+    """Flag outliers using both signal variability and signal gradients.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for quality-mask use.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: ``cedalion.sigproc.quality.detect_outliers``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Combined outlier mask"
     mask_key = "combined_outliers"
 
@@ -486,6 +576,15 @@ class CombinedOutlierMask(_QualityMaskModule, cedalion_module):
 
 
 class BaselineShiftMask(_QualityMaskModule, cedalion_module):
+    """Flag sustained baseline changes following unusual signal values.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/14_Data_Quality_masking.ipynb`` for quality-mask use.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: ``cedalion.sigproc.quality.detect_outliers`` and
+    ``cedalion.sigproc.quality.detect_baselineshift``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     name = "Baseline shift mask"
     mask_key = "baseline_shifts"
 

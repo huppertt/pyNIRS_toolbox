@@ -104,6 +104,18 @@ def _same_stim(a, b):
 
 
 class resting_state_connectivity(cedalion_module):
+    """Estimate relationships between fNIRS channels during rest or tasks.
+
+    Notebook examples: ``examples/09_RestingStateConnectivity.ipynb`` and
+    ``examples/12_fNIRS_Connectivity_Demo.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`compute_connectivity`,
+    :func:`event_windows`, and
+    :class:`~pyBrainAnalyzIR.dataclasses.connectivity.Connectivity`.
+    Tests: ``tests/test_connectivity_events.py``,
+    ``tests/test_connectivity_simulation.py``, and
+    ``tests/test_pipeline_modules.py``.
+    """
     # Module to compute resting state connectivity from fNIRS data
 
     def __init__(self, previous_job=None):
@@ -181,6 +193,16 @@ class resting_state_connectivity(cedalion_module):
 
 
 class hyperscanning(cedalion_module):
+    """Estimate connectivity between recordings from paired participants.
+
+    Notebook examples: ``examples/12_fNIRS_Connectivity_Demo.ipynb``.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: :func:`compute_hyperscanning`,
+    :func:`event_windows`, and
+    :class:`~pyBrainAnalyzIR.dataclasses.connectivity.Connectivity`.
+    Tests: ``tests/test_connectivity_events.py``,
+    ``tests/test_connectivity.py``, and ``tests/test_pipeline_modules.py``.
+    """
     # Module to compute hyperscanning fNIRS data
 
     def __init__(self, previous_job=None):

@@ -4,11 +4,11 @@ Usage
 -----
     from pyBrainAnalyzIR.vis.demographics_manager import demographics_manager
 
-    result = demographics_manager(dataset)  # dataset is returned after closing
+    demographics_manager(dataset)
 
-By default, this returns a window that keeps the Qt event loop responsive and
-updates `dataset` when it is closed. In a standalone script, pass
-``block=True`` to wait until the window closes and return the edited dataset.
+The function returns the window immediately for interactive notebook use.
+The editor updates the supplied dataset in place. Pass ``block=True`` in a
+standalone script to wait until the window closes.
 """
 from __future__ import annotations
 
@@ -1145,12 +1145,18 @@ def _release_window(window: DemographicsManager) -> None:
 
 
 def demographics_manager(dataset: Any, block: Optional[bool] = False) -> Any:
-    """Launch the demographics manager for ``dataset``.
+    """Open the table editor for participant and recording information.
 
-    By default, this returns the window immediately for notebook use and
-    integrates with IPython/Jupyter's Qt event loop. Pass ``block=True`` in a
-    standalone script to wait for the window to close and return the edited
-    dataset.
+    The editor changes the demographics associated with recordings. By
+    default, it returns its window immediately for notebook use; ``block=True``
+    waits for the editor to close and returns the dataset.
+
+    Notebook examples: ``examples/04_EditingDemographics.ipynb``.
+    Direct callers: notebook users.
+    Direct dependencies: :class:`DemographicsManager` and
+    :meth:`~pyBrainAnalyzIR.dataclasses.dataset.DataSet.get_demographics`.
+    Tests: ``tests/test_demographics_manager_gui.py`` and
+    ``tests/test_nirsviewir_gui.py``.
     """
     if not hasattr(dataset, "dataset") or not hasattr(dataset, "get_demographics"):
         raise TypeError("dataset must provide a dataset collection and get_demographics()")

@@ -269,6 +269,19 @@ def compute_quality_metric(
     thresholds: Optional[Dict[str, float]] = None,
     window_length=DEFAULT_WINDOW_LENGTH,
 ) -> tuple[xr.DataArray, xr.DataArray]:
+    """Calculate a channel summary and, where available, a time-varying quality score.
+
+    ``metric`` selects a supported measure such as ``"snr"``, ``"sci"``,
+    ``"psp"``, ``"gvtd"``, or ``"clean_percent"``. The result is used by the
+    data-quality viewer to compare recordings and inspect individual channels.
+
+    Notebook examples: no dedicated tutorial yet.
+    Direct callers: :class:`DataQualityManager` and the recursive
+    ``clean_percent`` calculation.
+    Direct dependencies: Cedalion's ``quality.snr``, ``quality.sci``,
+    ``quality.psp`` functions and local fallback calculations.
+    Tests: ``tests/test_data_quality_manager.py::test_compute_quality_metric_returns_channel_and_time_series``.
+    """
     amp = rec["amp"]
     if metric == "snr":
         scalar, _ = quality.snr(amp, _threshold_for("snr", thresholds))
@@ -364,6 +377,15 @@ def _distance_to_line_segment(line, x: float | None, y: float | None) -> float:
 
 
 class DataQualityManager(QMainWindow):
+    """Interactive viewer for comparing signal-quality measures across recordings.
+
+    Notebook examples: no dedicated tutorial yet.
+    Direct callers: :func:`data_quality_manager` and
+    ``NIRSviewIRWindow._open_data_quality_manager``.
+    Direct dependencies: :func:`compute_quality_metric` and
+    :func:`metric_mask`.
+    Tests: ``tests/test_data_quality_manager.py``.
+    """
     def __init__(self, data: Any, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Data Quality Manager")
@@ -1230,10 +1252,19 @@ def data_quality_manager(
     data: Any,
     block: Optional[bool] = False,
 ) -> DataQualityManager:
-    """Open the data-quality viewer without blocking by default for notebooks.
+    """Open the viewer for comparing recording quality.
 
-    Pass ``block=True`` in a standalone script to run the Qt event loop until
-    the window closes.
+    The viewer summarizes signal-quality measures and lets users inspect
+    channels over time. By default, it returns its window immediately for
+    notebook use; pass ``block=True`` in a standalone script to wait for it to
+    close.
+
+    Notebook examples: no dedicated tutorial yet.
+    Direct callers: notebook users and
+    ``NIRSviewIRWindow._open_data_quality_manager``.
+    Direct dependency: :class:`DataQualityManager`.
+    Tests: ``tests/test_data_quality_manager.py`` and
+    ``tests/test_nirsviewir_gui.py``.
     """
     app = QApplication.instance() or QApplication(sys.argv or ["data_quality_manager"])
 

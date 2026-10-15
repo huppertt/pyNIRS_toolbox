@@ -19,6 +19,16 @@ units = cedalion.units
 
 
 class DiscardData(cedalion_module):
+    """Remove a named time series, mask, or auxiliary item from a recording.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/02_PipelineCreation.ipynb`` for pipeline construction.
+    Direct callers: notebook users, pipeline-manager users, and connectivity
+    processing that removes temporary results.
+    Direct dependency: the recording's time-series, mask, and auxiliary-data
+    containers.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Module to remove an entry (e.g. an intermediate time series) from the data
 
     def __init__(self, previous_job=None):
@@ -62,6 +72,15 @@ class DiscardData(cedalion_module):
 
 
 class RemoveShortSeparationChannels(cedalion_module):
+    """Remove short-separation channels and unused optodes from a recording.
+
+    Notebook examples: ``examples/09_RestingStateConnectivity.ipynb`` covers
+    the purpose of short-separation channels.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :func:`pyBrainAnalyzIR.sigproc.short_separation.remove_short_channels_recording`.
+    Tests: ``tests/test_short_separation.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     # Module to remove the short-separation channels (and their optodes) from the data
 
     def __init__(self, previous_job=None):
@@ -115,6 +134,14 @@ _TYPES_HELP = ("Data types, e.g. ['HbR'] or [760] (case-insensitive). Applied to
 
 
 class DiscardTypes(cedalion_module):
+    """Remove selected wavelengths or hemoglobin types from analysis results.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/02_PipelineCreation.ipynb`` for pipeline construction.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :func:`_select_types_everywhere`.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.DiscardTypes
     def __init__(self, previous_job=None):
         self.name = "Discard These Types"
@@ -138,6 +165,14 @@ class DiscardTypes(cedalion_module):
 
 
 class KeepTypes(cedalion_module):
+    """Keep only selected wavelengths or hemoglobin types in analysis results.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/02_PipelineCreation.ipynb`` for pipeline construction.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :func:`_select_types_everywhere`.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     # Port of nirs.modules.KeepTypes
     def __init__(self, previous_job=None):
         self.name = "Keep Just These Types"
@@ -174,6 +209,16 @@ class KeepTypes(cedalion_module):
 
 
 class RemoveTooLongDistance(cedalion_module):
+    """Remove channels at or beyond the selected source-detector distance.
+
+    Notebook examples: no dedicated example yet; see
+    ``examples/02_PipelineCreation.ipynb`` for pipeline construction.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependencies: ``cedalion.nirs.channel_distances`` and
+    :func:`pyBrainAnalyzIR.utils.data_selection.remove_channels`.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_short_separation.py``.
+    """
     # Port of nirs.modules.LabeltooLongDistance + nirs.modules.RemovetooLongDistance
     def __init__(self, previous_job=None):
         self.name = "Remove Too Long Distance"

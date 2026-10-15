@@ -57,10 +57,13 @@ The test suite lives in [`tests/`](tests) and covers the option-variable data
 classes, every pipeline module, the GLM and ROC analyses, and the group-level
 mixed-effects models.
 
-`cedalion` is not available on PyPI, so the tests that depend on it are
-skipped automatically when it is not installed (the option-variable tests run
-everywhere). To run the full suite locally, install `cedalion` from source
-first.
+Tests are categorized with pytest markers. `requires_cedalion` tests need a
+local Cedalion installation; `requires_matlab` tests need MATLAB available on
+`PATH` (tests needing both should use both markers). Hosted GitHub Actions run
+the portable suite and exclude either category explicitly. To run all tests
+available in the local environment, run `pytest`. To select a specific
+category, use `pytest -m requires_cedalion` or `pytest -m requires_matlab`.
+Unavailable optional dependencies cause marked tests to be skipped.
 
 Qt-based GUI tests run head-less; set `QT_QPA_PLATFORM=offscreen` and
 `MPLBACKEND=Agg` if your environment does not do so already.

@@ -41,22 +41,25 @@ def to_string(arr):
 
 @dataclass
 class Statistics:
-    """Main container for statistical results.
-
-    The `Statistics` class holds stats adjunct objects.
+    """Container for channel-wise model estimates and statistical summaries.
 
     Attributes:
-        results: (Pandas DataFrame)
-        covariance
-        coloring_matrix: xr.DataArray
-        masks (OrderedDict[str, xr.DataArray]): A dictionary of masks. The keys are the
-            names of the masks.
-        geo3d (LabeledPointCloud): A labeled point cloud representing the 3D geometry of
-            the recording.
-        geo2d (LabeledPointCloud): A labeled point cloud representing the 2D geometry of
-            the recording.
-        head_model (Optional[Any]): A head model object.
-        meta_data (OrderedDict[str, Any]): A dictionary of meta data.
+        description: Human-readable model description.
+        betas: Estimates indexed by channel, signal type, and condition.
+        covariance: Covariance matrix with coordinates labeling each estimate.
+        geo3d: Three-dimensional recording geometry.
+        geo2d: Two-dimensional recording geometry.
+        head_model: Associated head model, when available.
+        meta_data: Additional metadata.
+
+    Notebook examples: ``examples/07_StatisticsDataClass_Format.ipynb`` and
+    ``examples/08_GroupAnalysis.ipynb``.
+    Direct callers: the GLM and mixed-effects pipeline modules and notebook users.
+    Direct dependencies: ``statsmodels`` result objects, ``xarray.DataArray``,
+    and ``pandas.DataFrame``.
+    Tests: ``tests/test_glm_quality_masks.py`` verifies conversion of local GLM
+    results, while ``tests/test_analysis_pipeline.py`` covers statistics in
+    analysis pipelines.
     """
 
     description: str = field(default_factory=str)
@@ -255,13 +258,21 @@ class Statistics:
                     getattr(result, "_pybrain_valid_count", result.nobs),
                     result.nobs,
                 )
-                if effective_nobs > 0:
-                    channel_dofs.append(effective_nobs - len(result.params))
+                channel_dof = effective_nobs - len(result.params)
+                if channel_dof > 0:
+                    channel_dofs.append(channel_dof)
             self.dof = max(0, min(channel_dofs)) if channel_dofs else 0
         else:
             self.dof = ss[0, 0].nobs - len(ss[0, 0].params)
 
     def table(self):
+        """Return estimates, standard errors, test statistics, and adjusted p-values.
+
+        Direct callers: notebook users and results/visualization code.
+        Direct dependencies: ``scipy.stats.t`` and
+        ``statsmodels.stats.multitest.multipletests``.
+        Tests: no focused pytest currently.
+        """
 
         dof = self.dof
         StdErr = np.sqrt(np.diag(self.covariance))
@@ -279,18 +290,37 @@ class Statistics:
                              'Q-values': q_values})
 
     def remove_condition(self, cond_name):
+        """Remove one condition and its rows and columns from the covariance matrix.
+
+        Direct callers: notebook users.
+        Direct dependencies: ``xarray.DataArray`` label-based indexing.
+        Tests: no focused pytest currently.
+        """
 
         self.betas = self.betas[self.betas.conditions != cond_name]
         self.covariance = self.covariance[self.covariance.conditions_rows != cond_name, :]
         self.covariance = self.covariance[:, self.covariance.conditions_cols != cond_name]
 
     def keep_condition(self, cond_name):
+        """Retain only one condition and its corresponding covariance entries.
+
+        Direct callers: notebook users.
+        Direct dependencies: ``xarray.DataArray`` label-based indexing.
+        Tests: no focused pytest currently.
+        """
 
         self.betas = self.betas[self.betas.conditions == cond_name]
         a = self.covariance[self.covariance.conditions_rows == cond_name, :]
         self.covariance = a[:, a.conditions_cols == cond_name]
 
     def list_conditions(self):
+        """Return the unique condition labels represented in the estimates.
+
+        Direct callers: this class's contrast and visualization methods and
+        notebook users.
+        Direct dependency: ``numpy.unique``.
+        Tests: no focused pytest currently.
+        """
         return np.unique(self.betas.conditions)
 
     def __str2contrast(self, str, names=None):
@@ -315,6 +345,12 @@ class Statistics:
         return contrast
 
     def get_tvalues(self):
+        """Return a labeled array of coefficient t-statistics.
+
+        Direct callers: notebook users.
+        Direct dependencies: ``numpy.sqrt`` and ``xarray.DataArray``.
+        Tests: no focused pytest currently.
+        """
         stdErr = np.sqrt(np.diag(self.covariance))
         beta = self.betas
         t_values = beta / stdErr
@@ -323,6 +359,13 @@ class Statistics:
                             dims=beta.dims)
 
     def get_pvalues(self):
+        """Return two-sided p-values for the coefficient t-statistics.
+
+        Direct callers: notebook users.
+        Direct dependencies: :meth:`get_tvalues`' underlying standard-error
+        calculation and ``scipy.stats.t.cdf``.
+        Tests: no focused pytest currently.
+        """
         dof = self.dof
         stdErr = np.sqrt(np.diag(self.covariance))
         beta = self.betas
@@ -333,6 +376,13 @@ class Statistics:
                             dims=beta.dims)
 
     def get_qvalues(self):
+        """Return Benjamini-Hochberg adjusted p-values for each estimate.
+
+        Direct callers: notebook users.
+        Direct dependencies: ``scipy.stats.t.cdf`` and
+        ``statsmodels.stats.multitest.multipletests``.
+        Tests: no focused pytest currently.
+        """
         dof = self.dof
         stdErr = np.sqrt(np.diag(self.covariance))
         beta = self.betas
@@ -345,6 +395,17 @@ class Statistics:
                             dims=beta.dims)
 
     def ttest(self, contrast_string, names=None):
+        """Replace estimates with the requested linear contrasts.
+
+        Contrast strings use condition labels and plus/minus signs, such as
+        ``"TaskA - TaskB"``.
+
+        Notebook examples: ``examples/07_StatisticsDataClass_Format.ipynb``.
+        Direct callers: notebook users.
+        Direct dependencies: :meth:`list_conditions`, ``numpy`` matrix operations,
+        and ``xarray.DataArray``.
+        Tests: no focused pytest currently.
+        """
 
         contrast = self.__str2contrast(contrast_string, names)
 
@@ -403,6 +464,16 @@ class Statistics:
                                   )
 
     def draw(self, vartype='tstat', vrange=None, thresh='p<0.05', condnames=None, types=None, fdr_correct_full=True):
+        """Visualize coefficient estimates or t-statistics on the probe.
+
+        Notebook examples: ``examples/07_StatisticsDataClass_Format.ipynb`` and
+        ``examples/08_GroupAnalysis.ipynb``.
+        Direct callers: notebook users.
+        Direct dependencies: ``matplotlib``, the statistics stored on this object,
+        ``statsmodels.stats.multitest.multipletests``, and
+        ``cedalion.dataclasses.geometry.PointType``.
+        Tests: no focused pytest currently.
+        """
 
         if (condnames is None):
             condnames = self.list_conditions()

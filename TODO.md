@@ -13,8 +13,8 @@
 - [ ] Save/load for stats, connectivity, and datasets
 - [X] Add BIDS loading and updating from the NIRSviewIR GUI
 - [ ] Add read/write demographics from Excel 
-- [ ] Add ability to mask time 
-- [ ] Add ability to mask channels
+- [X] Add ability to mask time 
+- [X] Add ability to mask channels
 - [X] Add info about data quality in NIRSviewIR
 - [X] Add function to add data QC to metadata 
 - [ ] Add data removal tools based on data QC
@@ -35,11 +35,28 @@
 - [ ] Scatter plots for mixed effects models/results
 - [ ] When renaming in demographics_manager, make sure the description follows
 - [X] Add window to add descriptions in demographics manager
-- [ ] Add tooltips about demographics in demographics manager and NIRSviewIR
-- [ ] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset
+- [X] Add tooltips about demographics in demographics manager and NIRSviewIR
+- [X] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset
 - [ ] Trim baseline times in stimulus GUI
-- [ ] Add find/replace for demographics edits
+- [X] Add find/replace for demographics edits
 - [ ] Add analysis pipeline and log (add to BIDS derivatives outputs)
 - [X] Data Quality GUI with export for PDF and HTML (including code to do so directly from a BIDS folder)
 - [ ] Fix the PCA motion correction module
 - [X] Error in BIDS reading back demographics information
+
+## Notebook examples to add
+
+The examples in `examples/` should explain the scientific purpose and expected
+results in plain language. Keep implementation details (for example, GUI
+event-loop and display setup) in code documentation rather than tutorial
+text.
+
+- [ ] Add a notebook introducing the Stimulus Manager: review event labels,
+  correct event timing, and save the updated data.
+- [ ] Add a notebook introducing the Data Quality Manager: explain the quality
+  measures, compare recordings, and export a report.
+- [ ] Add a notebook showing the short-separation, band-pass, and non-PCA
+  motion-correction pipeline tools on a simulated or example recording.
+- [ ] Add a notebook showing how to use `Statistics` to inspect results,
+  compare conditions, and visualize the findings (building on the existing
+  format-oriented notebook).

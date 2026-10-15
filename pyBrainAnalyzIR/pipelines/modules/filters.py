@@ -17,7 +17,15 @@ units = cedalion.units
 
 
 class bandpass_filter(cedalion_module):
-    # Module to apply a band-pass filter to the input signal
+    """Pipeline step that keeps signal frequencies within a selected band.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` and
+    ``examples/08_GroupAnalysis.ipynb``.
+    Direct callers: notebooks, pipeline-manager users, and
+    :meth:`cedalion_module.run`.
+    Direct dependency: ``cedalion.sigproc.frequency.freq_filter``.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "Band-Pass Filter"
         self.advanced_module = False
@@ -59,7 +67,15 @@ class bandpass_filter(cedalion_module):
 
 
 class pca_filter(cedalion_module):
-    # Module to apply a PCA filter to the input signal
+    """Pipeline step that removes selected principal components.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` discusses
+    pipeline construction; ``examples/05_Example_Defining_Options.ipynb``
+    explains its component option.
+    Direct callers: notebook users and pipeline-manager users.
+    Direct dependency: :func:`pyBrainAnalyzIR.sigproc.pca_filter.pca_filter`.
+    Tests: ``tests/test_pipeline_modules.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "PCA Filter"
         self.advanced_module = False
@@ -105,7 +121,18 @@ class pca_filter(cedalion_module):
 
 
 class ShortSeparationFilter(cedalion_module):
-    # Module to regress the closest short-separation channel out of each channel
+    """Regress short-separation signals from the longer measurement channels.
+
+    Notebook examples: ``examples/09_RestingStateConnectivity.ipynb`` and
+    ``examples/12_fNIRS_Connectivity_Demo.ipynb``.
+    Direct callers: notebook users, pipeline-manager users, and the
+    connectivity pipeline modules.
+    Direct dependencies: ``short_separation_filter`` and
+    ``remove_short_channels_recording`` from
+    :mod:`pyBrainAnalyzIR.sigproc.short_separation`.
+    Tests: ``tests/test_short_separation.py`` and
+    ``tests/test_pipeline_modules.py``.
+    """
     def __init__(self, previous_job=None):
         self.name = "Short Separation Filter"
         self.advanced_module = True

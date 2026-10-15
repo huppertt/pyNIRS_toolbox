@@ -1227,19 +1227,27 @@ def pipeline_manager(
     initial_modules: Optional[List[cedalion_module]] = None,
     parent: Optional[QWidget] = None,
 ) -> Optional[List[cedalion_module]]:
-    """Launch the pipeline manager.
+    """Open the visual editor for building an analysis pipeline.
 
     Parameters
     ----------
     initial_modules:
-        Ordered list of cedalion_module instances to pre-load into the pipeline.
+        Optional ordered list of pipeline steps to show when the editor opens.
     parent:
-        Optional parent widget (pass the main window when embedding).
+        Optional parent window when opening the editor from another GUI.
 
     Returns
     -------
-    Ordered list of cedalion_module instances when the user clicks Done,
-    or None if the user cancels.
+    The selected ordered pipeline steps when the user chooses Done, or
+    ``None`` if the editor is cancelled.
+
+    Notebook examples: ``examples/06_Example_GUI_use.ipynb``.
+    Direct callers: notebook users and
+    ``NIRSviewIRWindow._edit_pipeline``.
+    Direct dependencies: :class:`PipelineManagerDialog` and
+    :class:`~pyBrainAnalyzIR.pipelines.pipeline.cedalion_module`.
+    Tests: ``tests/test_pipeline_manager_gui.py`` and
+    ``tests/test_nirsviewir_gui.py``.
     """
     if QApplication.instance() is None:
         QApplication(sys.argv)

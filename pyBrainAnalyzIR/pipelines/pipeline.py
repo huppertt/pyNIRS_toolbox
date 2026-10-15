@@ -6,6 +6,18 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
 
 
 def PipelineList(steps):
+    """Connect module classes into an executable pipeline.
+
+    Each item is a pipeline-module class; the function constructs each step
+    with the preceding step as its input. The resulting pipeline is run with
+    :meth:`cedalion_module.run`.
+
+    Notebook examples: ``examples/03_ROC_Analysis.ipynb``.
+    Direct toolbox callers: ``pyBrainAnalyzIR.testing.channelROC`` uses this
+    helper to configure simulation analyses.
+    Direct dependency: :class:`cedalion_module`.
+    Tests: ``tests/test_analysis_pipeline.py``.
+    """
     job = None
     for step in steps:
         job = step(job)
@@ -20,6 +32,23 @@ ITALICSEND = '\x1B[0m'
 
 
 class cedalion_module:
+    """Base class for composable analysis steps.
+
+    Users normally construct subclasses from
+    ``pyBrainAnalyzIR.pipelines.modules`` and connect them by passing the
+    preceding step to the next step's constructor. Call :meth:`run` with a
+    recording or :class:`~pyBrainAnalyzIR.dataclasses.dataset.DataSet` to
+    execute the chain.
+
+    Notebook examples: ``examples/02_PipelineCreation.ipynb`` and
+    ``examples/06_Example_GUI_use.ipynb``.
+    Direct toolbox callers: :func:`PipelineList` and
+    ``pyBrainAnalyzIR.vis.NIRSviewIRWindow._run_pipeline``.
+    Direct dependency: subclasses implement :meth:`_runlocal`; :meth:`run`
+    invokes that method and, when present, the previous step's :meth:`run`.
+    Tests: ``tests/test_pipeline_modules.py`` and
+    ``tests/test_analysis_pipeline.py``.
+    """
     # Advanced modules are hidden in the pipeline manager GUI unless
     # "Show Advanced Modules" is checked. Subclasses override this in __init__.
     advanced_module = True
@@ -61,6 +90,17 @@ class cedalion_module:
     """
 
     def run(self, rec):
+        """Run this step and all preceding steps on a recording or dataset.
+
+        Notebook examples: ``examples/02_PipelineCreation.ipynb`` and
+        ``examples/14_Data_Quality_masking.ipynb``.
+        Direct callers: notebooks and
+        ``pyBrainAnalyzIR.testing.channelROC`` call this method on a module.
+        Direct dependencies: the previous module's :meth:`run`, followed by
+        this module's :meth:`_runlocal`.
+        Tests: ``tests/test_pipeline_modules.py`` and
+        ``tests/test_analysis_pipeline.py``.
+        """
         # Make sure all previous jobs are run
         if (self.previous_job is None):
             # This is the first module on a pipeline run it
