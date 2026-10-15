@@ -128,10 +128,16 @@ class DataSet:
                     if key not in common_key:
                         common_key[key] = rec.meta_data['_bids_descriptions'][key]
                     else:
-                        if common_key[key] == "No description available." and rec.meta_data['_bids_descriptions'][key] != "No description available.":
+                        if (
+                            common_key[key] == "No description available."
+                            and rec.meta_data['_bids_descriptions'][key] != "No description available."
+                        ):
                             common_key[key] = rec.meta_data['_bids_descriptions'][key]
                         elif common_key[key] != rec.meta_data['_bids_descriptions'][key]:   
-                            warnings.warn(f"Description for key '{key}' is inconsistent across recordings. Using the first encountered description.")
+                            warnings.warn(
+                                f"Description for key '{key}' is inconsistent across recordings. "
+                                "Using the first encountered description."
+                            )
         # Now, update each recording's _bids_descriptions field to match the common_key dictionary.
         all_keys = []
         for rec in self.dataset:
@@ -153,7 +159,10 @@ class DataSet:
         # Prune out any leftover keys that are no longer part of the current meta_data of any recording
         common_key = {key: common_key.get(key, "No description available.") for key in all_keys}
 
-        common_key['_bids_descriptions'] = "A special field used for BIDS metadata descriptions. This field is automatically managed by the DataSet class and should not be modified directly."
+        common_key['_bids_descriptions'] = (
+            "A special field used for BIDS metadata descriptions. This field is automatically "
+            "managed by the DataSet class and should not be modified directly."
+        )
 
         # Assign the common_key dictionary to the _bids_descriptions field of each recording's meta_data
         # Since this is passing by reference, any changes to common_key will be reflected in all recordings.

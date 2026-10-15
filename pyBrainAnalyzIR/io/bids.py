@@ -114,7 +114,8 @@ def write_bids_data(data, path: str | Path,
     legacy_snirffile = folder / (filename + "_fnirs.snirf")
     _migrate_legacy_bids_file(legacy_snirffile, snirffile)
 
-    # TODO - the SNIRF writer assumes this order.  It shouldn't assume, but it isn't my code so I just need to conform to it.
+    # TODO - the SNIRF writer assumes this order. It shouldn't, but it isn't my code,
+    # so I just need to conform to it.
     stim = data.stim[["trial_type","onset", "duration", "value"]]
 
     if snirffile.exists():
@@ -1240,46 +1241,149 @@ def add_missing_bids_to_metadata(data, intype='amp'):
         intype (str): The type of data to be processed (default is 'amp').
     """
 
-    # The NIRS-BIDS validator requires certain fields to be present in the metadata, even if they are not strictly necessary for the BIDS specification or the SNIRF standard. This function adds those required fields with default values if they are missing.
+    # The NIRS-BIDS validator requires certain fields to be present in the metadata,
+    # even if they are not strictly necessary for the BIDS specification or the SNIRF
+    # standard. This function adds those required fields with default values if missing.
 
     if (data.__class__ == pyBrainAnalyzIR.dataclasses.dataset.DataSet):
         for r in data.dataset:
             add_missing_bids_to_metadata(r, intype=intype)
         return
     else:
-        defaults = {'Manufacturer': {'value':'n/a','description':'The manufacturer of the device used for data      acquisition','units': 'n/a'},
-                    'ManufacturersModelName': {'value':'n/a','description':'The model name of the device used for data acquisition.','units': 'n/a'},
-                    'SoftwareVersions': {'value':'n/a','description':'The software versions of the device used for data acquisition','units': 'n/a'},
-                    'DeviceSerialNumber': {'value':'n/a','description':'The serial number of the device used for data acquisition.','units': 'n/a'},
-                    'HardwareFilters': {'value':'n/a','description':'The hardware filters used in the device.','units': 'n/a'},
-                    'SourceType': {'value':'n/a','description':'The type of source used in the device.','units': 'n/a'},
-                    'DetectorType': {'value':'n/a','description':'The type of detector used in the device.','units': 'n/a'},
-                    'InstitutionName': {'value':'n/a','description':'The name of the institution where the data was acquired.','units': 'n/a'},
-                    'InstitutionAddress': {'value':'n/a','description':'The address of the institution where the data was acquired.','units': 'n/a'},
-                    'InstitutionalDepartmentName': {'value':'n/a','description':'The department of the institution where the data was acquired.','units': 'n/a'},
-                    'CapManufacturer': {'value':'n/a','description':'The manufacturer of the cap used in the study.','units': 'n/a'},
-                    'CapManufacturersModelName': {'value':'n/a','description':'The model name of the cap used in the study.','units': 'n/a' },
-                    'HeadCircumference': {'value':'n/a','description':'The head circumference of the subject.','units': units.centimeter},
-                    'SubjectArtefactDescription': {'value':'n/a','description':'Description of any artefacts related to the subject.','units': 'n/a'    },
-                    'TaskDescription': {'value':'n/a','description':'Description of the task performed by the subject.','units': 'n/a'},
-                    'Instructions': {'value':'n/a','description':'Instructions given to the subject.','units': 'n/a'},
-                    'CogPOID': {'value':'n/a','description':'The CogPO ID associated with the task.','units': 'n/a'},
-                    'NIRSPlacementScheme': {'value':'n/a','description':'The NIRS placement scheme used.','units': 'n/a'},
-                    'RecordingDuration': {'value': (data[intype].time[-1] - data[intype].time[0]).values, 'description': 'The duration of the recording.','units': units.seconds},
-                    'SamplingFrequency': {'value': 1 / (data[intype].time[1] - data[intype].time[0]).values, 'description': 'The sampling frequency of the recording.','units': units.hertz},
-                    'NIRSChannelCount': {
-                        'value': (
-                            len(data[intype].channel)
-                            * len(data[intype].wavelength)
-                        ),
-                        'description': 'The number of NIRS channels.',
-                        'units': 'n/a',
-                    },
-                    'NIRSSourceOptodeCount': {'value': sum((data.geo2d.type == PointType(1).SOURCE).values), 'description': 'The number of NIRS source optodes.','units': 'n/a'},
-                    'NIRSDetectorOptodeCount': {'value': sum((data.geo2d.type == PointType(1).DETECTOR).values), 'description': 'The number of NIRS detector optodes.','units': 'n/a'},
-                    'ShortChannelCount': {'value': sum((xrutils.norm(data.geo3d.loc[data[intype].source] - data.geo3d.loc[data[intype].detector],  # noqa: E501
-                                                           data.geo3d.points.crs) < units.millimeter * 15).values), 'description': 'The number of short channels.','units': 'n/a'},
-                    }
+        defaults = {
+            'Manufacturer': {
+                'value': 'n/a',
+                'description': 'The manufacturer of the device used for data acquisition',
+                'units': 'n/a',
+            },
+            'ManufacturersModelName': {
+                'value': 'n/a',
+                'description': 'The model name of the device used for data acquisition.',
+                'units': 'n/a',
+            },
+            'SoftwareVersions': {
+                'value': 'n/a',
+                'description': 'The software versions of the device used for data acquisition',
+                'units': 'n/a',
+            },
+            'DeviceSerialNumber': {
+                'value': 'n/a',
+                'description': 'The serial number of the device used for data acquisition.',
+                'units': 'n/a',
+            },
+            'HardwareFilters': {
+                'value': 'n/a',
+                'description': 'The hardware filters used in the device.',
+                'units': 'n/a',
+            },
+            'SourceType': {
+                'value': 'n/a',
+                'description': 'The type of source used in the device.',
+                'units': 'n/a',
+            },
+            'DetectorType': {
+                'value': 'n/a',
+                'description': 'The type of detector used in the device.',
+                'units': 'n/a',
+            },
+            'InstitutionName': {
+                'value': 'n/a',
+                'description': 'The name of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'InstitutionAddress': {
+                'value': 'n/a',
+                'description': 'The address of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'InstitutionalDepartmentName': {
+                'value': 'n/a',
+                'description': 'The department of the institution where the data was acquired.',
+                'units': 'n/a',
+            },
+            'CapManufacturer': {
+                'value': 'n/a',
+                'description': 'The manufacturer of the cap used in the study.',
+                'units': 'n/a',
+            },
+            'CapManufacturersModelName': {
+                'value': 'n/a',
+                'description': 'The model name of the cap used in the study.',
+                'units': 'n/a',
+            },
+            'HeadCircumference': {
+                'value': 'n/a',
+                'description': 'The head circumference of the subject.',
+                'units': units.centimeter,
+            },
+            'SubjectArtefactDescription': {
+                'value': 'n/a',
+                'description': 'Description of any artefacts related to the subject.',
+                'units': 'n/a',
+            },
+            'TaskDescription': {
+                'value': 'n/a',
+                'description': 'Description of the task performed by the subject.',
+                'units': 'n/a',
+            },
+            'Instructions': {
+                'value': 'n/a',
+                'description': 'Instructions given to the subject.',
+                'units': 'n/a',
+            },
+            'CogPOID': {
+                'value': 'n/a',
+                'description': 'The CogPO ID associated with the task.',
+                'units': 'n/a',
+            },
+            'NIRSPlacementScheme': {
+                'value': 'n/a',
+                'description': 'The NIRS placement scheme used.',
+                'units': 'n/a',
+            },
+            'RecordingDuration': {
+                'value': (data[intype].time[-1] - data[intype].time[0]).values,
+                'description': 'The duration of the recording.',
+                'units': units.seconds,
+            },
+            'SamplingFrequency': {
+                'value': 1 / (data[intype].time[1] - data[intype].time[0]).values,
+                'description': 'The sampling frequency of the recording.',
+                'units': units.hertz,
+            },
+            'NIRSChannelCount': {
+                'value': (
+                    len(data[intype].channel)
+                    * len(data[intype].wavelength)
+                ),
+                'description': 'The number of NIRS channels.',
+                'units': 'n/a',
+            },
+            'NIRSSourceOptodeCount': {
+                'value': sum((data.geo2d.type == PointType(1).SOURCE).values),
+                'description': 'The number of NIRS source optodes.',
+                'units': 'n/a',
+            },
+            'NIRSDetectorOptodeCount': {
+                'value': sum((data.geo2d.type == PointType(1).DETECTOR).values),
+                'description': 'The number of NIRS detector optodes.',
+                'units': 'n/a',
+            },
+            'ShortChannelCount': {
+                'value': sum(
+                    (
+                        xrutils.norm(
+                            data.geo3d.loc[data[intype].source]
+                            - data.geo3d.loc[data[intype].detector],
+                            data.geo3d.points.crs,
+                        )
+                        < units.millimeter * 15
+                    ).values
+                ),
+                'description': 'The number of short channels.',
+                'units': 'n/a',
+            },
+        }
         
         for key, value in defaults.items():
             if key not in data.meta_data:

@@ -61,29 +61,61 @@ class MotionCorrectPCA(cedalion_module):
     def __init__(self, previous_job=None):
         self.name = "PCA Based Motion Correction (hmrR_MotionCorrectPCA.m)"
         self.advanced_module = True
-        self._cite = "Huppert, T. J., Diamond, S. G., Franceschini, M. A., & Boas, D. A. (2009). HomER: a review of time-series analysis methods for near-infrared spectroscopy of the brain. Applied optics, 48(10), D280-D298."
+        self._cite = (
+            "Huppert, T. J., Diamond, S. G., Franceschini, M. A., & Boas, D. A. (2009). "
+            "HomER: a review of time-series analysis methods for near-infrared spectroscopy "
+            "of the brain. Applied optics, 48(10), D280-D298."
+        )
         self.options = OptionsDict({
-            'nSV': NumericOption(0.97,0.97, minimum=0,
-                               description='Number of principal components to remove',
-                               help='Number of principal components to remove. If a decimal between 0 and 1, it represents the fraction of variance to remove. If an integer greater than 1, it represents the exact number of components to remove.'),
-            't_motion': QuantityOption(0.5,0.5, units.s,
-                                      description='Time window for motion artifact detection',
-                                      help='Time window for motion artifact detection.'),
-            't_mask': QuantityOption(1.0,1.0, units.s,
-                                    description='Time window for masking motion artifacts',
-                                    help='Time window for masking motion artifacts. (+- t_mask s before/after detected motion artifact).'),
+            'nSV': NumericOption(
+                0.97, 0.97, minimum=0,
+                description='Number of principal components to remove',
+                help=(
+                    'Number of principal components to remove. If a decimal between 0 and 1, '
+                    'it represents the fraction of variance to remove. If an integer greater '
+                    'than 1, it represents the exact number of components to remove.'
+                ),
+            ),
+            't_motion': QuantityOption(
+                0.5, 0.5, units.s,
+                description='Time window for motion artifact detection',
+                help='Time window for motion artifact detection.',
+            ),
+            't_mask': QuantityOption(
+                1.0, 1.0, units.s,
+                description='Time window for masking motion artifacts',
+                help=(
+                    'Time window for masking motion artifacts. '
+                    '(+- t_mask s before/after detected motion artifact).'
+                ),
+            ),
             'stdev_thresh': NumericOption(7.0, minimum=0,
-                                         description='Threshold for standard deviation used to detect motion artifacts',
-                                         help='Threshold for standard deviation of the signal used to detect motion artifacts. Default is 50. We set it very low to find something in our good data for demonstration purposes.'),
+                                           description='Threshold for standard deviation used to detect motion artifacts',
+                                           help=(
+                                               'Threshold for standard deviation of the signal '
+                                               'used to detect motion artifacts. Default is 50. '
+                                               'We set it very low to find something in our '
+                                               'good data for demonstration purposes.'
+                                           )),
             'amp_thresh': NumericOption(5.0, minimum=0,
-                                       description='Threshold for amplitude used to detect motion artifacts',
-                                       help='Threshold for amplitude of the signal used to detect motion artifacts. Default is 5.'),
+                                         description='Threshold for amplitude used to detect motion artifacts',
+                                         help=(
+                                             'Threshold for amplitude of the signal used to '
+                                             'detect motion artifacts. Default is 5.'
+                                         )),
             'recursive': BooleanOption(False,
-                                       description='Whether to apply recursive PCA-based motion correction',
-                                       help='If True, the PCA-based motion correction will be applied recursively until no significant motion artifacts remain.'),
+                                        description='Whether to apply recursive PCA-based motion correction',
+                                        help=(
+                                            'If True, the PCA-based motion correction will be '
+                                            'applied recursively until no significant motion '
+                                            'artifacts remain.'
+                                        )),
             'maxIter': NumericOption(10, minimum=1,
                                      description='Maximum number of recursive iterations for PCA-based motion correction',
-                                     help='Maximum number of recursive iterations for PCA-based motion correction if recursive is set to True.')
+                                     help=(
+                                         'Maximum number of recursive iterations for PCA-based '
+                                         'motion correction if recursive is set to True.'
+                                     ))
         })
         self.inputName = 'last'
         self.outputName = 'last'
@@ -150,7 +182,10 @@ class splineSG(cedalion_module):
     def __init__(self, previous_job=None):
         self.name = "Spline Based Motion Correction"
         self.advanced_module = True
-        self._cite = "Molavi, B., & Dumont, G. A. (2012). Wavelet-based motion artifact removal for functional near-infrared spectroscopy. Physiological measurement, 33(2), 259-270."
+        self._cite = (
+            "Molavi, B., & Dumont, G. A. (2012). Wavelet-based motion artifact removal for "
+            "functional near-infrared spectroscopy. Physiological measurement, 33(2), 259-270."
+        )
         self.options = OptionsDict({
             'p': NumericOption(0.99, minimum=0, maximum=1,
                                description='Spline smoothing factor',
