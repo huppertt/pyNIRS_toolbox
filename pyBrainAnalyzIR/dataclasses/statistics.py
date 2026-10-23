@@ -18,6 +18,7 @@ from cedalion.dataclasses.geometry import PointType
 import cedalion  # noqa: F401  (namespace + accessor registration)
 import cedalion.dataclasses as cdc
 from cedalion.typing import LabeledPointCloud  # noqa: F401  (documented type)
+from pyBrainAnalyzIR.dataclasses.roi import GeoROI
 
 import matplotlib.pyplot as plt
 
@@ -39,6 +40,43 @@ def to_string(arr):
     return arr.values.astype(str).tolist()
 
 
+def _ols_joint_covariance(results, residuals, n_conditions):
+    """Build exact OLS cross-signal covariance from residuals and design inverses.
+
+    Direct caller: ``Statistics.import_model``. Dependencies: numpy, statsmodels
+    OLS result attributes. Tests: ``test_roi_statistics.py``. With a common design
+    and sample set this commutes with fixed linear spatial pooling. For unequal
+    masks, aligned influence columns use only observed samples; all-missing
+    coefficients remain missing.
+    """
+    n_signals, n_time = residuals.shape
+    inverses = []
+    for result, residual in zip(results, residuals):
+        valid = np.isfinite(residual)
+        inverse = np.zeros((n_conditions, n_time))
+        if valid.any():
+            if result.model.exog.shape[0] != valid.sum():
+                raise ValueError("OLS design observations do not align with stored residuals.")
+            inverse[:, valid] = result.model.pinv_wexog
+        inverses.append(inverse)
+    covariance = np.full((n_signals * n_conditions,) * 2, np.nan)
+    for row, left in enumerate(results):
+        for col, right in enumerate(results):
+            if left.df_resid <= 0 or right.df_resid <= 0:
+                continue
+            common = np.isfinite(residuals[row]) & np.isfinite(residuals[col])
+            if not common.any():
+                continue
+            scale = residuals[row, common] @ residuals[col, common] / np.sqrt(
+                left.df_resid * right.df_resid
+            )
+            covariance[
+                row * n_conditions:(row + 1) * n_conditions,
+                col * n_conditions:(col + 1) * n_conditions,
+            ] = scale * (inverses[row] @ inverses[col].T)
+    return covariance
+
+
 @dataclass
 class Statistics:
     """Container for channel-wise model estimates and statistical summaries.
@@ -47,6 +85,9 @@ class Statistics:
         description: Human-readable model description.
         betas: Estimates indexed by channel, signal type, and condition.
         covariance: Covariance matrix with coordinates labeling each estimate.
+            OLS fits use residual cross-products and the individual design
+            pseudoinverses for cross-signal covariance. This preserves fixed
+            linear ROI pooling under a shared design and observation mask.
         geo3d: Three-dimensional recording geometry.
         geo2d: Two-dimensional recording geometry.
         head_model: Associated head model, when available.
@@ -59,7 +100,8 @@ class Statistics:
     and ``pandas.DataFrame``.
     Tests: ``tests/test_glm_quality_masks.py`` verifies conversion of local GLM
     results, while ``tests/test_analysis_pipeline.py`` covers statistics in
-    analysis pipelines.
+    analysis pipelines. ``tests/test_roi_statistics.py`` verifies OLS covariance
+    against multivariate OLS and both ROI/GLM processing orders.
     """
 
     description: str = field(default_factory=str)
@@ -70,6 +112,7 @@ class Statistics:
     geo3d: LabeledPointCloud = field(default_factory=cdc.build_labeled_points)
     geo2d: LabeledPointCloud = field(default_factory=cdc.build_labeled_points)
     head_model: Optional[Any] = None
+    geoROI: Optional[GeoROI] = None
     meta_data: OrderedDict[str, Any] = field(default_factory=OrderedDict)
 
     # these are the loaded ML from the snirf file.
@@ -231,6 +274,15 @@ class Statistics:
             cov = cov * scale[:, None] * scale[None, :]
         else:
             cov = cov @ np.diag(stderr**2 / np.diag(cov))
+
+        fitted_results = ss.reshape(-1)
+        if all(
+            hasattr(result, "model")
+            and isinstance(result.model, statsmodels.regression.linear_model.OLS)
+            and result.cov_type == "nonrobust"
+            for result in fitted_results
+        ):
+            cov = _ols_joint_covariance(fitted_results, resid, num_conds)
 
         self.covariance = xr.DataArray(cov,
                                        coords={
@@ -473,15 +525,21 @@ class Statistics:
                                   )
 
     def draw(self, vartype='tstat', vrange=None, thresh='p<0.05', condnames=None, types=None, fdr_correct_full=True):
-        """Visualize coefficient estimates or t-statistics on the probe.
+        """Visualize channel statistics or ROI beta estimates with standard errors.
+
+        ROI models show one membership-colored physical probe, disabled ROI
+        color-key buttons, and beta +/- one SE panels for each condition/type.
+        Stars indicate ``thresh`` (p or FDR-adjusted q). ``vartype`` applies only
+        to channel models; ROI bars always show beta. ``vrange`` sets bar limits.
 
         Notebook examples: ``examples/07_StatisticsDataClass_Format.ipynb`` and
-        ``examples/08_GroupAnalysis.ipynb``.
+        ``examples/08_GroupAnalysis.ipynb`` and ``examples/15_ROI_Analysis.ipynb``.
         Direct callers: notebook users.
         Direct dependencies: ``matplotlib``, the statistics stored on this object,
         ``statsmodels.stats.multitest.multipletests``, and
-        ``cedalion.dataclasses.geometry.PointType``.
-        Tests: no focused pytest currently.
+        ``cedalion.dataclasses.geometry.PointType`` and
+        ``vis.plot_nirs_inline.plot_roi_statistics`` for ROI models.
+        Tests: ``tests/test_roi.py``.
         """
 
         if (condnames is None):
@@ -493,6 +551,12 @@ class Statistics:
         else:
             # Keep only types that actually exist in the data, preserving order
             types_draw = np.array([t for t in types_all if t in types])
+
+        if self.geoROI is not None:
+            from pyBrainAnalyzIR.vis.plot_nirs_inline import plot_roi_statistics
+            return plot_roi_statistics(
+                self, condnames, types_draw, thresh, vrange, fdr_correct_full
+            )
 
         geo2d = self.geo3d
 

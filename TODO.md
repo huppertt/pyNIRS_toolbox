@@ -8,7 +8,9 @@
 - [ ] Fix the T-test for stats in the NIRSviewIR GUI (shows the opposite of requested)
 - [X] Fix the pipeline options to allow items like the GLM basis set to be defined as enum choices in the pipeline.  This allows the pipeline manager to edit these from a select number of predefined options, but can still be fully edited from command line
 - [ ] Fix the titles and colorbars on the connectivity drawing code
-- [ ] Add ROI averaging methods for time-series and stats
+- [X] Add named ROI time-course averaging with multiple definitions per recording
+- [X] Add ROI averaging of channel statistics, including covariance propagation
+- [ ] Add ROI definition/time-course persistence in SNIRF/BIDS and ROI editor support
 - [ ] Group-level results stored in the dataset class
 - [ ] Save/load for stats, connectivity, and datasets
 - [X] Add BIDS loading and updating from the NIRSviewIR GUI

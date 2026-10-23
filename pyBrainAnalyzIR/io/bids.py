@@ -606,21 +606,19 @@ def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
         else:
             raise ValueError("dataset_description.json must contain a JSON object")
         dset.description = dataset_description.get("Name", dset.description)
-    event_json_files = sorted(root.rglob("*_events.json"))
-    for event_json in event_json_files:
-        with open(event_json) as f:
-            event_sidecar = json.load(f)
-        stimulus_presentation = event_sidecar.get("StimulusPresentation")
-        if stimulus_presentation is not None:
-            descriptors["dataset_description"]["StimulusPresentation"] = (
-                stimulus_presentation
-            )
-            break
-
     for snirf_file in snirf_files:
         loaded = read_bids_data(snirf_file, root, include_derivatives=include_derivatives)
         for rec in loaded:
-            rec.meta_data["_bids_descriptors"] = copy.deepcopy(descriptors)
+            rec_descriptors = copy.deepcopy(descriptors)
+            imported_descriptors = rec.meta_data.get("_bids_descriptors", {})
+            imported_dataset_description = imported_descriptors.get(
+                "dataset_description", {}
+            )
+            if isinstance(imported_dataset_description, dict):
+                rec_descriptors["dataset_description"].update(
+                    imported_dataset_description
+                )
+            rec.meta_data["_bids_descriptors"] = rec_descriptors
             dset.import_data(rec)
 
     return dset
@@ -642,6 +640,7 @@ def read_bids_data(
         _apply_bids_participants_metadata(rec, snirf_file, root, entities)
         _apply_bids_fnirs_json_metadata(rec, snirf_file, root, entities)
         _apply_bids_stim_metadata(rec, snirf_file, root, entities)
+        _apply_bids_events_json_metadata(rec, snirf_file, root, entities)
         _apply_bids_probe_metadata(rec, snirf_file, root, entities)
     return loaded
 
@@ -819,6 +818,55 @@ def _apply_bids_stim_metadata(rec, snirf_file: Path, root: Path, entities: dict)
         rename["amplitude"] = "value"
     stim.rename(columns=rename, inplace=True)
     rec.stim = stim
+
+
+def _apply_bids_events_json_metadata(
+    rec, snirf_file: Path, root: Path, entities: dict
+) -> None:
+    event_sidecars = _bids_sidecars_for_suffix(
+        snirf_file, root, "events", ".json", entities
+    )
+    if not event_sidecars:
+        return
+
+    metadata = {}
+    for sidecar in event_sidecars:
+        with open(sidecar) as f:
+            current = json.load(f)
+        if not isinstance(current, dict):
+            raise ValueError(f"Events JSON sidecar must contain an object: {sidecar}")
+        for key, value in current.items():
+            previous = metadata.get(key)
+            if isinstance(previous, dict) and isinstance(value, dict):
+                merged = previous.copy()
+                for field, field_value in value.items():
+                    if (
+                        field == "Levels"
+                        and isinstance(merged.get(field), dict)
+                        and isinstance(field_value, dict)
+                    ):
+                        merged[field] = {**merged[field], **field_value}
+                    else:
+                        merged[field] = field_value
+                metadata[key] = merged
+            else:
+                metadata[key] = value
+
+    trial_type = metadata.get("trial_type")
+    levels = trial_type.get("Levels") if isinstance(trial_type, dict) else None
+    if isinstance(levels, dict):
+        descriptions = rec.meta_data.setdefault("_bids_descriptions", {})
+        descriptions.update({
+            f"event:{event_type}": description
+            for event_type, description in levels.items()
+            if isinstance(event_type, str) and isinstance(description, str)
+        })
+
+    stimulus_presentation = metadata.get("StimulusPresentation")
+    if stimulus_presentation is not None:
+        rec.meta_data.setdefault("_bids_descriptors", {}).setdefault(
+            "dataset_description", {}
+        )["StimulusPresentation"] = stimulus_presentation
 
 
 def _apply_bids_probe_metadata(

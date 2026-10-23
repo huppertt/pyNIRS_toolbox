@@ -114,6 +114,17 @@ class MixedEffects(cedalion_module):
         cur_demo['fileIdx'] = cur_demo.index
 
         first_level = [rec[self.inputName] for rec in dset.dataset]
+        roi_geometry = [getattr(stats, "geoROI", None) for stats in first_level]
+        if any(geometry is not None for geometry in roi_geometry):
+            if any(geometry is None for geometry in roi_geometry):
+                raise ValueError("Cannot mix channel and ROI statistics in a group model.")
+            first_geometry = roi_geometry[0]
+            if any(
+                geometry.region_names != first_geometry.region_names
+                or not geometry.membership.equals(first_geometry.membership)
+                for geometry in roi_geometry[1:]
+            ):
+                raise ValueError("Group ROI statistics must use matching ROI definitions.")
         if not self.options['include_nuisance']:
             first_level = [_without_nuisance(s) for s in first_level]
 
@@ -201,6 +212,8 @@ class MixedEffects(cedalion_module):
         stats.head_model = dset.dataset[0].head_model
         stats.geo3d = dset.dataset[0].geo3d
         stats.geo2d = dset.dataset[0].geo2d
+        if roi_geometry[0] is not None:
+            stats.geoROI = roi_geometry[0]
 
         stats.description = "Mixed-Effects model statistics: " + self.options['FE_formula']
 

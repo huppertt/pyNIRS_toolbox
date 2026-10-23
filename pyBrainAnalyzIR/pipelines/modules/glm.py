@@ -4,6 +4,7 @@ import cedalion.nirs
 import pyBrainAnalyzIR.math.glm as glm
 from pyBrainAnalyzIR.math.glm import basis_functions
 from pyBrainAnalyzIR.math.glm.solve import _recording_quality_mask
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, quality_masks
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
 import pyBrainAnalyzIR
 import pyBrainAnalyzIR.dataclasses.dataset
@@ -161,6 +162,11 @@ class GLM(cedalion_module):
         else:
 
             if (self.options['Add_Short_Seperations']):
+                if get_geo_roi(rec, rec[self.inputName]) is not None:
+                    raise ValueError(
+                        "Short-separation regression requires physical channels; "
+                        "apply it before ROI averaging."
+                    )
                 # split time series into two based on channel distance
                 ts_long, ts_short = cedalion.nirs.split_long_short_channels(
                     rec[self.inputName], rec.geo3d, self.options['Short_Seperation_Max_Distance'])
@@ -178,8 +184,9 @@ class GLM(cedalion_module):
                 )
 
             quality_mask = None
-            if getattr(rec, "masks", None):
-                quality_mask = _recording_quality_mask(ts_long, rec.masks)
+            masks = quality_masks(rec, ts_long)
+            if masks:
+                quality_mask = _recording_quality_mask(ts_long, masks)
 
             result = glm.fit(ts_long,
                              design_matrix=design_matrix,
@@ -189,6 +196,12 @@ class GLM(cedalion_module):
                              quality_mask=quality_mask)
 
             stats = pyBrainAnalyzIR.dataclasses.statistics.Statistics(result)
+            if {"source", "detector"}.issubset(ts_long.coords):
+                coordinates = ts_long.sel(channel=stats.betas.channels.values)
+                stats.betas = stats.betas.assign_coords(
+                    source=("indices", coordinates.source.values),
+                    detector=("indices", coordinates.detector.values),
+                )
             stats.head_model = rec.head_model
             stats.geo3d = rec.geo3d
             stats.geo2d = rec.geo2d

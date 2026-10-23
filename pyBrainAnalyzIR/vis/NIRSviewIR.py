@@ -67,7 +67,12 @@ from PySide6.QtWidgets import (
 )
 
 from pyBrainAnalyzIR.vis.demographics_manager import DemographicsManager, _to_display_str
-from pyBrainAnalyzIR.vis.plot_nirs_inline import draw_probe, linecolors, to_string
+from pyBrainAnalyzIR.vis.plot_nirs_inline import (
+    draw_probe, linecolors, to_string, _ROI_COLORS, _roi_probe_data,
+    _roi_channel_contributions, _color_roi_channels, _roi_label_buttons,
+    plot_roi_statistics,
+)
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi
 from pyBrainAnalyzIR.vis.pipeline_manager import (
     PipelineManagerDialog,
     pipeline_to_json,
@@ -287,6 +292,10 @@ class NIRSviewIRWindow(QMainWindow):
         self._ts_lines = []
         self._stim_handles = []
         self._ts_legends = {"channels": None, "stim": None}
+        self._roi_geometry = None
+        self._roi_buttons = []
+        self._roi_colors = []
+        self._roi_contributions = None
         self._pipeline_modules: List[cedalion_module] = []  # current stored pipeline
         self._pipeline_dirty = True   # False once the pipeline ran on the current data
         self._current_stats_df = None       # last drawn statistics DataFrame (for export)
@@ -1151,6 +1160,8 @@ class NIRSviewIRWindow(QMainWindow):
         self.type_selector.blockSignals(True)
         self.type_selector.clear()
         self.type_selector.addItems(keys)
+        for name in getattr(self.dataset, "statistics", {}):
+            self.type_selector.addItem(f"Group: {name}", name)
         self.type_selector.blockSignals(False)
 
         if keys:
@@ -1169,6 +1180,8 @@ class NIRSviewIRWindow(QMainWindow):
 
     def _on_click(self, event) -> None:
         if self._right_stack.currentIndex() != 0:
+            return
+        if self._roi_geometry is not None:
             return
         if event.inaxes is not self.ax_probe or not self.mllines:
             return
@@ -1219,10 +1232,13 @@ class NIRSviewIRWindow(QMainWindow):
         for k, index in enumerate(self.selected_channels):
             selchann = to_string(data.channel[index])
             names.append(selchann)
-            chancolor = linecolors[(k + 1) % len(linecolors)] if multi else None
+            chancolor = (
+                self._roi_colors[index] if self._roi_geometry is not None
+                else linecolors[(k + 1) % len(linecolors)] if multi else None
+            )
             for j, (series, style, comp) in enumerate(self._channel_components(selchann)):
-                color = chancolor if multi else ("r" if j == 0 else "b")
-                label = f"{selchann} {comp}" if multi else comp
+                color = chancolor if multi or self._roi_geometry is not None else ("r" if j == 0 else "b")
+                label = f"{selchann} {comp}" if multi or self._roi_geometry is not None else comp
                 line, = self.ax_ts.plot(data.time, series, linestyle=style,
                                         color=color, label=label)
                 self._ts_lines.append(line)
@@ -1230,10 +1246,20 @@ class NIRSviewIRWindow(QMainWindow):
 
         for line in self.mllines:
             line.set_color("k")
-        for k, index in enumerate(self.selected_channels):
-            self.mllines[index].set_color(
-                linecolors[(k + 1) % len(linecolors)] if multi else "r"
+        if self._roi_geometry is not None:
+            _color_roi_channels(
+                self.mllines, self._roi_contributions, self.selected_channels,
+                self._roi_colors,
             )
+            for index, button in enumerate(self._roi_buttons):
+                button.color = self._roi_colors[index] if index in self.selected_channels else "0.9"
+                button.ax.set_facecolor(button.color)
+                button.label.set_color("white" if index in self.selected_channels else "black")
+        else:
+            for k, index in enumerate(self.selected_channels):
+                self.mllines[index].set_color(
+                    linecolors[(k + 1) % len(linecolors)] if multi else "r"
+                )
 
         for legend in self._ts_legends.values():
             if legend is not None:
@@ -1248,12 +1274,18 @@ class NIRSviewIRWindow(QMainWindow):
             self.ax_ts.add_artist(self._ts_legends["channels"])
 
         if multi:
-            self.ax_ts.set_title(f"{len(names)} channels: " + ", ".join(names), fontsize=9)
+            kind = "regions" if self._roi_geometry is not None else "channels"
+            self.ax_ts.set_title(f"{len(names)} {kind}: " + ", ".join(names), fontsize=9)
         else:
             self.ax_ts.set_title(names[0] if names else "")
 
     def _draw(self, key: str, show_stim: bool = True) -> None:
         rec = self.rec
+        group_name = self.type_selector.currentData()
+        if group_name is not None and key == self.type_selector.currentText():
+            self.data = self.dataset.statistics[group_name]
+            self._draw_stats(self.data)
+            return
         self.data = rec[key]
         data = self.data
 
@@ -1265,8 +1297,15 @@ class NIRSviewIRWindow(QMainWindow):
         # Switch to timeseries page
         self._right_stack.setCurrentIndex(0)
 
-        self.ax_probe.clear()
-        self.ax_ts.clear()
+        for button in self._roi_buttons:
+            button.disconnect_events()
+        self._roi_buttons = []
+        self.figure.clear()
+        self.ax_probe = self.figure.add_subplot(1, 2, 1)
+        self.ax_ts = self.figure.add_subplot(1, 2, 2)
+        self.ax_probe.set_position([0.02, 0.05, 0.22, 0.9])
+        self.ax_ts.set_position([0.32, 0.12, 0.64, 0.8])
+        self._roi_geometry = get_geo_roi(rec, data)
         self.mllines = draw_probe(
             rec, data, self.ax_probe, plot_on_scalp=self.plot_on_scalp
         )
@@ -1280,8 +1319,28 @@ class NIRSviewIRWindow(QMainWindow):
         self._stim_handles = []
         self._ts_legends = {"channels": None, "stim": None}
 
-        vmin = float(data.to_numpy().min())
-        vmax = float(data.to_numpy().max())
+        if self._roi_geometry is not None:
+            self._roi_colors = [
+                _ROI_COLORS[self._roi_geometry.region_names.index(name) % len(_ROI_COLORS)]
+                for name in data.channel.values
+            ]
+            self._roi_contributions = _roi_channel_contributions(
+                self._roi_geometry, data.channel.values, _roi_probe_data(rec, data)
+            )
+            self.ax_probe.set_position([0.02, 0.3, 0.22, 0.6])
+            self._roi_buttons = _roi_label_buttons(
+                self.figure, self.ax_probe, data.channel.values, self._roi_colors,
+                self._toggle_roi,
+            )
+
+        values = data.to_numpy()
+        finite = values[np.isfinite(values)]
+        if not finite.size:
+            self.ax_ts.text(0.5, 0.5, "No valid samples", ha="center", transform=self.ax_ts.transAxes)
+            self._set_status(f"No valid samples in {key}.")
+            self.canvas.draw_idle()
+            return
+        vmin, vmax = float(finite.min()), float(finite.max())
 
         stim = getattr(rec, "stim", None)
         if show_stim and stim is not None and len(stim) > 0:
@@ -1307,15 +1366,33 @@ class NIRSviewIRWindow(QMainWindow):
 
         self.canvas.draw_idle()
 
+    def _toggle_roi(self, index: int) -> None:
+        """Toggle an ROI using shared inline colors; covered by GUI ROI tests."""
+        if index in self.selected_channels:
+            if len(self.selected_channels) > 1:
+                self.selected_channels.remove(index)
+        else:
+            self.selected_channels.append(index)
+        self._update_timecourse()
+        self.canvas.draw_idle()
+
     # ------------------------------------------------------------ statistics view
 
     def _draw_stats(self, stats: Statistics) -> None:
-        """Render the Statistics view: channel map figure + sortable/filterable results table."""
+        """Render channel maps or ROI beta/SE panels and a filterable results table.
+
+        ROI figures share ``plot_roi_statistics`` with notebook drawing.
+        Verified by ``tests/test_nirsviewir_gui.py``.
+        """
         self._right_stack.setCurrentIndex(1)
         self._set_status("Rendering statistics…")
 
         # Store stats object for re-draw on filter change
         self._current_stats_obj = stats
+        is_roi = stats.geoROI is not None
+        self._filter_vartype_combo.setEnabled(not is_roi)
+        if is_roi:
+            self._filter_vartype_combo.setCurrentText("beta")
 
         # Reset filters when loading new stats data
         self._stats_condition_filter = None
@@ -1385,13 +1462,21 @@ class NIRSviewIRWindow(QMainWindow):
             else:
                 thresh_str = f"p<{p_thresh:.4g}"
         else:
-            thresh_str = "p<1.0"  # effectively no threshold
+            thresh_str = "p<0.05" if stats.geoROI is not None else "p<1.0"
 
         vartype = self._filter_vartype_combo.currentText()
         fdr_full = self._global_fdr_checkbox.isChecked()
 
         try:
-            plt.close("all")
+            if stats.geoROI is not None:
+                plot_roi_statistics(
+                    stats, stats.list_conditions() if condnames is None else condnames,
+                    np.unique(stats.betas.type) if types_arg is None else types_arg,
+                    thresh_str, None, fdr_full, figure=self._stats_figure,
+                    plot_on_scalp=self.plot_on_scalp,
+                )
+                self._stats_canvas.draw_idle()
+                return
             stats.draw(
                 vartype=vartype,
                 thresh=thresh_str,
@@ -1643,9 +1728,12 @@ def NIRSviewIR(
     metadata. The default returns the window immediately, which is convenient
     in a notebook; ``block=True`` waits until the window closes when launching
     from a standalone script. ``plot_on_scalp`` controls the probe display.
+    ROI time courses have region-selection buttons. ROI statistics show beta/SE
+    bars with fixed color keys; select ``Group: <name>`` for dataset-level results.
 
     Notebook examples: ``examples/06_Example_GUI_use.ipynb`` and
-    ``examples/11_Loading_CedalionExampleData.ipynb``.
+    ``examples/11_Loading_CedalionExampleData.ipynb`` and
+    ``examples/15_ROI_Analysis.ipynb``.
     Direct callers: notebook users; ``NIRSviewIRWindow._edit_stimulus_timing``,
     ``NIRSviewIRWindow._open_data_quality_manager``, and
     ``NIRSviewIRWindow._open_data_masking_manager`` open related tools.

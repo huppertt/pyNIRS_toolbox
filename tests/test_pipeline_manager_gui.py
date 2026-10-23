@@ -286,6 +286,7 @@ def test_dialog_lists_available_modules(dialog):
 BASIC_MODULES = {
     "hyperscanning", "resting_state_connectivity", "bandpass_filter", "pca_filter", "GLM",
     "MixedEffects", "TDDR", "resample", "TrimBaseline", "mbll", "intensity_opticaldensity",
+    "ROIAverage",
 }
 
 

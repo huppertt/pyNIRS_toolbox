@@ -11,13 +11,14 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, BooleanOption, StringOption, QuantityOption)
 
 import cedalion.sigproc.quality as quality
+from pyBrainAnalyzIR.dataclasses.roi import quality_masks
 
 units = cedalion.units
 
 
 def _combine_recording_masks(rec, data, mask):
     """Combine stored clean/bad flags with a generated Cedalion quality mask."""
-    for name, recording_mask in getattr(rec, "masks", {}).items():
+    for name, recording_mask in quality_masks(rec, data).items():
         if not isinstance(recording_mask, xr.DataArray):
             raise TypeError(f"Recording mask {name!r} must be an xarray DataArray.")
         extra_dims = set(recording_mask.dims) - set(data.dims)

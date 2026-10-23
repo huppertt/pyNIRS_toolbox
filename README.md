@@ -39,6 +39,58 @@ pip install -e .
 - cedalion
 - numpy, scipy, pandas, xarray, matplotlib
 
+## Region-of-interest time courses
+
+See [15_ROI_Analysis.ipynb](examples/15_ROI_Analysis.ipynb) for a complete example.
+The `ROIAverage` pipeline module (or `pyBrainAnalyzIR.sigproc.roi.roi_average`)
+stores regional time courses alongside physical channel data:
+
+```python
+from pyBrainAnalyzIR.sigproc.roi import roi_average
+
+# roi_table is a DataFrame with source, detector, name, and optional weight.
+roi_average(rec, roi_table, input_name="amp", output_name="amp_roi",
+            roi_name="motor", weighted=True)
+```
+
+Inverse-variance weighting is enabled by default; `weighted=False` uses only
+the table weights. Contributions are normalized over valid samples. Entirely
+masked channels are excluded with a warning; constant channels with valid
+samples cannot be inverse-variance weighted. ROI definitions are kept in
+`rec.aux_obj["roi_definitions"]`; explicit attributes on each time course
+identify its definition and its separate quality-mask grid. Additional named
+definitions can coexist in the recording without changing `geo2d` or `geo3d`.
+
+Set each pipeline step's `inputName` and `outputName` to the desired regional
+time courses. Resampling, band-pass filtering, TDDR, optical-density and MBLL
+conversions, and GLM support these inputs. ROI GLM statistics can enter
+mixed-effects analysis with matching region definitions. MBLL uses fixed,
+table-weighted mean source-detector distances, following the MATLAB ProbeROI
+approach; it does not invent physical optodes. Short-separation regression
+must be done before ROI averaging. Averaging intensity before conversion is
+not equivalent to averaging concentration afterward.
+
+`ROIAverage` also accepts fitted channel statistics via `inputName` and
+`outputName`. It pools beta coefficients and the full covariance as `W beta`
+and `W covariance W.T`, following MATLAB's contrast-based ROI statistics.
+Statistics use inverse coefficient variance when `weighted=True`; time courses
+use inverse temporal variance. Missing estimates are excluded with a warning,
+weights are renormalized, and wholly missing ROI estimates remain NaN.
+The pooled results retain `.geoROI` and can enter mixed-effects models or the
+ROI statistics viewer. A direct `roi_average(channel_stats, roi_table)` returns
+a new statistics object without changing the source.
+
+With identical designs, valid samples, and fixed spatial weights
+(`weighted=False`), ROI-before-OLS and OLS-before-ROI agree in both coefficients
+and covariance. AR-IRLS fits noise models and robust weights per signal, so the
+two orders generally differ. Both paths are demonstrated and compared in the
+ROI notebook. OLS statistics use residual cross-products and each design's
+pseudoinverse for joint covariance, rather than an averaged covariance template.
+
+ROI persistence in SNIRF/BIDS and full ROI support in the GUI editors are
+not yet implemented; keep the ROI table and recreate the averages after
+loading physical-channel recordings.
+
 ## Development
 
 Install the development/CI tooling with:

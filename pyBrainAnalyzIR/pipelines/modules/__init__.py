@@ -6,3 +6,4 @@ import pyBrainAnalyzIR.pipelines.modules.events
 import pyBrainAnalyzIR.pipelines.modules.mixedeffects
 import pyBrainAnalyzIR.pipelines.modules.utilities
 import pyBrainAnalyzIR.pipelines.modules.data_masking
+import pyBrainAnalyzIR.pipelines.modules.roi

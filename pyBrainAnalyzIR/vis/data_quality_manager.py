@@ -274,13 +274,16 @@ def compute_quality_metric(
     ``metric`` selects a supported measure such as ``"snr"``, ``"sci"``,
     ``"psp"``, ``"gvtd"``, or ``"clean_percent"``. The result is used by the
     data-quality viewer to compare recordings and inspect individual channels.
+    PSP inputs are reordered to Cedalion's channel/wavelength/time layout;
+    returned time-varying scores always use time/channel order.
 
     Notebook examples: no dedicated tutorial yet.
     Direct callers: :class:`DataQualityManager` and the recursive
     ``clean_percent`` calculation.
     Direct dependencies: Cedalion's ``quality.snr``, ``quality.sci``,
     ``quality.psp`` functions and local fallback calculations.
-    Tests: ``tests/test_data_quality_manager.py::test_compute_quality_metric_returns_channel_and_time_series``.
+    Tests: ``tests/test_data_quality_manager.py`` covers metric shapes,
+    PSP dimension ordering, and explicit fallback warnings.
     """
     amp = rec["amp"]
     if metric == "snr":
@@ -294,7 +297,9 @@ def compute_quality_metric(
     if metric == "psp":
         try:
             psp, _ = quality.psp(
-                amp, window_length, _threshold_for("psp", thresholds)
+                amp.transpose("channel", "wavelength", "time"),
+                window_length,
+                _threshold_for("psp", thresholds),
             )
             psp = _collapse_to_channel_time(psp)
         except Exception as exc:

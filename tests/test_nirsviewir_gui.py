@@ -5,6 +5,9 @@ import importlib
 from collections import OrderedDict
 
 import pytest
+import numpy as np
+import pandas as pd
+import xarray as xr
 
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
@@ -33,6 +36,218 @@ def _file_menu(window):
         if action.text() == "File":
             return action.menu()
     raise AssertionError("File menu not found")
+
+
+@pytest.fixture
+def roi_dataset(simulated_recording):
+    from pyBrainAnalyzIR.sigproc.roi import roi_average
+    from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+
+    rec, _ = simulated_recording
+    roi_average(rec, pd.DataFrame({
+        "source": rec["amp"].source.values[[0, 1, 0, 2]],
+        "detector": rec["amp"].detector.values[[0, 1, 0, 2]],
+        "name": ["Left", "Left", "Right", "Right"],
+        "weight": [2, 1, 4, 4],
+    }))
+    stats = Statistics()
+    stats.geoROI = rec.aux_obj["roi_definitions"]["default"]
+    stats.geo2d, stats.geo3d = rec.geo2d, rec.geo3d
+    stats.betas = xr.DataArray(
+        [4.0, 0.1, -4.0, 0.2], dims="indices",
+        coords={"channels": ("indices", ["Left", "Right"] * 2),
+                "type": ("indices", ["HbO"] * 4),
+                "conditions": ("indices", ["A", "A", "B", "B"])},
+    )
+    stats.covariance = xr.DataArray(np.eye(4), dims=("rows", "cols"))
+    stats.dof = 100
+    rec["stats_roi"] = stats
+    dset = DataSet([rec])
+    dset["groupstats_roi"] = stats.copy()
+    return dset
+
+
+def _canvas_click(canvas, axes):
+    from matplotlib.backend_bases import MouseEvent
+
+    canvas.draw()
+    x, y = axes.transAxes.transform((0.5, 0.5))
+    for name in ("button_press_event", "button_release_event"):
+        canvas.callbacks.process(name, MouseEvent(name, canvas, x, y, button=1))
+
+
+def test_roi_timecourses_embedded_buttons_and_switching(roi_dataset):
+    from matplotlib.colors import to_rgb
+
+    window = nirsview.NIRSviewIRWindow(roi_dataset)
+    window.type_selector.setCurrentText("amp_roi")
+    assert len(window._roi_buttons) == 2
+    assert len(window.mllines) == roi_dataset.dataset[0]["amp"].sizes["channel"]
+    assert len(window._ts_lines) == 2
+    np.testing.assert_allclose(to_rgb(window.mllines[1].get_color()), [1, 0.5, 0.5])
+    _canvas_click(window.canvas, window._roi_buttons[1].ax)
+    assert window.selected_channels == [0, 1]
+    assert len(window._ts_lines) == 4
+    np.testing.assert_allclose(to_rgb(window.mllines[0].get_color()), [0.5, 0, 0.5])
+    _canvas_click(window.canvas, window.ax_probe)
+    assert window.selected_channels == [0, 1]
+    _canvas_click(window.canvas, window._roi_buttons[0].ax)
+    assert window.selected_channels == [1]
+    assert all(to_rgb(line.get_color()) == to_rgb("blue") for line in window._ts_lines)
+    old_buttons = window._roi_buttons[:]
+    window.type_selector.setCurrentText("amp")
+    assert window._roi_buttons == []
+    assert len(window.figure.axes) == 2
+    assert all(button.ax not in window.figure.axes for button in old_buttons)
+    _canvas_click(window.canvas, window.ax_probe)
+    assert len(window.selected_channels) == 1
+    window.type_selector.setCurrentText("amp_roi")
+    assert len(window.figure.axes) == 4
+    assert len(window._roi_buttons) == 2
+    window.close()
+
+
+@pytest.mark.parametrize("key", ["stats_roi", "Group: groupstats_roi"])
+def test_roi_statistics_embedded_panels_filters_and_fixed_keys(roi_dataset, key):
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgb
+
+    external = plt.figure()
+    window = nirsview.NIRSviewIRWindow(roi_dataset, plot_on_scalp=False)
+    window.type_selector.setCurrentText(key)
+    assert window._right_stack.currentIndex() == 1
+    assert not window._filter_vartype_combo.isEnabled()
+    assert window._filter_vartype_combo.currentText() == "beta"
+    fig = window._stats_figure
+    assert fig.canvas is window._stats_canvas
+    assert len(fig.axes) == 5
+    assert not fig.axes[0].images  # Actual embedded artists, not a flattened PNG.
+    assert len(fig._roi_buttons) == 2
+    assert all(not button.active for button in fig._roi_buttons)
+    assert len(fig.axes[1].texts) == 1
+    for button in fig._roi_buttons:
+        _canvas_click(window._stats_canvas, button.ax)
+        assert to_rgb(button.ax.get_facecolor()) == to_rgb(button.color)
+    assert len(fig.axes[1].patches) == 2
+    np.testing.assert_allclose([bar.get_height() for bar in fig.axes[1].patches], [4, 0.1])
+    assert window._stats_model.rowCount() == 4
+    assert plt.fignum_exists(external.number)
+    window._stats_condition_filter = {"B"}
+    window._apply_stats_filter()
+    assert len(fig.axes) == 4
+    assert fig.axes[1].get_title() == "B: HbO"
+    np.testing.assert_allclose([bar.get_height() for bar in fig.axes[1].patches], [-4, 0.2])
+    assert window._stats_proxy.rowCount() == 2
+    window._filter_q_spin.setValue(0.05)
+    assert "q<0.05" in fig._suptitle.get_text()
+    window._global_fdr_checkbox.setChecked(False)
+    assert all(not button.active for button in fig._roi_buttons)
+    window._filter_q_spin.setValue(0)
+    assert len(fig.axes[1].texts) == 0
+    window.type_selector.setCurrentText("amp_roi")
+    assert window._right_stack.currentIndex() == 0
+    assert len(window._roi_buttons) == 2
+    window.close()
+    plt.close(external)
+
+
+@pytest.mark.parametrize("plot_on_scalp", [False, True])
+def test_roi_gui_honors_probe_projection(roi_dataset, plot_on_scalp):
+    from cedalion import units
+    from cedalion.dataclasses.geometry import PointType
+    from matplotlib.patches import Circle
+
+    rec = roi_dataset.dataset[0]
+    landmarks = xr.DataArray(
+        [[0, 100, 0], [-100, 0, 0], [100, 0, 0]], dims=("label", "pos"),
+        coords={"label": ["Nz", "LPA", "RPA"],
+                "type": ("label", [PointType.LANDMARK] * 3)},
+    ).pint.quantify(units.mm)
+    rec.geo3d = xr.concat([rec.geo3d, landmarks], dim="label")
+    rec["stats_roi"].geo3d = rec.geo3d
+    window = nirsview.NIRSviewIRWindow(roi_dataset, plot_on_scalp=plot_on_scalp)
+    window.type_selector.setCurrentText("amp_roi")
+    assert any(isinstance(patch, Circle) for patch in window.ax_probe.patches) == plot_on_scalp
+    window.type_selector.setCurrentText("stats_roi")
+    assert any(
+        isinstance(patch, Circle) for patch in window._stats_figure.axes[0].patches
+    ) == plot_on_scalp
+    window.close()
+
+
+def test_switching_roi_and_channel_statistics_restores_display_control(roi_dataset):
+    import matplotlib.pyplot as plt
+
+    rec = roi_dataset.dataset[0]
+    stats = rec["stats_roi"].copy()
+    stats.geoROI = None
+    stats.betas = stats.betas.assign_coords(
+        channels=("indices", rec["amp"].channel.values[:2].tolist() * 2)
+    )
+    rec["stats_channels"] = stats
+    external = plt.figure()
+    window = nirsview.NIRSviewIRWindow(roi_dataset)
+    window.type_selector.setCurrentText("stats_roi")
+    assert not window._filter_vartype_combo.isEnabled()
+    window.type_selector.setCurrentText("stats_channels")
+    assert window._filter_vartype_combo.isEnabled()
+    assert len(window._stats_figure.axes[0].images) == 1
+    window._filter_vartype_combo.setCurrentText("tstat")
+    assert len(window._stats_figure.axes[0].images) == 1
+    assert plt.fignum_exists(external.number)
+    window.type_selector.setCurrentText("stats_roi")
+    assert not window._filter_vartype_combo.isEnabled()
+    assert not window._stats_figure.axes[0].images
+    assert len(window._stats_figure._roi_buttons) == 2
+    window.close()
+    plt.close(external)
+
+
+def test_roi_gui_with_fitted_glm_and_mixed_effects(simulated_recording):
+    import copy
+    from pyBrainAnalyzIR.sigproc.roi import roi_average
+    from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
+    from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+    from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects
+
+    rec, _ = simulated_recording
+    recordings = []
+    for index in range(5):
+        recording = copy.deepcopy(rec)
+        recording["amp"] = recording["amp"] * (
+            1 + np.random.default_rng(index).normal(0, 0.001, recording["amp"].shape)
+        )
+        recording.meta_data["subject"] = f"subject{index}"
+        recordings.append(recording)
+    dset = DataSet(recordings)
+    roi_average(dset, pd.DataFrame({
+        "source": rec["amp"].source.values[:4],
+        "detector": rec["amp"].detector.values[:4],
+        "name": ["Left", "Left", "Right", "Right"],
+    }))
+    for module, source, target in [
+        (prep.intensity_opticaldensity(), "amp_roi", "od_roi"),
+        (prep.mbll(), "od_roi", "conc_roi"),
+        (GLM(), "conc_roi", "stats_roi"),
+    ]:
+        module.inputName, module.outputName = source, target
+        if isinstance(module, GLM):
+            module.options["noise_model"] = "ols"
+        module.run(dset)
+    group = MixedEffects()
+    group.inputName = "stats_roi"
+    group.options["robust"] = False
+    group.run(dset)
+    window = nirsview.NIRSviewIRWindow(dset)
+    for key, stats in [("stats_roi", dset.dataset[0]["stats_roi"]), ("Group: groupstats", dset["groupstats"])]:
+        window.type_selector.setCurrentText(key)
+        assert window._current_stats_obj is stats
+        panels = len(stats.list_conditions()) * len(np.unique(stats.betas.type))
+        assert len(window._stats_figure.axes) == 1 + panels + 2
+        assert window._stats_model.rowCount() == len(stats.table())
+        assert all(not button.active for button in window._stats_figure._roi_buttons)
+        window._stats_canvas.draw()
+    window.close()
 
 
 def test_file_menu_actions_are_flat():

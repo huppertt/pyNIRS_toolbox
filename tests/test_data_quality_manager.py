@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 from collections import OrderedDict
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -11,6 +13,7 @@ pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
 
 import cedalion.sigproc.quality as quality  # noqa: E402
+from cedalion import units  # noqa: E402
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
 from pyBrainAnalyzIR.testing import simData  # noqa: E402
 from pyBrainAnalyzIR.vis.data_quality_manager import (  # noqa: E402
@@ -40,11 +43,64 @@ def test_compute_quality_metric_returns_channel_and_time_series(monkeypatch):
     monkeypatch.setattr(quality, "psp", broken_psp)
 
     for metric in ("snr", "sci", "psp", "gvtd", "clean_percent"):
-        scalar, timeseries = compute_quality_metric(rec, metric)
+        if metric in ("psp", "clean_percent"):
+            with pytest.warns(UserWarning, match="forced PSP failure"):
+                scalar, timeseries = compute_quality_metric(rec, metric)
+        else:
+            scalar, timeseries = compute_quality_metric(rec, metric)
         assert scalar.dims == ("channel",)
         assert timeseries.dims == ("time", "channel")
         assert scalar.sizes["channel"] == rec["amp"].sizes["channel"]
         assert timeseries.sizes["channel"] == rec["amp"].sizes["channel"]
+
+
+@pytest.mark.parametrize("dimensions", [
+    ("time", "channel", "wavelength"),
+    ("channel", "wavelength", "time"),
+    ("wavelength", "time", "channel"),
+])
+@pytest.mark.parametrize("window_seconds", [5, 10])
+def test_psp_matches_cedalion_without_fallback(
+    simulated_recording, dimensions, window_seconds, monkeypatch
+):
+    rec, _ = simulated_recording
+    amp = rec["amp"]
+    window_length = window_seconds * units.s
+    expected, _ = quality.psp(
+        amp.transpose("channel", "wavelength", "time"),
+        window_length,
+        0.1,
+    )
+    expected = expected.pint.dequantify().transpose("time", "channel")
+    rec["amp"] = amp.transpose(*dimensions)
+    original = rec["amp"].copy(deep=True)
+
+    manager_module = importlib.import_module(
+        "pyBrainAnalyzIR.vis.data_quality_manager"
+    )
+
+    def unexpected_fallback(*args, **kwargs):
+        pytest.fail("PSP must use Cedalion for valid amplitude data")
+
+    monkeypatch.setattr(manager_module, "_fallback_psp_time", unexpected_fallback)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Cedalion PSP calculation failed")
+        scalar, timeseries = compute_quality_metric(
+            rec, "psp", window_length=window_length
+        )
+        _, clean = compute_quality_metric(
+            rec, "clean_percent", window_length=window_length
+        )
+
+    assert timeseries.dims == ("time", "channel")
+    assert timeseries.sizes["time"] != timeseries.sizes["channel"]
+    np.testing.assert_allclose(timeseries.values, expected.values)
+    np.testing.assert_array_equal(timeseries.time.values, expected.time.values)
+    np.testing.assert_array_equal(timeseries.channel.values, expected.channel.values)
+    np.testing.assert_allclose(scalar.values, expected.mean("time").values)
+    assert clean.dims == ("time", "channel")
+    assert clean.sizes == timeseries.sizes
+    assert rec["amp"].identical(original)
 
 
 def test_metric_mask_uses_thresholds():

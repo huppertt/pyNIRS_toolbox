@@ -13,6 +13,11 @@ DEFAULT_THRESHOLD = 15 * units.mm
 def short_channel_mask(ts: xr.DataArray, geo3d: xr.DataArray,
                        distance_threshold=DEFAULT_THRESHOLD) -> xr.DataArray:
     """Boolean mask over ``ts.channel``; True for short-separation channels."""
+    if ts.attrs.get("roi_definition") is not None:
+        raise ValueError(
+            "Short-separation selection requires physical channels; "
+            "apply it before ROI averaging."
+        )
     dists = cedalion.nirs.channel_distances(ts, geo3d)
     return dists < distance_threshold
 

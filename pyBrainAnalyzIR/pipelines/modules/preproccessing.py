@@ -6,6 +6,7 @@ import xarray as xr
 import cedalion.math.resample
 import pyBrainAnalyzIR.dataclasses.dataset
 from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, quality_masks
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module as cedalion_module
 from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, StringOption, ListOption, ObjectOption, BooleanOption)
@@ -48,6 +49,8 @@ class resample(cedalion_module):
     Tests: ``tests/test_glm_quality_masks.py`` and
     ``tests/test_pipeline_modules.py``.
     """
+    updates_roi_masks = True
+
     def __init__(self, previous_job=None):
         self.name = "Resample"
         self.advanced_module = False
@@ -82,13 +85,20 @@ class resample(cedalion_module):
                 outputName = self.outputName
 
             data = rec[inputName]
-            masks = getattr(rec, "masks", {})
+            masks = quality_masks(rec, data)
             resampled, resampled_masks = resample_with_quality_masks(
                 data, self.options["Fs"], masks
             )
             rec[outputName] = resampled
-            for key, mask in resampled_masks.items():
-                rec.set_mask(key, mask, overwrite=True)
+            geometry = get_geo_roi(rec, data)
+            if geometry is not None:
+                resampled.attrs.update(
+                    roi_definition=geometry.name, roi_mask_key=outputName
+                )
+                rec.aux_obj["roi_masks"][outputName] = resampled_masks
+            else:
+                for key, mask in resampled_masks.items():
+                    rec.set_mask(key, mask, overwrite=True)
             return rec
 
 
@@ -207,8 +217,14 @@ class conc2od(cedalion_module):
             dpf = xr.DataArray(self.options['dpf'], dims="wavelength",
                                coords={"wavelength": rec["amp"].wavelength})
 
-            rec[self.outputName] = cedalion.nirs.conc2od(rec[self.inputName],
-                                                         rec.geo3d, dpf, self.options['spectrum'])
+            from pyBrainAnalyzIR.sigproc.roi import roi_conc2od
+            if get_geo_roi(rec, rec[self.inputName]) is not None:
+                rec[self.outputName] = roi_conc2od(
+                    rec, rec[self.inputName], dpf, self.options['spectrum']
+                )
+            else:
+                rec[self.outputName] = cedalion.nirs.conc2od(
+                    rec[self.inputName], rec.geo3d, dpf, self.options['spectrum'])
             return rec
 
 
@@ -256,8 +272,14 @@ class mbll(cedalion_module):
             dpf = xr.DataArray(self.options['dpf'], dims="wavelength",
                                coords={"wavelength": rec[self.inputName].wavelength})
 
-            rec[self.outputName] = cedalion.nirs.od2conc(rec[self.inputName],
-                                                         rec.geo3d, dpf, self.options['spectrum'])
+            from pyBrainAnalyzIR.sigproc.roi import roi_od2conc
+            if get_geo_roi(rec, rec[self.inputName]) is not None:
+                rec[self.outputName] = roi_od2conc(
+                    rec, rec[self.inputName], dpf, self.options['spectrum']
+                )
+            else:
+                rec[self.outputName] = cedalion.nirs.od2conc(
+                    rec[self.inputName], rec.geo3d, dpf, self.options['spectrum'])
             return rec
 
 

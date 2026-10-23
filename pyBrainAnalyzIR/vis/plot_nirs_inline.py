@@ -2,8 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.patches as patches
 import warnings
+import xarray as xr
+from matplotlib.colors import to_rgb
+from matplotlib.widgets import Button
 
 from cedalion.geometry.registration import simple_scalp_projection
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi
 
 
 def to_string(arr):
@@ -117,13 +121,17 @@ def _draw_optode_labels(ax, geo2d, sources: set[str], detectors: set[str]) -> No
 
 
 def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
-    """Draw the probe and return channel line handles in data.channel order.
+    """Draw the physical probe and return its channel line handles.
+
+    ROI inputs draw their underlying physical channels, not one line per ROI.
 
     Direct callers: :func:`plot`.
     Direct dependencies: ``matplotlib.axes.Axes`` and Cedalion's scalp-projection
     helper when scalp landmarks are available.
     Tests: ``tests/test_plot_nirs_inline.py``.
     """
+    if data.attrs.get("roi_definition") is not None:
+        data = _roi_probe_data(rec, data)
     geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else None
     if geo2d is None:
         plot_on_scalp = False
@@ -160,24 +168,226 @@ def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
     return mllines
 
 
+def _roi_probe_data(rec, data):
+    """Resolve original channel coordinates, independent of averaging weights.
+
+    Used by ``draw_probe`` and ``plot``; tested in ``test_plot_nirs_inline.py``.
+    Direct dependencies: ``get_geo_roi`` and ``xarray.DataArray``.
+    """
+    geometry = get_geo_roi(rec, data)
+    return _roi_physical_channels(geometry)
+
+
+def _roi_physical_channels(geometry):
+    """Build physical coordinates for inline and statistics plots from GeoROI."""
+    return xr.DataArray(
+        np.zeros(geometry.weights.sizes["source_channel"]), dims="channel",
+        coords={
+            "channel": geometry.weights.source_channel.values,
+            "source": ("channel", geometry.weights.source.values),
+            "detector": ("channel", geometry.weights.detector.values),
+        },
+    )
+
+
+_ROI_COLORS = (
+    "red", "blue", "green", "darkorange", "darkviolet", "deepskyblue",
+    *linecolors[1:],
+)
+
+
+def _roi_channel_contributions(geometry, names, probe_data):
+    """Normalize table weights for probe coloring; used by both ROI plotters."""
+    pairs = [
+        _channel_source_detector(probe_data, index, channel)
+        for index, channel in enumerate(probe_data.channel)
+    ]
+    contributions = np.zeros((len(names), len(pairs)))
+    for index, name in enumerate(names):
+        members = geometry.membership
+        for member in members[members["name"] == name].itertuples(index=False):
+            pair = (str(member.source), str(member.detector))
+            if pair not in pairs:
+                raise ValueError(f"ROI channel {pair!r} is missing from the physical probe.")
+            contributions[index, pairs.index(pair)] = member.weight
+        maximum = contributions[index].max()
+        if maximum > 0:
+            contributions[index] /= maximum
+    return contributions
+
+
+def _color_roi_channels(lines, contributions, selected, colors):
+    """Blend selected ROI definition colors, shared by inline/statistics plots."""
+    for channel_index, line in enumerate(lines):
+        weights = contributions[selected, channel_index]
+        total = weights.sum()
+        line.set_color("k")
+        if total > 0:
+            rgb = np.array([to_rgb(colors[index]) for index in selected])
+            color = (rgb * weights[:, None]).sum(axis=0) / total
+            strength = weights.max()
+            line.set_color(1 - strength + strength * color)
+
+
+def _roi_label_buttons(fig, probe_ax, names, colors, callback=None, adjust_layout=True):
+    """Create matching ROI labels; no callback makes them noninteractive legends."""
+    rows = int(np.ceil(len(names) / 2))
+    if adjust_layout:
+        fig.subplots_adjust(bottom=(0.5 + 0.4 * rows) / fig.get_figheight())
+    position = probe_ax.get_position()
+    height = 0.3 / fig.get_figheight()
+    buttons = []
+    for index, name in enumerate(names):
+        row, col = divmod(index, 2)
+        button_ax = fig.add_axes([
+            position.x0 + col * position.width / 2,
+            position.y0 - (row + 1) * (height + 0.08 / fig.get_figheight()),
+            position.width / 2 - 0.005, height,
+        ])
+        color = colors[index] if callback is None else "0.9"
+        button = Button(button_ax, str(name), color=color, hovercolor=color)
+        if callback is None:
+            button.set_active(False)
+            button.disconnect_events()
+            button.label.set_color("white")
+        else:
+            button.on_clicked(lambda event, index=index: callback(index))
+        buttons.append(button)
+    fig._roi_buttons = buttons
+    return buttons
+
+
+def plot_roi_statistics(
+    stats, condnames, types, thresh, vrange, fdr_correct_full,
+    figure=None, plot_on_scalp=True,
+):
+    """Draw one physical ROI probe and beta +/- one standard error panels.
+
+    Direct caller: ``Statistics.draw`` for GLM and mixed-effects results.
+    Dependencies: shared ROI drawing helpers, ``Statistics.table``, Matplotlib
+    and ``statsmodels.stats.multitest.multipletests``. Examples:
+    ``examples/15_ROI_Analysis.ipynb``. Tests: ``tests/test_roi.py``.
+    Each condition/type has its own panel. Stars mark the requested p/q threshold;
+    FDR covers all finite estimates or all types within each condition.
+    ROI label buttons are fixed color keys, not selection controls.
+    ``figure`` allows NIRSviewIR to render directly on its embedded Qt canvas;
+    ``plot_on_scalp`` follows the viewer's probe-projection preference.
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    if len(condnames) == 0 or len(types) == 0:
+        raise ValueError("ROI drawing needs at least one condition and signal type.")
+    parts = thresh.split("<")
+    if len(parts) != 2 or parts[0].strip() not in ("p", "q"):
+        raise ValueError("ROI significance threshold must be 'p<value' or 'q<value'.")
+    threshold = float(parts[1])
+    if not 0 <= threshold <= 1:
+        raise ValueError("ROI significance threshold must be in [0, 1].")
+    table = stats.table()
+    unknown = set(condnames) - set(table["Condition"])
+    if unknown:
+        raise ValueError(f"Unknown ROI statistics conditions: {sorted(unknown)}.")
+    geometry = stats.geoROI
+    names = [name for name in geometry.region_names if name in set(table["Channel"])]
+    if not names or set(table["Channel"]) - set(geometry.region_names):
+        raise ValueError("Statistics ROI labels do not match the ROI definition.")
+    colors = [_ROI_COLORS[geometry.region_names.index(name) % len(_ROI_COLORS)] for name in names]
+    table = table.copy()
+    table["significance"] = table["P-values"]
+    if parts[0].strip() == "q":
+        groups = [table] if fdr_correct_full else [
+            group for _, group in table.groupby("Condition", sort=False)
+        ]
+        table["significance"] = np.nan
+        for group in groups:
+            finite = group.index[np.isfinite(group["P-values"])]
+            if len(finite):
+                table.loc[finite, "significance"] = multipletests(
+                    table.loc[finite, "P-values"], method="fdr_bh"
+                )[1]
+
+    rows = int(np.ceil(len(names) / 2))
+    fig = figure if figure is not None else plt.figure(
+        figsize=(4 + 4 * len(types), 3 * len(condnames) + 0.4 * rows)
+    )
+    if figure is not None:
+        for button in getattr(fig, "_roi_buttons", []):
+            button.disconnect_events()
+        fig.clear()
+    grid = fig.add_gridspec(len(condnames), len(types) + 1, width_ratios=[1] + [1.5] * len(types))
+    probe_ax = fig.add_subplot(grid[:, 0])
+    probe_data = _roi_physical_channels(geometry)
+    lines = draw_probe(stats, probe_data, probe_ax, plot_on_scalp=plot_on_scalp)
+    contributions = _roi_channel_contributions(geometry, names, probe_data)
+    _color_roi_channels(lines, contributions, list(range(len(names))), colors)
+    probe_ax.set_title("ROI membership")
+    for row, condition in enumerate(condnames):
+        for col, signal_type in enumerate(types):
+            axis = fig.add_subplot(grid[row, col + 1])
+            selected = table[
+                (table["Condition"] == condition) & (table["Type"] == signal_type)
+            ].set_index("Channel").reindex(names)
+            bars = axis.bar(
+                names, selected["Beta"], yerr=selected["StdErr"],
+                color=colors, capsize=4,
+            )
+            for bar, (_, estimate) in zip(bars, selected.iterrows()):
+                beta, error = estimate["Beta"], estimate["StdErr"]
+                if estimate["significance"] < threshold and np.isfinite(beta) and np.isfinite(error):
+                    positive = beta >= 0
+                    axis.annotate(
+                        "*", (bar.get_x() + bar.get_width() / 2,
+                              beta + error if positive else beta - error),
+                        xytext=(0, 3 if positive else -3), textcoords="offset points",
+                        ha="center", va="bottom" if positive else "top", fontsize=14,
+                    )
+            axis.axhline(0, color="0.5", linewidth=0.8)
+            axis.set_title(f"{condition}: {signal_type}")
+            axis.set_ylabel("Beta +/- SE")
+            axis.margins(y=0.2)
+            if vrange is not None:
+                axis.set_ylim(*vrange)
+    fig.subplots_adjust(top=0.85, wspace=0.65, hspace=0.65)
+    _roi_label_buttons(fig, probe_ax, names, colors)
+    fig.suptitle(f"ROI estimates +/- one SE; * {thresh}", fontsize=11)
+    return fig
+
+
 def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
     """Plot a recording's probe and selected channel time series interactively.
 
     Clicking a channel selects it; right-clicking adds or removes channels from
     the selection. ``type`` selects the recording's named time series.
+    For ROI inputs, buttons below the physical probe toggle regions independently.
+    Colors remain fixed per ROI; channel brightness uses definition weights
+    normalized to each region's maximum, not inverse-variance weights. Overlaps
+    blend ROI colors in proportion to those normalized contributions.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``,
     ``examples/02_PipelineCreation.ipynb``, ``examples/10_BIDS_Formats.ipynb``,
     ``examples/11_Loading_CedalionExampleData.ipynb``, and
     ``examples/13_Demonstrating_Data_Properties.ipynb``.
+    Returns the Matplotlib figure, keeping interactive buttons alive on it.
+    See ``examples/15_ROI_Analysis.ipynb`` for an interactive ROI example.
+
     Direct callers: notebook users.
-    Direct dependencies: :func:`draw_probe` and ``matplotlib.pyplot``.
+    Direct dependencies: :func:`draw_probe`, :func:`get_geo_roi`,
+    :func:`_roi_probe_data`, ``matplotlib.pyplot`` and ``matplotlib.widgets.Button``.
     Tests: ``tests/test_plot_nirs_inline.py``.
     """
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), width_ratios=[1, 3])
 
     data = rec[type]
+    roi_geometry = get_geo_roi(rec, data)
+    roi_buttons = []
+    roi_colors = [_ROI_COLORS[index % len(_ROI_COLORS)] for index in range(data.sizes["channel"])]
+    roi_contributions = None
+    if roi_geometry is not None:
+        probe_data = _roi_probe_data(rec, data)
+        roi_contributions = _roi_channel_contributions(
+            roi_geometry, data.channel.values, probe_data
+        )
     mllines = draw_probe(rec, data, ax[0], plot_on_scalp=plot_on_scalp)
 
     mllines[0].set_color('r')
@@ -205,18 +415,30 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
         for k, index in enumerate(selected):
             selchann = to_string(data.channel[index])
             names.append(selchann)
-            chancolor = linecolors[(k + 1) % len(linecolors)] if multi else None
+            chancolor = (
+                _ROI_COLORS[index % len(_ROI_COLORS)] if roi_geometry is not None
+                else linecolors[(k + 1) % len(linecolors)] if multi else None
+            )
             for j, (series, style, comp) in enumerate(components(selchann)):
-                color = chancolor if multi else ('r' if j == 0 else 'b')
-                label = f"{selchann} {comp}" if multi else comp
+                color = chancolor if multi or roi_geometry is not None else ('r' if j == 0 else 'b')
+                label = f"{selchann} {comp}" if multi or roi_geometry is not None else comp
                 line, = ax[1].plot(data.time, series, linestyle=style, color=color, label=label)
                 ts_lines.append(line)
                 handles.append(line)
 
         for line in mllines:
             line.set_color('k')
-        for k, index in enumerate(selected):
-            mllines[index].set_color(linecolors[(k + 1) % len(linecolors)] if multi else 'r')
+        if roi_geometry is not None:
+            _color_roi_channels(mllines, roi_contributions, selected, roi_colors)
+            for index, button in enumerate(roi_buttons):
+                button.color = (
+                    _ROI_COLORS[index % len(_ROI_COLORS)] if index in selected else "0.9"
+                )
+                button.ax.set_facecolor(button.color)
+                button.label.set_color("white" if index in selected else "black")
+        else:
+            for k, index in enumerate(selected):
+                mllines[index].set_color(linecolors[(k + 1) % len(linecolors)] if multi else 'r')
 
         for legend in legends.values():
             if legend is not None:
@@ -227,7 +449,8 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
             ax[1].add_artist(legends['channels'])
 
         if multi:
-            ax[1].set_title(f"{len(names)} channels: " + ", ".join(names), fontsize=9)
+            kind = "regions" if roi_geometry is not None else "channels"
+            ax[1].set_title(f"{len(names)} {kind}: " + ", ".join(names), fontsize=9)
         else:
             ax[1].set_title(names[0] if names else "")
         fig.canvas.draw_idle()
@@ -248,15 +471,29 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
             l, = ax[1].plot([0, 1], [-10000, -10000], color=linecolors[index], label=cond_names[index])
             stim_handles.append(l)
 
+    if roi_geometry is not None:
+        rows = int(np.ceil(data.sizes["channel"] / 2))
+        fig.set_figheight(4 + 0.4 * rows)
+
+        def toggle_roi(roi_index):
+            if roi_index in selected:
+                if len(selected) > 1:
+                    selected.remove(roi_index)
+            else:
+                selected.append(roi_index)
+            redraw()
+
+        roi_buttons = _roi_label_buttons(fig, ax[0], data.channel.values, roi_colors, toggle_roi)
+
     redraw()
 
     ax[1].set_xlabel("time / s")
     ax[1].set_ylabel("Signal intensity / a.u.")
-    ax[1].set_ylim(data.to_numpy().min(), data.to_numpy().max())
+    ax[1].set_ylim(np.nanmin(data.to_numpy()), np.nanmax(data.to_numpy()))
     ax[1].set_xlim(data.time.min(), data.time.max())
 
     def on_click(event):
-        if event.inaxes is not ax[0]:
+        if roi_geometry is not None or event.inaxes is not ax[0]:
             return
         distances = []
         for line in mllines:
@@ -280,3 +517,4 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
     fig.canvas.mpl_connect('button_press_event', on_click)
 
     plt.show()
+    return fig

@@ -309,6 +309,7 @@ _KEEP_DEFAULT = _KeepDefault()
 
 def _option_value_to_json(value: Any) -> Any:
     """Serialize a single option value to a JSON-safe form."""
+    import pandas as pd
     if isinstance(value, PresetOption):
         # presets are stored by name; custom objects fall through below
         value = value.selection
@@ -317,6 +318,8 @@ def _option_value_to_json(value: Any) -> Any:
         return {"__enum__": True, "name": value.name}
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if isinstance(value, pd.DataFrame):
+        return {"__dataframe__": value.to_dict(orient="split")}
     # Pint quantities: store magnitude + unit string
     if hasattr(value, "units") and hasattr(value, "magnitude"):
         return {"__pint__": True, "magnitude": float(value.magnitude), "units": str(value.units)}
@@ -335,6 +338,9 @@ def _option_value_from_json(raw: Any) -> Any:
         return [_option_value_from_json(v) for v in raw]
     if not isinstance(raw, dict):
         return raw
+    if "__dataframe__" in raw:
+        import pandas as pd
+        return pd.DataFrame(**raw["__dataframe__"])
     if raw.get("__enum__"):
         return raw["name"]  # EnumOption resolves the member name on assignment
     if raw.get("__pint__"):

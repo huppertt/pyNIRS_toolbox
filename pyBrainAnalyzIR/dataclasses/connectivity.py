@@ -15,6 +15,7 @@ import matplotlib.colors as mcolors
 import cedalion  # noqa: F401  (namespace + accessor registration)
 from cedalion.typing import LabeledPointCloud  # noqa: F401  (documented type)
 from pyBrainAnalyzIR.utils.geo_transforms import geo_rotation
+from pyBrainAnalyzIR.dataclasses.roi import GeoROI
 
 from statsmodels.stats.multitest import multipletests
 
@@ -56,6 +57,8 @@ class Connectivity:
             the recording.
         geo2d (LabeledPointCloud): A labeled point cloud representing the 2D geometry of
             the recording.
+        geoROI: Named ROI definitions per probe/participant. Empty for channel
+            results. Copies and condition contrasts preserve these definitions.
         head_model (Optional[Any]): A head model object.
         meta_data (OrderedDict[str, Any]): A dictionary of meta data.
     """
@@ -66,6 +69,7 @@ class Connectivity:
 
     geo3d: OrderedDict[str, LabeledPointCloud] = field(default_factory=OrderedDict)
     geo2d: OrderedDict[str, LabeledPointCloud] = field(default_factory=OrderedDict)
+    geoROI: OrderedDict[str, GeoROI] = field(default_factory=OrderedDict)
     geo2d_rotation_data: OrderedDict[str, geo_rotation] = field(default_factory=OrderedDict)
     geo3d_rotation_data: OrderedDict[str, geo_rotation] = field(default_factory=OrderedDict)
 
@@ -83,6 +87,7 @@ class Connectivity:
         self.description = "Connectivity statistics"
         self.geo2d = OrderedDict()
         self.geo3d = OrderedDict()
+        self.geoROI = OrderedDict()
         self.geo2d_rotation_data = OrderedDict()
         self.geo3d_rotation_data = OrderedDict()
         self.head_model = None
@@ -217,6 +222,9 @@ class Connectivity:
             condition: condition name (default: the first condition).
             type_to, type_from: data type (e.g. 'HbO'); default: the first type.
             value: column of :meth:`table` to return ('Coeff', 'Pvalue', 'Z', 'Tstat', 'Qvalue').
+
+        ROI results follow definition order; hyperscanning includes participant
+        prefixes so the same ROI label in two people stays distinct.
         """
         tbl = self.table()
         if condition is None:
@@ -227,7 +235,10 @@ class Connectivity:
         if type_from is None:
             type_from = type_to
         tbl = tbl[(tbl['Type_to'] == type_to) & (tbl['Type_from'] == type_from)]
-        hyper = 'Subject_to' in tbl and tbl['Subject_to'].nunique() + tbl['Subject_from'].nunique() > 2
+        hyper = (
+            len(self.geoROI) > 1 if getattr(self, "geoROI", None) else
+            'Subject_to' in tbl and tbl['Subject_to'].nunique() + tbl['Subject_from'].nunique() > 2
+        )
         if hyper:
             tbl = tbl.assign(To=tbl['Subject_to'].astype(str) + ':' + tbl['Channel_to'].astype(str),
                              From=tbl['Subject_from'].astype(str) + ':' + tbl['Channel_from'].astype(str))
@@ -235,6 +246,15 @@ class Connectivity:
             tbl = tbl.assign(To=tbl['Channel_to'], From=tbl['Channel_from'])
         order_to = list(pd.unique(tbl['To']))
         order_from = list(pd.unique(tbl['From']))
+        if getattr(self, "geoROI", None):
+            def roi_order(side):
+                return [
+                    f"{name}:{roi}" if hyper else roi
+                    for name, geometry in self.geoROI.items()
+                    for roi in geometry.region_names
+                    if ((tbl[f"geo_{side}"] == name) & (tbl[f"Channel_{side}"] == roi)).any()
+                ]
+            order_to, order_from = roi_order("to"), roi_order("from")
         mat = tbl.pivot_table(index='From', columns='To', values=value, aggfunc='first')
         return mat.reindex(index=order_from, columns=order_to)
 
@@ -441,6 +461,11 @@ class Connectivity:
             condnames=None):
         """Draw the significant connections on the 2D probe layout.
 
+        ROI results instead show labeled adjacency matrices, with significance
+        stars, alongside membership-colored probes and disabled ROI color keys.
+        Hyperscanning axes include participant names to disambiguate regions.
+        See ``examples/15_ROI_Analysis.ipynb`` and ``tests/test_roi_connectivity.py``.
+        Direct ROI dependency: ``vis.plot_roi_connectivity.plot_roi_connectivity``.
         One row of panels is drawn per condition (``condnames``; default all conditions) and one
         panel per data type (type pair with ``show_cross_types``).
 
@@ -453,6 +478,12 @@ class Connectivity:
             show_cross_types: also draw the connections between different data types.
             condnames: conditions to draw.
         """
+        if getattr(self, "geoROI", None):
+            from pyBrainAnalyzIR.vis.plot_roi_connectivity import plot_roi_connectivity
+            return plot_roi_connectivity(
+                self, fdr_correct_for_all, type, threshold_type, thres,
+                vrange, show_cross_types, condnames,
+            )
         coef = self.table()
 
         coef = coef[(coef['Channel_to'] != coef['Channel_from']) |

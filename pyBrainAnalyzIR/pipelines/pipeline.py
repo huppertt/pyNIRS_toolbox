@@ -102,11 +102,38 @@ class cedalion_module:
         ``tests/test_analysis_pipeline.py``.
         """
         # Make sure all previous jobs are run
-        if (self.previous_job is None):
-            # This is the first module on a pipeline run it
+        if self.previous_job is not None:
+            rec = self.previous_job.run(rec)
+        return self._run_with_roi(rec)
+
+    def _run_with_roi(self, rec):
+        from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, propagate_roi
+        import xarray as xr
+
+        recordings = getattr(rec, "dataset", [rec])
+        roi_inputs = []
+        for recording in recordings:
+            series = getattr(recording, "timeseries", {})
+            key = next(reversed(series), None) if self.inputName == "last" else self.inputName
+            data = series.get(key)
+            if isinstance(data, xr.DataArray) and get_geo_roi(recording, data) is not None:
+                roi_inputs.append((recording, key, data.copy(deep=False)))
+        if not roi_inputs:
             return self._runlocal(rec)
-        else:
-            return self._runlocal(self.previous_job.run(rec))
+        if len(roi_inputs) != len(recordings):
+            raise ValueError("Pipeline input mixes ROI and physical-channel representations.")
+        if getattr(self, "manages_roi_outputs", False):
+            return self._runlocal(rec)
+        for recording, key, source in roi_inputs:
+            output_key = key if self.outputName == "last" else self.outputName
+            previous_output = recording.timeseries.get(output_key)
+            self._runlocal(recording)
+            if output_key != key and recording.timeseries.get(output_key) is previous_output:
+                continue
+            # Resampling explicitly stores its new-grid masks.
+            if not getattr(self, "updates_roi_masks", False):
+                propagate_roi(recording, source, recording[output_key], output_key)
+        return rec
 
     def _runlocal(self, rec):
         # Do the actual job

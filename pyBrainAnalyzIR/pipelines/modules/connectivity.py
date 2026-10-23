@@ -15,6 +15,7 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (
     OptionsDict, NumericOption, BooleanOption, StringOption)
 
 from pyBrainAnalyzIR.dataclasses.connectivity import Connectivity
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi
 from pyBrainAnalyzIR.math.connectivity import compute_connectivity, compute_hyperscanning, event_windows
 
 from pyBrainAnalyzIR.utils.geo_transforms import geo_rotation
@@ -29,6 +30,11 @@ def _short_separation_correct(rec, inputName):
     """Run the Short Separation Filter on ``rec[inputName]`` into a temporary entry that only
     contains the long channels. Returns the name of that entry, or None if ``rec`` has no
     short-separation channels (in which case nothing is changed)."""
+    if get_geo_roi(rec, rec[inputName]) is not None:
+        raise ValueError(
+            "Short-separation correction needs physical channels. Apply it before "
+            "ROI averaging and set short_separation_correction=False for ROI connectivity."
+        )
     if not short_channel_mask(rec[inputName], rec.geo3d).values.any():
         return None
     tmpName = f'{inputName}_ss'
@@ -107,15 +113,19 @@ class resting_state_connectivity(cedalion_module):
     """Estimate relationships between fNIRS channels during rest or tasks.
 
     Notebook examples: ``examples/09_RestingStateConnectivity.ipynb`` and
-    ``examples/12_fNIRS_Connectivity_Demo.ipynb``.
+    ``examples/12_fNIRS_Connectivity_Demo.ipynb`` and ``examples/15_ROI_Analysis.ipynb``.
+    Named ROI inputs produce ROI adjacency matrices and retain their definition
+    in ``Connectivity.geoROI["default"]``. Perform short-separation correction
+    before averaging and disable it here for ROI inputs.
     Direct callers: notebook users and pipeline-manager users.
     Direct dependencies: :func:`compute_connectivity`,
     :func:`event_windows`, and
     :class:`~pyBrainAnalyzIR.dataclasses.connectivity.Connectivity`.
     Tests: ``tests/test_connectivity_events.py``,
     ``tests/test_connectivity_simulation.py``, and
-    ``tests/test_pipeline_modules.py``.
+    ``tests/test_pipeline_modules.py`` and ``tests/test_roi_connectivity.py``.
     """
+    manages_roi_outputs = True
     # Module to compute resting state connectivity from fNIRS data
 
     def __init__(self, previous_job=None):
@@ -179,6 +189,9 @@ class resting_state_connectivity(cedalion_module):
             dataNew = Connectivity()
             dataNew.geo2d['default'] = rec.geo2d
             dataNew.geo3d['default'] = rec.geo3d
+            geometry = get_geo_roi(rec, rec[inputName])
+            if geometry is not None:
+                dataNew.geoROI['default'] = geometry
             dataNew.geo2d_rotation_data['default'] = geo_rotation()
 
             dataNew.meta_data = rec.meta_data
@@ -195,14 +208,21 @@ class resting_state_connectivity(cedalion_module):
 class hyperscanning(cedalion_module):
     """Estimate connectivity between recordings from paired participants.
 
-    Notebook examples: ``examples/12_fNIRS_Connectivity_Demo.ipynb``.
+    Notebook examples: ``examples/12_fNIRS_Connectivity_Demo.ipynb`` and
+    ``examples/15_ROI_Analysis.ipynb``. ROI inputs retain separate definitions
+    per participant in ``Connectivity.geoROI``; short-separation correction must
+    precede averaging. The module runs on the dataset, not individual recordings.
+    Unordered ROI pairs require matching region/signal-type labels; their
+    coordinate order is aligned before participant permutations are stacked.
     Direct callers: notebook users and pipeline-manager users.
     Direct dependencies: :func:`compute_hyperscanning`,
     :func:`event_windows`, and
     :class:`~pyBrainAnalyzIR.dataclasses.connectivity.Connectivity`.
     Tests: ``tests/test_connectivity_events.py``,
-    ``tests/test_connectivity.py``, and ``tests/test_pipeline_modules.py``.
+    ``tests/test_connectivity.py``, ``tests/test_pipeline_modules.py``, and
+    ``tests/test_roi_connectivity.py``.
     """
+    manages_roi_outputs = True
     # Module to compute hyperscanning fNIRS data
 
     def __init__(self, previous_job=None):
@@ -273,6 +293,26 @@ class hyperscanning(cedalion_module):
             if len(lst) > 1:
                 for i in lst:
                     dyad[demo['subject'][i]] = dset.dataset[i][dataName.get(i, inputName)]
+                if self.options['unordered'] and any(
+                    get_geo_roi(dset.dataset[i], dset.dataset[i][inputName]) is not None
+                    for i in lst
+                ):
+                    reference = next(iter(dyad.values()))
+                    subtype = 'wavelength' if 'wavelength' in reference.dims else 'chromo'
+                    for subject, data in dyad.items():
+                        if (
+                            set(data.channel.values) != set(reference.channel.values)
+                            or subtype not in data.dims
+                            or set(data[subtype].values) != set(reference[subtype].values)
+                        ):
+                            raise ValueError(
+                                "Unordered ROI hyperscanning requires matching region and signal-type "
+                                "labels across participants. Use unordered=False for different regions."
+                            )
+                        dyad[subject] = data.sel(
+                            channel=reference.channel.values,
+                            **{subtype: reference[subtype].values},
+                        )
                 windows = None
                 if self.options['divide_events']:
                     stim = dset.dataset[lst[0]].stim
@@ -302,6 +342,9 @@ class hyperscanning(cedalion_module):
                     name = demo['subject'][i]
                     dataNew.geo2d[name] = dset.dataset[i].geo2d
                     dataNew.geo3d[name] = dset.dataset[i].geo3d
+                    geometry = get_geo_roi(dset.dataset[i], dset.dataset[i][inputName])
+                    if geometry is not None:
+                        dataNew.geoROI[name] = geometry
 
                     geo_rot = geo_rotation()
                     geo_rot.set_rotation2D(np.array([rotations[idx]]))

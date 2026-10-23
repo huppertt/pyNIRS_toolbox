@@ -1,6 +1,7 @@
 """Tests for the dataset metadata helpers."""
 from __future__ import annotations
 
+import copy
 import json
 from collections import OrderedDict
 
@@ -662,6 +663,179 @@ def test_read_bids_dataset_applies_sidecar_overrides(tmp_path):
     assert loaded_demographics.loc[0, "age"].magnitude == 99
     assert loaded_demographics.loc[0, "gender"] == "X"
     assert loaded_demographics.loc[0, "study_site"] == "north"
+
+
+def _write_two_session_bids_dataset(path):
+    recording, _ = simData.Data(snr=10, random_seed=2026)
+    recording.meta_data.update({
+        "subject": "A",
+        "task": "finger",
+        "age": 21 * cedalion.units.years,
+        "gender": "F",
+        "session": "one",
+        "MeasurementDate": "2024-05-01",
+    })
+    recording.stim = pd.DataFrame({
+        "onset": [1.0],
+        "duration": [2.0],
+        "trial_type": ["embedded_event"],
+        "value": [1.0],
+    })
+    second_recording = copy.deepcopy(recording)
+    second_recording.meta_data["session"] = "two"
+    dset = DataSet([recording, second_recording])
+    write_bids_dataset(dset, path, include_derivatives=False)
+    return path
+
+
+def _recording_for_session(dset, session):
+    index = {"one": 0, "two": 1}[session]
+    return dset.dataset[index]
+
+
+def _write_events_sidecar(path, *, event_type, description, software):
+    events_path = path.with_suffix(".tsv")
+    pd.DataFrame({
+        "onset": [0.0],
+        "duration": [1.0],
+        "trial_type": [event_type],
+    }).to_csv(events_path, sep="\t", index=False)
+    path.write_text(json.dumps({
+        "trial_type": {
+            "Description": "Condition labels.",
+            "Levels": {event_type: description},
+        },
+        "StimulusPresentation": {"SoftwareName": software},
+    }), encoding="utf-8")
+
+
+def _remove_local_event_sidecars(root):
+    for path in list(root.rglob("*_events.tsv")) + list(
+        root.rglob("*_events.json")
+    ):
+        if path.parent != root:
+            path.unlink()
+
+
+def test_bids_import_inherits_root_demographics_and_events_sidecars(tmp_path):
+    _write_two_session_bids_dataset(tmp_path)
+    _remove_local_event_sidecars(tmp_path)
+    participants = pd.read_csv(tmp_path / "participants.tsv", sep="\t")
+    participants.loc[:, "age"] = 99
+    participants.to_csv(tmp_path / "participants.tsv", sep="\t", index=False)
+    (tmp_path / "participants.json").write_text(json.dumps({
+        "age": {"Description": "Age defined at dataset root.", "Units": "year"},
+    }), encoding="utf-8")
+
+    root_events_json = tmp_path / "task-finger_events.json"
+    _write_events_sidecar(
+        root_events_json,
+        event_type="root_event",
+        description="Inherited root event.",
+        software="RootStim",
+    )
+
+    loaded = read_bids_dataset(tmp_path, include_derivatives=False)
+    for session in ("one", "two"):
+        recording = _recording_for_session(loaded, session)
+        assert recording.meta_data["age"].magnitude == 99
+        assert recording.meta_data["_bids_descriptions"]["age"] == (
+            "Age defined at dataset root."
+        )
+        assert recording.stim["trial_type"].tolist() == ["root_event"]
+        assert recording.meta_data["_bids_descriptions"]["event:root_event"] == (
+            "Inherited root event."
+        )
+    assert loaded.data_description()["StimulusPresentation"] == {
+        "SoftwareName": "RootStim"
+    }
+
+
+def test_bids_import_prefers_local_sidecars_over_inherited_definitions(tmp_path):
+    _write_two_session_bids_dataset(tmp_path)
+    _remove_local_event_sidecars(tmp_path)
+    participants = pd.read_csv(tmp_path / "participants.tsv", sep="\t")
+    participants.loc[:, "age"] = 99
+    participants.to_csv(tmp_path / "participants.tsv", sep="\t", index=False)
+    (tmp_path / "participants.json").write_text(json.dumps({
+        "age": {"Description": "Root age definition.", "Units": "year"},
+    }), encoding="utf-8")
+
+    root_events_json = tmp_path / "task-finger_events.json"
+    _write_events_sidecar(
+        root_events_json,
+        event_type="root_event",
+        description="Root event definition.",
+        software="RootStim",
+    )
+
+    local_folder = tmp_path / "sub-A" / "ses-two"
+    local_folder.mkdir(parents=True, exist_ok=True)
+    (local_folder / "participants.tsv").write_text(
+        "participant_id\tage\nsub-A\t55\n", encoding="utf-8"
+    )
+    (local_folder / "participants.json").write_text(json.dumps({
+        "age": {"Description": "Root age definition.", "Units": "month"},
+    }), encoding="utf-8")
+
+    local_events_json = local_folder / (
+        "sub-A_ses-two_task-finger_run-2_events.json"
+    )
+    _write_events_sidecar(
+        local_events_json,
+        event_type="local_event",
+        description="Local event definition.",
+        software="LocalStim",
+    )
+
+    loaded = read_bids_dataset(tmp_path, include_derivatives=False)
+    inherited = _recording_for_session(loaded, "one")
+    overridden = _recording_for_session(loaded, "two")
+
+    assert inherited.meta_data["age"].magnitude == 99
+    assert inherited.meta_data["_bids_descriptions"]["age"] == (
+        "Root age definition."
+    )
+    assert inherited.stim["trial_type"].tolist() == ["root_event"]
+    assert inherited.meta_data["_bids_descriptions"]["event:root_event"] == (
+        "Root event definition."
+    )
+
+    assert overridden.meta_data["age"].magnitude == 55
+    assert overridden.meta_data["age"].units == cedalion.units.month
+    assert overridden.stim["trial_type"].tolist() == ["local_event"]
+    assert overridden.meta_data["_bids_descriptions"]["event:local_event"] == (
+        "Local event definition."
+    )
+    assert overridden.meta_data["_bids_descriptions"]["event:root_event"] == (
+        "Root event definition."
+    )
+    assert overridden.meta_data["_bids_descriptors"]["dataset_description"][
+        "StimulusPresentation"
+    ] == {"SoftwareName": "LocalStim"}
+    assert loaded.data_description()["StimulusPresentation"] == {
+        "SoftwareName": "RootStim"
+    }
+
+
+def test_bids_import_falls_back_to_snirf_when_sidecars_are_removed(tmp_path):
+    _write_two_session_bids_dataset(tmp_path)
+
+    for path in list(tmp_path.rglob("*_events.tsv")) + list(
+        tmp_path.rglob("*_events.json")
+    ):
+        path.unlink()
+    for path in tmp_path.rglob("*_nirs.json"):
+        path.unlink()
+    (tmp_path / "participants.tsv").unlink()
+    (tmp_path / "participants.json").unlink()
+
+    loaded = read_bids_dataset(tmp_path, include_derivatives=False)
+    for session in ("one", "two"):
+        recording = _recording_for_session(loaded, session)
+        assert "age" not in recording.meta_data
+        assert recording.meta_data["MeasurementDate"] == "2024-05-01"
+        assert recording.stim["trial_type"].tolist() == ["embedded_event"]
 
 
 def test_read_legacy_bids_stim_tsv(tmp_path):
