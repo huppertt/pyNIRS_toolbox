@@ -15,6 +15,7 @@ dist/
 .coverage.*
 htmlcov/
 .tox/
+matlab-comparison-results/
 
 # Caches from the linters / type checkers
 .mypy_cache/

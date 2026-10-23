@@ -54,7 +54,7 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
         if noise_model == "wls":
             return statsmodels.api.WLS(y, x).fit()
         if noise_model == "ar_irls":
-            return ar_irls_GLM(y, x, pmax=ar_order)
+            return _fit_ar_irls(y, x, ar_order)
         if noise_model == "gls":
             ols_resid = np.asarray(statsmodels.api.OLS(y, x).fit().resid)
             resid_fit = statsmodels.api.OLS(
@@ -106,13 +106,72 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
             y_masked, x_frame, ar_order, missing="drop"
         ).iterative_fit(4)
     elif noise_model == "ar_irls":
-        result = ar_irls_GLM(y_values, x_frame, pmax=ar_order, valid_mask=valid)
+        result = _fit_ar_irls(
+            y_values, x_frame, ar_order, valid_mask=valid
+        )
     else:
         raise NotImplementedError(f"Unsupported noise model: {noise_model}")
 
     result._pybrain_full_resid = _full_length_residual(result, valid, y_values.size)
     result._pybrain_valid_count = int(valid.sum())
     return result
+
+
+def _fit_ar_irls(y, x, ar_order, valid_mask=None):
+    """Fit AR-IRLS and retain its robust-weight Satterthwaite degrees of freedom."""
+    result = ar_irls_GLM(y, x, pmax=ar_order, valid_mask=valid_mask)
+    result._pybrain_satterthwaite_dof = _satterthwaite_dof(
+        result.model.exog,
+        result.weights,
+    )
+    return result
+
+
+def _satterthwaite_dof(design, weights):
+    """Estimate effective residual degrees of freedom for a weighted fit.
+
+    This evaluates the same trace ratio used by MATLAB nirs-toolbox AR-IRLS,
+    using small design-matrix products instead of constructing an n-by-n matrix.
+    """
+    design = np.asarray(design, dtype=float)
+    weights = np.asarray(weights, dtype=float).reshape(-1)
+    if (
+        design.ndim != 2
+        or design.shape[0] != weights.size
+        or not np.isfinite(design).all()
+        or not np.isfinite(weights).all()
+        or np.any(weights < 0)
+    ):
+        return np.nan
+
+    weighted_design = weights[:, None] * design
+    gram_inverse = np.linalg.pinv(weighted_design.T @ weighted_design)
+    rank = np.linalg.matrix_rank(weighted_design)
+
+    def weighted_trace(power):
+        moment = design.T @ (
+            (weights ** (power + 2))[:, None] * design
+        )
+        return float(np.trace(gram_inverse @ moment))
+
+    trace_wk = weighted_trace(1)
+    trace_w2k = weighted_trace(2)
+    trace_w3k = weighted_trace(3)
+    middle = design.T @ ((weights**3)[:, None] * design)
+    trace_wkwk = float(np.trace(gram_inverse @ middle @ gram_inverse @ middle))
+
+    trace_h2 = float(np.sum(weights**2) - 2 * trace_wk + rank)
+    trace_h4 = float(
+        np.sum(weights**4)
+        - 4 * trace_w3k
+        + 4 * trace_w2k
+        + 2 * trace_wkwk
+        - 4 * trace_wk
+        + rank
+    )
+    if not np.isfinite(trace_h2) or not np.isfinite(trace_h4) or trace_h4 <= 0:
+        return np.nan
+    return trace_h2**2 / trace_h4
 
 
 def _full_length_residual(result, valid, length):

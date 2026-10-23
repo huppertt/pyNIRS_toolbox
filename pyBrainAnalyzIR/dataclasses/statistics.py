@@ -140,6 +140,7 @@ class Statistics:
         types = model.chromo.values.astype(str).tolist()
         conds = condition_names
 
+        satterthwaite_dof = np.full((num_channels, num_types), np.nan)
         beta = np.zeros((num_channels, num_types, num_conds), dtype=ss[0, 0].params.dtype)
         stderr = np.zeros((num_channels, num_types, num_conds), dtype=ss[0, 0].params.dtype)
         has_aligned_residuals = any(
@@ -169,6 +170,9 @@ class Statistics:
 
         for i in range(0, num_channels):
             for j in range(0, num_types):
+                satterthwaite_dof[i, j] = getattr(
+                    ss[i, j], "_pybrain_satterthwaite_dof", np.nan
+                )
                 beta[i, j, :] = np.asarray(ss[i, j].params)
                 residual = getattr(ss[i, j], "_pybrain_full_resid", ss[i, j].resid)
                 resid[i, j, :np.asarray(residual).size] = residual
@@ -251,6 +255,11 @@ class Statistics:
                                     },
                                   dims=['indices']
                                   )
+        self.satterthwaite_dof = xr.DataArray(
+            satterthwaite_dof,
+            coords={"channel": channels, "chromo": types},
+            dims=("channel", "chromo"),
+        )
         if has_aligned_residuals:
             channel_dofs = []
             for result in ss.reshape(-1):

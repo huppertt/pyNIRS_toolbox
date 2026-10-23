@@ -6,7 +6,10 @@ setup(
     version='0.1.0',
     description='Brain AnalyzIR Wrapper for Cedalion',
     author='T Huppert',
-    package_data={'pyBrainAnalyzIR.media': ['data/*.npz']},
+    package_data={
+        'pyBrainAnalyzIR.media': ['data/*.npz'],
+        'pyBrainAnalyzIR.testing': ['matlab/*.m'],
+    },
     include_package_data=True,
     install_requires=[],
     setup_requires=['pytest-runner'],

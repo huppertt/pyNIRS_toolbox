@@ -58,12 +58,40 @@ classes, every pipeline module, the GLM and ROC analyses, and the group-level
 mixed-effects models.
 
 Tests are categorized with pytest markers. `requires_cedalion` tests need a
-local Cedalion installation; `requires_matlab` tests need MATLAB available on
-`PATH` (tests needing both should use both markers). Hosted GitHub Actions run
-the portable suite and exclude either category explicitly. To run all tests
-available in the local environment, run `pytest`. To select a specific
-category, use `pytest -m requires_cedalion` or `pytest -m requires_matlab`.
+local Cedalion installation. Hosted GitHub Actions run the portable suite and
+exclude this category explicitly. To run all tests available in the local
+environment, run `pytest`. To select the Cedalion-dependent tests, use
+`pytest -m requires_cedalion`.
 Unavailable optional dependencies cause marked tests to be skipped.
+
+The full MATLAB/Python comparison is intentionally separate from pytest. Open
+[`matlab_comparison_tests/Matlab_Python_Comparison.ipynb`](matlab_comparison_tests/Matlab_Python_Comparison.ipynb)
+in Jupyter and run its cells. The notebook compares the standard
+`nirs.testing.simData` simulation with `nirs.testing.simMotionArtifact`, running
+the same raw SNIRF inputs through both toolboxes and comparing beta,
+t-statistic, and p-value estimates alongside both ROC implementations. The
+motion-artifact run uses 2 spikes/minute and 0.5 shifts/minute. MATLAB R2023a
+or later must have nirs-toolbox on its startup path. MATLAB is discovered
+automatically; to select a specific executable, set
+`PYBRAIN_MATLAB_EXECUTABLE` before starting Jupyter, or edit the notebook's
+`matlab_executable` setting.
+
+The notebook runs 500 iterations per simulation by default and retains inputs,
+estimates, summary metrics, and ROC plots in a unique `matlab-comparison-*`
+directory under `matlab-comparison-results/`. This folder is excluded from
+version control. The comparison API can retain results at any chosen location
+by passing `output_dir` to
+`pyBrainAnalyzIR.testing.matlab_comparison.run_matlab_python_roc_comparison`.
+The MATLAB motion simulator can rarely produce complex-valued intensities from
+a negative jittered spike amplitude; the comparison uses the real component
+for those iterations and records their indices in the MATLAB metadata.
+Both MBLL steps use a factor of 6 (MATLAB PPF / Python DPF), without partial
+volume correction; both GLMs use the MATLAB Canonical double-gamma HRF, AR-IRLS
+with order 16, and resampling at 4 Hz.
+The type-I error panels include the nominal diagonal. Python's
+Satterthwaite-based p-values are shown as a diagnostic alternative only; they
+do not replace the default p-values unless further validation supports that
+change.
 
 Qt-based GUI tests run head-less; set `QT_QPA_PLATFORM=offscreen` and
 `MPLBACKEND=Agg` if your environment does not do so already.

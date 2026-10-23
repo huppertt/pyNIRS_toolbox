@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import copy
 import os
-import shutil
 
 import pytest
 
@@ -32,13 +31,9 @@ def _module_available(name: str) -> bool:
 
 HAS_CEDALION = _module_available("cedalion")
 HAS_QT = _module_available("PySide6.QtWidgets")
-HAS_MATLAB = shutil.which("matlab") is not None
 
 requires_cedalion = pytest.mark.skipif(
     not HAS_CEDALION, reason="cedalion is not installed in this environment"
-)
-requires_matlab = pytest.mark.skipif(
-    not HAS_MATLAB, reason="MATLAB is not installed or not available on PATH"
 )
 requires_qt = pytest.mark.skipif(
     not HAS_QT, reason="PySide6 is not installed in this environment"
@@ -48,13 +43,10 @@ requires_qt = pytest.mark.skipif(
 def pytest_collection_modifyitems(config, items):
     """Auto-skip marked tests when their optional dependency is missing."""
     skip_cedalion = pytest.mark.skip(reason="cedalion is not installed")
-    skip_matlab = pytest.mark.skip(reason="MATLAB is not available on PATH")
     skip_qt = pytest.mark.skip(reason="PySide6 is not installed")
     for item in items:
         if "requires_cedalion" in item.keywords and not HAS_CEDALION:
             item.add_marker(skip_cedalion)
-        if "requires_matlab" in item.keywords and not HAS_MATLAB:
-            item.add_marker(skip_matlab)
         if "requires_qt" in item.keywords and not HAS_QT:
             item.add_marker(skip_qt)
 
