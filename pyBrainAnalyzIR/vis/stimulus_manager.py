@@ -18,6 +18,7 @@ From the command line, with a pickled `DataSet`::
 from __future__ import annotations
 
 import argparse
+import copy
 import pickle
 import re
 import sys
@@ -70,6 +71,7 @@ from PySide6.QtWidgets import (
 )
 
 from pyBrainAnalyzIR.vis.dict_table_editor import _to_display_str
+from pyBrainAnalyzIR.utils.metadata import meaningful_demographics
 from pyBrainAnalyzIR.vis.NIRSviewIR import _build_labels, _pick_values_dialog
 
 # (display header, column name in the table, is-numeric)
@@ -94,6 +96,8 @@ class StimTableModel(QAbstractTableModel):
     the underlying (unfiltered) DataFrame.  `REC_COL` records which recording
     each event belongs to so edits can be written back to the right file.
     """
+
+    contentChanged = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -284,7 +288,6 @@ class StimTableModel(QAbstractTableModel):
         self.changePersistentIndexList(old_persistent, new_persistent)
 
         self.layoutChanged.emit()
-        self._write_back()
 
     # ------------------------------------------------------------- row editing
 
@@ -600,6 +603,7 @@ class StimTableModel(QAbstractTableModel):
             subset = self._df.loc[self._df[REC_COL] == i]
             rec.stim = subset.drop(columns=[FILE_COL, REC_COL]).reset_index(drop=True)
         self.refresh_outliers()
+        self.contentChanged.emit()
 
     def write_back(self) -> None:
         """Push the edited events back onto the recordings."""
@@ -945,6 +949,11 @@ class StimulusManagerWindow(QMainWindow):
             rec.stim.copy() if isinstance(getattr(rec, "stim", None), pd.DataFrame) else None
             for rec in getattr(dataset, "dataset", [])
         ]
+        self._original_descriptions = [
+            copy.deepcopy(rec.meta_data.get("_bids_descriptions"))
+            for rec in dataset.dataset
+        ]
+        self._dirty = False
 
         root = QWidget(self)
         outer_layout = QVBoxLayout(root)
@@ -991,9 +1000,6 @@ class StimulusManagerWindow(QMainWindow):
         self.summary_panel.setReadOnly(True)
         self.summary_panel.setMinimumHeight(170)
         left_layout.addWidget(self.summary_panel)
-        left_layout.addWidget(QLabel("Data type"))
-        self.type_selector = QComboBox(left)
-        left_layout.addWidget(self.type_selector)
         left.setMaximumWidth(280)
         layout.addWidget(left)
 
@@ -1070,7 +1076,7 @@ class StimulusManagerWindow(QMainWindow):
         self._status_bar.showMessage("Ready.")
 
         self.file_list.itemSelectionChanged.connect(self._on_file_selection_changed)
-        self.type_selector.currentTextChanged.connect(self._on_type_changed)
+        self.stim_model.contentChanged.connect(self._update_dirty)
 
         for signal in (self.stim_model.dataChanged, self.stim_model.modelReset,
                        self.stim_model.layoutChanged, self.stim_model.rowsInserted,
@@ -1122,10 +1128,9 @@ class StimulusManagerWindow(QMainWindow):
         series = getattr(rec, "timeseries", None)
         if series is None:
             return None, None
-        keys = list(series.keys())
-        if not keys:
+        if "amp" not in series:
             return None, None
-        data = series[key if key in keys else keys[0]]
+        data = series["amp"]
 
         duration = None
         time = getattr(data, "time", None)
@@ -1143,7 +1148,7 @@ class StimulusManagerWindow(QMainWindow):
             return
 
         rec = recordings[row]
-        meta = getattr(rec, "meta_data", None) or {}
+        meta = meaningful_demographics(getattr(rec, "meta_data", None) or {})
         if meta:
             demographic_lines = [f"  - {k}: {_to_display_str(v)}" for k, v in meta.items()]
         else:
@@ -1186,18 +1191,9 @@ class StimulusManagerWindow(QMainWindow):
             return
 
         self.rec = recordings[row]
-        keys = list(getattr(self.rec, "timeseries", {}).keys())
-
-        self.type_selector.blockSignals(True)
-        self.type_selector.clear()
-        self.type_selector.addItems(keys)
-        if keys:
-            self.type_selector.setCurrentIndex(0)
-        self.type_selector.blockSignals(False)
-
         if self._follow_current_file:
             self._set_edit_rows([row], follow_current=True)
-        self._update_summary(row, keys[0] if keys else None)
+        self._update_summary(row, "amp")
         self._status_bar.showMessage(
             f"Recording {row + 1}: {self.stim_model.rowCount()} stimulus event(s) shown."
         )
@@ -1250,10 +1246,6 @@ class StimulusManagerWindow(QMainWindow):
             f"{self.stim_model.rowCount()} stimulus event(s) across {len(rows)} file(s)."
         )
 
-    def _on_type_changed(self, key: str) -> None:
-        if self.rec is not None and key:
-            self._update_summary(self.file_list.currentRow(), key)
-
     def _add_event_descriptions(self) -> None:
         dialog = EventDescriptionsDialog(self.dataset, self)
         if dialog.exec() != QDialog.Accepted:
@@ -1262,6 +1254,7 @@ class StimulusManagerWindow(QMainWindow):
         descriptions = dialog.event_descriptions()
         for event_type, description in descriptions.items():
             self.dataset.add_meta_events_description(event_type, description)
+        self._update_dirty()
         self._status_bar.showMessage(
             f"Saved descriptions for {len(descriptions)} task/event type(s)."
         )
@@ -1487,7 +1480,7 @@ class StimulusManagerWindow(QMainWindow):
         self._after_type_change(f"Duplicated {n} event(s) of '{source}' as '{new}'.")
 
     def _after_type_change(self, message: str) -> None:
-        self._update_summary(self.file_list.currentRow(), self.type_selector.currentText())
+        self._update_summary(self.file_list.currentRow(), "amp")
         self._status_bar.showMessage(message)
 
     # Placeholders: the actual editing logic is wired up separately.
@@ -1542,7 +1535,7 @@ class StimulusManagerWindow(QMainWindow):
             QMessageBox.information(self, "Add Event", "No recording selected.")
             return
         self.stim_model.add_row()
-        self._update_summary(self.file_list.currentRow(), self.type_selector.currentText())
+        self._update_summary(self.file_list.currentRow(), "amp")
 
     def _remove_events(self) -> None:
         rows = sorted({idx.row() for idx in self.stim_table.selectionModel().selectedRows()})
@@ -1550,7 +1543,7 @@ class StimulusManagerWindow(QMainWindow):
             QMessageBox.information(self, "Remove Events", "No rows selected.")
             return
         self.stim_model.remove_rows(rows)
-        self._update_summary(self.file_list.currentRow(), self.type_selector.currentText())
+        self._update_summary(self.file_list.currentRow(), "amp")
 
     # ---------------------------------------------------------- stimulus image
 
@@ -1827,11 +1820,29 @@ class StimulusManagerWindow(QMainWindow):
     # ------------------------------------------------------------ finish/close
 
     def _restore_original_stims(self) -> None:
-        for rec, stim in zip(getattr(self.dataset, "dataset", []), self._original_stims):
-            if stim is not None:
-                rec.stim = stim.copy()
+        for rec, stim, descriptions in zip(
+            self.dataset.dataset, self._original_stims, self._original_descriptions
+        ):
+            rec.stim = stim.copy() if stim is not None else None
+            if descriptions is None:
+                rec.meta_data.pop("_bids_descriptions", None)
+            else:
+                rec.meta_data["_bids_descriptions"] = copy.deepcopy(descriptions)
+        self._dirty = False
+
+    def _update_dirty(self) -> None:
+        self._dirty = any(
+            (not rec.stim.equals(stim) if isinstance(rec.stim, pd.DataFrame)
+             and isinstance(stim, pd.DataFrame) else rec.stim is not stim)
+            or rec.meta_data.get("_bids_descriptions") != descriptions
+            for rec, stim, descriptions in zip(
+                self.dataset.dataset, self._original_stims, self._original_descriptions
+            )
+        )
 
     def _confirm_discard(self) -> bool:
+        if not self._dirty:
+            return True
         answer = QMessageBox.question(
             self,
             "Cancel",

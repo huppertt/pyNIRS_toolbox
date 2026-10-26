@@ -82,3 +82,40 @@ def test_demographics_header_tooltip_shows_saved_description():
         "Participant age in years."
     )
     assert manager.table.horizontalHeaderItem(gender_column).toolTip() == ""
+
+
+def test_hide_extra_demographics_preserves_values_and_mixed_columns():
+    recordings = [Recording(21, "M"), Recording(34, "F")]
+    for rec in recordings:
+        rec.meta_data.update(empty="", missing=float("nan"), placeholder="N/A", zero=0, flag=False)
+    recordings[0].meta_data["mixed"] = "N/A"
+    recordings[1].meta_data["mixed"] = "Present"
+    manager = DemographicsManager(DataSet(recordings))
+    original = manager._current_data()
+    assert not manager.hide_extra_checkbox.isChecked()
+    assert not any(manager.table.isColumnHidden(i) for i in range(len(manager._columns)))
+
+    manager.hide_extra_checkbox.setChecked(True)
+    for name in ("empty", "missing", "placeholder"):
+        assert manager.table.isColumnHidden(manager._columns.index(name))
+    for name in ("zero", "flag", "mixed", "age"):
+        assert not manager.table.isColumnHidden(manager._columns.index(name))
+    assert manager._current_data() == original
+
+    column = manager._columns.index("placeholder")
+    manager.table.item(0, column).setText("Now populated")
+    assert not manager.table.isColumnHidden(column)
+    manager.hide_extra_checkbox.setChecked(False)
+    assert not any(manager.table.isColumnHidden(i) for i in range(len(manager._columns)))
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), "", " ", "N/A", "n/a", "not-a-number"])
+def test_meaningless_demographic_values(value):
+    from pyBrainAnalyzIR.utils.metadata import has_meaningful_value
+    assert not has_meaningful_value(value)
+
+
+@pytest.mark.parametrize("value", [0, False, "0", "False", "Healthy", 12])
+def test_meaningful_demographic_values(value):
+    from pyBrainAnalyzIR.utils.metadata import has_meaningful_value
+    assert has_meaningful_value(value)

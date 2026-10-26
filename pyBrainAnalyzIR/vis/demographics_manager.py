@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pyBrainAnalyzIR.utils.metadata import has_meaningful_value
 
 SUBJECT_ID_KEY = "subjectID"
 
@@ -374,6 +376,10 @@ class DictTableEditor(QDialog):
         add_col_btn = QPushButton("Add Column")
         add_col_btn.clicked.connect(self.add_column)
         toolbar.addWidget(add_col_btn)
+        self.hide_extra_checkbox = QCheckBox("Hide extra demographics", self)
+        self.hide_extra_checkbox.setChecked(False)
+        self.hide_extra_checkbox.toggled.connect(self._update_hidden_columns)
+        toolbar.addWidget(self.hide_extra_checkbox)
         toolbar.addStretch()
         main_layout.addLayout(toolbar)
 
@@ -390,6 +396,7 @@ class DictTableEditor(QDialog):
         # Clicking a header sorts every column by that one.
         self.table.horizontalHeader().setSectionsClickable(True)
         self.table.horizontalHeader().sectionClicked.connect(self._sort_by_column)
+        self.table.itemChanged.connect(self._update_hidden_columns)
         main_layout.addWidget(self.table)
 
         done_btn = QPushButton("Done")
@@ -410,6 +417,21 @@ class DictTableEditor(QDialog):
                     item.setData(ORIGINAL_ROW_ROLE, row)
                 self.table.setItem(row, col, item)
         self._refresh_header_tooltips()
+        self._update_hidden_columns()
+
+    def _update_hidden_columns(self, *_args) -> None:
+        """Hide only columns with no meaningful value in any recording."""
+        if not hasattr(self, "table"):
+            return
+        for column in range(self.table.columnCount()):
+            meaningful = any(
+                has_meaningful_value(item.text())
+                for row in range(self.table.rowCount())
+                if (item := self.table.item(row, column)) is not None
+            )
+            self.table.setColumnHidden(
+                column, self.hide_extra_checkbox.isChecked() and not meaningful
+            )
 
     def _refresh_header_tooltips(self) -> None:
         """Show any column description when hovering over its header."""
@@ -1026,10 +1048,7 @@ class DemographicsManager(DictTableEditor):
     @staticmethod
     def _rows_from_dataset(dataset: Any) -> List[Dict[str, Any]]:
         recordings = list(getattr(dataset, "dataset", []))
-        rows = [
-            {key: value for key, value in row.items() if _to_display_str(value) != ""}
-            for row in dataset.get_demographics().to_dict(orient="records")
-        ]
+        rows = dataset.get_demographics().to_dict(orient="records")
         while len(rows) < len(recordings):
             rows.append({})
         return rows

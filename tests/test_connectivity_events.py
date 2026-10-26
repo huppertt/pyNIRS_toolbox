@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.signal import lfilter
 
 pytest.importorskip("cedalion")
 
@@ -28,8 +29,8 @@ def _task_rec(seed=0, coupling=0.0):
     to every channel during the task blocks only (i.e. higher connectivity during task)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        np.random.seed(seed)
-        rec = simData.ARnoise()
+        rng = np.random.default_rng(seed)
+        rec = simData.ARnoise(random_seed=rng)
     rec.stim = TASK.copy()
     if coupling:
         amp = rec['amp']
@@ -37,7 +38,7 @@ def _task_rec(seed=0, coupling=0.0):
         mask = np.zeros_like(t)
         for on, dur in zip(TASK.onset, TASK.duration):
             mask[(t >= on) & (t <= on + dur)] = 1
-        common = np.random.randn(len(t)) * mask
+        common = rng.normal(size=len(t)) * mask
         factor = amp.copy(data=np.ones(amp.shape))
         factor = factor + coupling * factor * common[:, None, None] if amp.dims[0] == 'time' else \
             factor + coupling * factor * common[None, None, :]
@@ -143,16 +144,44 @@ def test_divide_events_options_control_the_windows():
     assert conn.conditions == ['rest']
 
 
-def test_task_minus_rest_detects_the_coupling():
-    conn = _conn(_task_rec(coupling=0.05), divide_events=True)
+@pytest.mark.parametrize("seed", range(10))
+def test_task_minus_rest_detects_the_coupling(seed):
+    conn = _conn(_task_rec(seed, coupling=0.05), divide_events=True)
     tt = conn.ttest('task - rest', remove_self_connections=True)
     assert tt.conditions == ['task - rest']
     assert tt.description == 'T-test'
     assert (tt.coef['Coeff'] > 0).mean() > 0.95
     assert (tt.coef['Pvalue'] < 0.05).mean() > 0.9
-    # without the coupling, the difference is null
-    null = _conn(_task_rec(), divide_events=True).ttest('task - rest', remove_self_connections=True)
-    assert (null.coef['Pvalue'] < 0.05).mean() < 0.15
+
+
+@pytest.mark.parametrize("ar_coefficient", [0, 0.4, 0.8])
+def test_task_minus_rest_null_calibration_across_simulations(ar_coefficient):
+    """Check nominal error over independent simulations, not correlated edges of one draw.
+
+    ARnoise is exponentiated ARMA(10,10), not a calibrated AR(4) null.
+    Use stationary Gaussian AR(1) data with constant spatial covariance.
+    """
+    rates = []
+    for seed in range(30):
+        rec = _task_rec(seed)
+        amp = rec["amp"]
+        rng = np.random.default_rng(seed)
+        shape = (amp.sizes["time"] + 200, amp.sizes["channel"], amp.sizes["wavelength"])
+        innovations = (
+            np.sqrt(0.33) * rng.normal(size=(shape[0], 1, 1))
+            + np.sqrt(0.67) * rng.normal(size=shape)
+        )
+        values = lfilter(
+            [np.sqrt(1 - ar_coefficient**2)], [1, -ar_coefficient],
+            innovations, axis=0,
+        )[200:]
+        rec["amp"] = amp.copy(data=(100 + 0.5 * values) * amp.pint.units)
+        null = _conn(rec, divide_events=True).ttest(
+            "task - rest", remove_self_connections=True
+        )
+        rates.append((null.coef["Pvalue"] < 0.05).mean())
+
+    assert 0.02 < np.mean(rates) < 0.08, rates
 
 
 def test_hyperscanning_divide_events():

@@ -277,7 +277,11 @@ def test_edit_data_menu_puts_bids_information_first():
         "Edit BIDS information",
         "Edit Demographics",
         "Edit Stimulus Timing",
-        "Edit Data Quality Mask",
+    ]
+    review_menu = next(action.menu() for action in menu_bar.actions()
+                       if action.text() == "Data Review")
+    assert [action.text() for action in review_menu.actions()] == [
+        "Data Quality Manager", "Edit Data Quality Mask",
     ]
 
 
@@ -450,6 +454,110 @@ def test_demographics_panel_hides_bids_descriptions():
     assert "age: 21" in panel_text
     assert "_bids_descriptions" not in panel_text
     assert "Subject identifier" not in panel_text
+
+
+def test_recording_summary_only_shows_populated_demographics_and_stimulus_descriptions():
+    rec = Recording()
+    rec.meta_data.update(age=0, flag=False, extra="N/A", empty="", nan=float("nan"))
+    rec.meta_data["_bids_descriptions"] = {"event:left": "Left-hand tapping", "event:rest": "N/A"}
+    rec.stim = pd.DataFrame({"trial_type": ["left", "left", "rest"]})
+    window = nirsview.NIRSviewIRWindow(DataSet([rec]))
+    text = window.demographics_panel.toPlainText()
+    assert "age: 0" in text and "flag: False" in text
+    assert all(key not in text for key in ("extra:", "empty:", "nan:", "_bids_descriptions"))
+    stimulus_text = window.stimulus_panel.toPlainText()
+    assert "left (2): Left-hand tapping" in stimulus_text
+    assert "rest (1)" in stimulus_text and "N/A" not in stimulus_text
+
+
+def test_viewer_passes_dataset_and_uses_executable_pipeline(monkeypatch):
+    from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
+    from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+
+    dataset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dataset)
+    contexts = []
+
+    def accept(dialog):
+        contexts.append(dialog.data)
+        dialog.remove_previous_checkbox.setChecked(True)
+        return QDialog.Accepted
+
+    monkeypatch.setattr(PipelineManagerDialog, "exec", accept)
+    window._edit_pipeline()
+    assert contexts == [dataset]
+    assert isinstance(window._pipeline_modules[0], remove_prior_analysis)
+
+
+@pytest.mark.parametrize("roi", [False, True])
+@pytest.mark.parametrize("group", [False, True])
+def test_connectivity_display_and_filters(simulated_recording, roi, group):
+    from pyBrainAnalyzIR.pipelines.modules.connectivity import resting_state_connectivity
+    from pyBrainAnalyzIR.sigproc.roi import roi_average
+
+    rec, _ = simulated_recording
+    job = resting_state_connectivity()
+    if roi:
+        roi_average(rec, pd.DataFrame({
+            "source": rec["amp"].source.values[[0, 1, 0, 2]],
+            "detector": rec["amp"].detector.values[[0, 1, 0, 2]],
+            "name": ["Left", "Left", "Right", "Right"],
+        }))
+        job.inputName = "amp_roi"
+    else:
+        job.inputName = "amp"
+    job.options.update(AR=0, robust=False, short_separation_correction=False)
+    job.run(rec)
+    connection = rec["conn"]
+    original = connection.coef.copy()
+    dataset = DataSet([rec])
+    if group:
+        dataset.statistics["connections"] = connection
+    window = nirsview.NIRSviewIRWindow(dataset)
+    window.type_selector.setCurrentText("Group: connections" if group else "conn")
+    assert window._current_stats_obj is connection
+    assert window._right_stack.currentIndex() == 1
+    assert {"P-values", "Q-values", "Type"}.issubset(window._current_stats_df.columns)
+    assert window._filter_vartype_combo.currentText() == "r"
+    assert window._stats_figure.axes[0].images, [
+        text.get_text() for ax in window._stats_figure.axes for text in ax.texts
+    ]
+    window._filter_vartype_combo.setCurrentText("z")
+    window._filter_p_spin.setValue(0.01)
+    filtered = window._get_filtered_df()
+    assert (filtered["P-values"] < 0.01).all()
+    window._stats_type_filter = set()
+    window._apply_stats_filter()
+    assert window._stats_proxy.rowCount() == 0
+    assert "No connectivity results" in window._stats_figure.axes[0].texts[0].get_text()
+    window._stats_type_filter = None
+    window._stats_condition_filter = set()
+    window._apply_stats_filter()
+    assert "No connectivity results" in window._stats_figure.axes[0].texts[0].get_text()
+    pd.testing.assert_frame_equal(connection.coef, original)
+    window.type_selector.setCurrentText("amp")
+    assert window._right_stack.currentIndex() == 0
+
+
+def test_hyperscanning_connectivity_is_displayed(simulated_recording):
+    import copy
+    from pyBrainAnalyzIR.pipelines.modules.connectivity import hyperscanning
+
+    first, _ = simulated_recording
+    second = copy.deepcopy(first)
+    first.meta_data.update(subject="A", pair="pair")
+    second.meta_data.update(subject="B", pair="pair")
+    dataset = DataSet([first, second])
+    job = hyperscanning()
+    job.inputName = "amp"
+    job.options.update(AR=0, robust=False, short_separation_correction=False)
+    job.run(dataset)
+    window = nirsview.NIRSviewIRWindow(dataset)
+    window.type_selector.setCurrentText("hyperconn")
+    assert window._current_stats_obj is first["hyperconn"]
+    assert window._stats_figure.axes[0].images, [
+        text.get_text() for ax in window._stats_figure.axes for text in ax.texts
+    ]
 
 
 def test_new_session_clears_loaded_dataset(monkeypatch):

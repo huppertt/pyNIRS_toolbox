@@ -19,23 +19,23 @@
 - [X] Add ability to mask channels
 - [X] Add info about data quality in NIRSviewIR
 - [X] Add function to add data QC to metadata 
-- [ ] Add data removal tools based on data QC
+- [X] Add data removal tools based on data QC
 - [ ] Add outlier detector code for group analysis
 - [ ] Add code to draw HRF from Stats models
-- [ ] Fix all modules to work for ROI time-series
+- [X] Fix all modules to work for ROI time-series
 - [ ] Stimulus manager features
 - [ ] Age-based DPF in MBLL
 - [X] Visualization in 10-20 space
 - [ ] Add ROC analysis templates for ROI and connectivity modules
 - [ ] Add non-parametric stats for connectivity and hyperscanning
 - [ ] Add data summary report generator to export PDF and HTML code
-- [ ] Export funcitons for stats to excel (and formats for R/SPSS secondary analysis) 
+- [ ] Export functions for stats to excel (and formats for R/SPSS secondary analysis) 
 - [ ] Fix/verify the python setup.py
 - [ ] Add pytest code to verify integration with cedalion
 - [ ] Add pytest unit testing on data types (currently only code breaks but not value checks)
 - [ ] Parametric linear modeling for GLM
 - [ ] Scatter plots for mixed effects models/results
-- [ ] When renaming in demographics_manager, make sure the description follows
+- [X] When renaming in demographics_manager, make sure the description follows
 - [X] Add window to add descriptions in demographics manager
 - [X] Add tooltips about demographics in demographics manager and NIRSviewIR
 - [X] add check in _sync_bids_description to make sure all demogrpahics have the same units across the dataset

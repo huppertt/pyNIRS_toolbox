@@ -18,6 +18,41 @@ import cedalion.nirs
 units = cedalion.units
 
 
+class remove_prior_analysis(cedalion_module):
+    """Reset derived results, retaining amplitude, raw auxiliaries and acquisition metadata."""
+
+    manages_roi_outputs = True
+
+    def __init__(self, previous_job=None):
+        self.name = "remove_prior_analysis"
+        self.advanced_module = True
+        self._cite = None
+        self.options = OptionsDict({})
+        self.inputName = None
+        self.outputName = "amp"
+        self.description = (
+            "Keep amp and raw auxiliary time series; clear derived time series, "
+            "masks, auxiliary objects (including ROI definitions), and group statistics. "
+            "Preserve stimuli, demographics and probe geometry."
+        )
+        self.previous_job = previous_job
+
+    def _runlocal(self, data):
+        is_dataset = isinstance(data, pyBrainAnalyzIR.dataclasses.dataset.DataSet)
+        recordings = data.dataset if is_dataset else [data]
+        if any("amp" not in rec.timeseries for rec in recordings):
+            raise ValueError("remove_prior_analysis requires amp in every recording")
+        for rec in recordings:
+            for key in list(rec.timeseries):
+                if key != "amp":
+                    del rec.timeseries[key]
+            rec.masks.clear()
+            rec.aux_obj.clear()
+        if is_dataset:
+            data.statistics.clear()
+        return data
+
+
 class DiscardData(cedalion_module):
     """Remove a named time series, mask, or auxiliary item from a recording.
 

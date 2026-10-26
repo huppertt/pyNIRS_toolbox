@@ -39,6 +39,31 @@ pip install -e .
 - cedalion
 - numpy, scipy, pandas, xarray, matplotlib
 
+## GUI metadata and continuing analyses
+
+NIRSviewIR and Stimulus Manager recording summaries omit blank, NaN and N/A
+demographics (but retain zero and False). Event descriptions entered through
+Stimulus Manager's **Bids Info > Add Descriptions** appear in NIRSviewIR's
+Stimulus Information summary. The demographics editor's **Hide extra demographics**
+checkbox is off by default; enabling it hides columns with no populated values
+in any recording, without deleting those fields.
+
+Stimulus Manager uses amplitude data for recording timing and prompts on cancel
+or close only after edits. Discarding restores both events and BIDS descriptions.
+**Edit Data Quality Mask** is in NIRSviewIR's **Data Review** menu.
+Connectivity results, including ROI and group/hyperscanning results, use the
+embedded results table and figure with condition, type, significance and
+correlation/Fisher-Z/t-statistic controls.
+
+`pipeline_manager(data=recording_or_dataset)` validates steps against existing
+results; NIRSviewIR supplies its dataset automatically. **Remove previous analysis**
+defaults to off and is shown when input data contains prior results. Enabling it
+prepends the advanced utilities module `remove_prior_analysis` to the executable
+pipeline, without listing an extra step. This reset retains `amp`, raw auxiliary
+time series, stimuli, demographics and probe geometry; it removes other time
+series, all masks, auxiliary objects (including ROI definitions), and dataset
+statistics. It is applied only when the pipeline runs, not while editing it.
+
 ## Region-of-interest time courses
 
 See [15_ROI_Analysis.ipynb](examples/15_ROI_Analysis.ipynb) for a complete example.
@@ -127,6 +152,37 @@ or later must have nirs-toolbox on its startup path. MATLAB is discovered
 automatically; to select a specific executable, set
 `PYBRAIN_MATLAB_EXECUTABLE` before starting Jupyter, or edit the notebook's
 `matlab_executable` setting.
+
+The opt-in `requires_matlab` test also compares fixed-weight ROI pooling before
+and after an OLS GLM on 50 seeded synthetic examples, with both single- and
+two-condition designs and varying ROI memberships. It reports coefficient
+errors and full covariance-matrix differences in pytest output and writes a
+per-example CSV plus summary JSON to pytest's temporary directory. Run it with
+`pytest -s -m requires_matlab tests/test_matlab_roi_comparison.py`. The OLS case
+needs only a MATLAB executable. A second case runs AR-IRLS (maximum AR order 8)
+with inverse-variance ROI weights (inverse temporal variance for time courses,
+inverse coefficient variance for fitted statistics) and compares MATLAB
+nirs-toolbox with Python for each processing order separately, so it needs
+nirs-toolbox on MATLAB's path. Python's AR-IRLS and its cross-channel
+covariance follow the MATLAB nirs-toolbox algorithm.
+
+The same marker runs end-to-end ROC regression tests for both `simData` and
+`simMotionArtifact`, with 50 shared MATLAB-generated recordings per simulation:
+`pytest -s -m requires_matlab tests/test_matlab_comparison.py`.
+These tests require beta correlation above 0.95 and mean ROC true-positive-rate
+difference below 0.1. They retain the estimates, ROC plots, and summaries in
+pytest's temporary directory. They do not assert identical p-values or degrees
+of freedom: the Satterthwaite difference remains unresolved. MATLAB-marked tests
+run automatically in the local full suite when MATLAB is available and are
+skipped when MATLAB is missing or on GitHub Actions.
+
+Connectivity event tests exercise task coupling across multiple simulations and
+null calibration across stationary Gaussian AR(1) signals of varying persistence.
+A false-positive fraction from one recording's correlated edges is not a
+deterministic bound on Type-I error. Also, finite-order prewhitening of raw,
+exponentiated ARMA simulation data does not guarantee calibrated null p-values.
+The PCA wrapper combines quality flags into Cedalion's one-dimensional boolean
+time-inclusion mask without modifying Cedalion.
 
 The notebook runs 500 iterations per simulation by default and retains inputs,
 estimates, summary metrics, and ROC plots in a unique `matlab-comparison-*`

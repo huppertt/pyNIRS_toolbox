@@ -19,6 +19,7 @@ import cedalion  # noqa: F401  (namespace + accessor registration)
 import cedalion.dataclasses as cdc
 from cedalion.typing import LabeledPointCloud  # noqa: F401  (documented type)
 from pyBrainAnalyzIR.dataclasses.roi import GeoROI
+from pyBrainAnalyzIR.math.glm.ar_irls import ArIrlsResult
 
 import matplotlib.pyplot as plt
 
@@ -38,6 +39,46 @@ models = [statsmodels.regression.recursive_ls.RecursiveLSResultsWrapper,
 def to_string(arr):
     # Convert to list of integers
     return arr.values.astype(str).tolist()
+
+
+def _ar_irls_joint_covariance(results):
+    """Cross-signal covariance of AR-IRLS fits, as in MATLAB ``nirs.math.ar_irls``.
+
+    Signal-by-signal residual covariance uses the robust 1.4810*median(a*b)
+    estimator of the median-centered weighted residuals (scaled so the average
+    diagonal matches the per-channel robust variance); each signal pair block is
+    ``pinv(Xi' Xj) * C[i, j]`` with the weighted whitened designs.
+    Direct caller: ``Statistics.import_model``.
+    """
+    n_signals = len(results)
+    n_coefficients = results[0].weighted_design.shape[1]
+    residual = np.column_stack([result.weighted_residual for result in results])
+    with np.errstate(all="ignore"):
+        residual = residual - np.nanmedian(residual, axis=0, keepdims=True)
+        covariance = np.zeros((n_signals, n_signals))
+        if n_signals > 400:
+            covariance = np.nan_to_num(residual).T @ np.nan_to_num(residual)
+        else:
+            for i in range(n_signals):
+                for j in range(i, n_signals):
+                    covariance[i, j] = covariance[j, i] = 1.4810 * np.nanmedian(
+                        residual[:, i] * residual[:, j]
+                    )
+        sigma2 = np.array([result.sigma2 for result in results])
+        covariance = covariance * np.nanmean(sigma2 / np.diag(covariance))
+
+    full = np.zeros((n_signals * n_coefficients, n_signals * n_coefficients))
+    for i in range(n_signals):
+        for j in range(n_signals):
+            design_i = results[i].weighted_design
+            design_j = results[j].weighted_design
+            common = ~np.isnan(design_i.sum(axis=1) + design_j.sum(axis=1))
+            block = np.linalg.pinv(design_i[common].T @ design_j[common]) * covariance[i, j]
+            full[
+                i * n_coefficients:(i + 1) * n_coefficients,
+                j * n_coefficients:(j + 1) * n_coefficients,
+            ] = block
+    return full
 
 
 def _ols_joint_covariance(results, residuals, n_conditions):
@@ -283,6 +324,8 @@ class Statistics:
             for result in fitted_results
         ):
             cov = _ols_joint_covariance(fitted_results, resid, num_conds)
+        elif all(isinstance(result, ArIrlsResult) for result in fitted_results):
+            cov = _ar_irls_joint_covariance(list(fitted_results))
 
         self.covariance = xr.DataArray(cov,
                                        coords={

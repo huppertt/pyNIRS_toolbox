@@ -1,8 +1,10 @@
 """Opt-in end-to-end comparisons against the local MATLAB nirs-toolbox."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,6 +12,7 @@ import xarray as xr
 
 from pyBrainAnalyzIR.testing.matlab_comparison import (
     ROCCurve,
+    find_matlab_executable,
     _matlab_canonical_basis,
     _metric_pair,
     _merge_estimates,
@@ -19,6 +22,47 @@ from pyBrainAnalyzIR.testing.matlab_comparison import (
     run_matlab_python_roc_comparison,
 )
 from pyBrainAnalyzIR.math.glm.solve import _satterthwaite_dof
+
+
+@pytest.mark.requires_matlab
+@pytest.mark.parametrize("simulation", ["simData", "simMotionArtifact"])
+def test_matlab_python_roc_end_to_end(tmp_path, simulation):
+    pytest.importorskip("cedalion")
+    result = run_matlab_python_roc_comparison(
+        num_iterations=50,
+        seed=13,
+        simulation=simulation,
+        output_dir=tmp_path,
+        matlab_executable=find_matlab_executable(),
+    )
+    try:
+        print(json.dumps(result.summary, indent=2, sort_keys=True))
+        assert result.summary["iterations"] == 50
+        assert result.summary["configuration"]["simulation"] == simulation
+        assert set(result.estimates["iteration"]) == set(range(1, 51))
+        assert set(result.estimates["signal_type"]) == {"hbo", "hbr"}
+        for metric in ("beta", "t_value", "p_value"):
+            comparison = result.summary["estimate_comparison"][metric]
+            assert comparison["count"] == len(result.estimates)
+            assert np.isfinite(comparison["root_mean_square_error"])
+        assert result.summary["estimate_comparison"]["beta"]["pearson_correlation"] > 0.95
+        for signal_type in ("hbo", "hbr"):
+            assert result.summary["roc_comparison"][signal_type]["mean_absolute_tpr_difference"] < 0.1
+            for toolbox in ("matlab", "python"):
+                curve = result.curves[toolbox][signal_type]
+                assert len(curve.true_positive_rate) > 1
+                assert curve.true_positive_rate.shape == curve.false_positive_rate.shape
+                for rates in (curve.true_positive_rate, curve.false_positive_rate):
+                    assert np.isfinite(rates).all()
+                    assert ((rates >= 0) & (rates <= 1)).all()
+        assert result.output_dir is not None
+        for filename in (
+            "comparison_summary.json", "estimate_comparison.csv",
+            "roc_comparison.csv", "roc_comparison.png",
+        ):
+            assert (result.output_dir / filename).is_file()
+    finally:
+        plt.close(result.figure)
 
 
 def test_metric_pair_reports_numerical_difference():

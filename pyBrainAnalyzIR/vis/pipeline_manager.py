@@ -565,16 +565,25 @@ class PipelineManagerDialog(QDialog):
         self,
         initial_modules: Optional[List[cedalion_module]] = None,
         parent: Optional[QWidget] = None,
+        *,
+        data: Any = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Pipeline Manager")
         self.resize(1180, 720)
+        self.data = data
 
         self.available_specs: List[ModuleSpec] = _discover_modules()
         self.available_row_specs: List[Optional[ModuleSpec]] = []
         self.pipeline_modules: List[cedalion_module] = (
             [copy.deepcopy(m) for m in initial_modules] if initial_modules else []
         )
+        from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+        self._initial_reset = bool(
+            self.pipeline_modules and isinstance(self.pipeline_modules[0], remove_prior_analysis)
+        )
+        if self._initial_reset:
+            self.pipeline_modules.pop(0)
         self.pipeline_row_offset = 0
         # keys of the rows currently shown in the options table, and the index
         # of the module they belong to
@@ -626,6 +635,17 @@ class PipelineManagerDialog(QDialog):
         right_panel = QWidget(self)
         right_layout = QVBoxLayout(right_panel)
         right_layout.addWidget(QLabel("Current pipeline"))
+        self.remove_previous_checkbox = QCheckBox("Remove previous analysis", right_panel)
+        self.remove_previous_checkbox.setChecked(self._initial_reset)
+        recordings = self._input_recordings()
+        has_analysis = any(
+            set(rec.timeseries) - {"amp"} or getattr(rec, "aux_obj", {})
+            or getattr(rec, "masks", {})
+            for rec in recordings
+        ) or bool(getattr(self.data, "statistics", {}))
+        self.remove_previous_checkbox.setVisible(bool(has_analysis or self._initial_reset))
+        self.remove_previous_checkbox.toggled.connect(lambda: self._refresh_pipeline_list())
+        right_layout.addWidget(self.remove_previous_checkbox)
         self.pipeline_list = QListWidget(right_panel)
         self.pipeline_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.pipeline_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -783,6 +803,12 @@ class PipelineManagerDialog(QDialog):
                 f"Could not instantiate '{spec.cls.__name__}':\n{exc}",
             )
             return
+        from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+        if isinstance(module, remove_prior_analysis):
+            self.remove_previous_checkbox.show()
+            self.remove_previous_checkbox.setChecked(True)
+            self._refresh_pipeline_list()
+            return
         self.pipeline_modules.append(module)
         self._refresh_pipeline_list(select_row=len(self.pipeline_modules) - 1)
 
@@ -798,24 +824,47 @@ class PipelineManagerDialog(QDialog):
         return name_str
 
     def _compute_pipeline_validity(self) -> List[bool]:
-        available_types = {"amp"}
-        previous_output = "amp"
-        validity: List[bool] = []
-
-        for module in self.pipeline_modules:
-
-            input_name = self._resolve_name(getattr(module, "inputName", None), previous_output)
-            output_name = self._resolve_name(getattr(module, "outputName", None), previous_output)
-
-            is_valid = input_name is None or input_name in available_types
-            validity.append(is_valid)
-
-            if is_valid and output_name is not None:
-                available_types.add(output_name)
-            if output_name is not None:
-                previous_output = output_name
-
+        from pyBrainAnalyzIR.pipelines.modules.utilities import DiscardData, remove_prior_analysis
+        recordings = self._input_recordings()
+        contexts = []
+        for rec in recordings or [None]:
+            keys = list(rec.timeseries) if rec is not None else ["amp"]
+            available = set(keys) | set(getattr(self.data, "statistics", {}))
+            contexts.append((available, keys[-1] if keys else "amp"))
+        validity = [True] * len(self.pipeline_modules)
+        for available, previous in contexts:
+            if self.remove_previous_checkbox.isChecked():
+                available.intersection_update({"amp"})
+                previous = "amp"
+            for index, module in enumerate(self.pipeline_modules):
+                input_name = self._resolve_name(module.inputName, previous)
+                output_name = self._resolve_name(module.outputName, previous)
+                valid = input_name is None or input_name in available
+                if isinstance(module, remove_prior_analysis):
+                    valid = "amp" in available
+                    available.intersection_update({"amp"})
+                validity[index] &= valid
+                if valid and isinstance(module, DiscardData):
+                    available.discard(self._resolve_name(module.remove_type, previous))
+                if valid and output_name is not None:
+                    available.add(output_name)
+                    previous = output_name
+        if self.remove_previous_checkbox.isChecked() and any(
+            "amp" not in rec.timeseries for rec in recordings
+        ):
+            return [False] * len(validity)
         return validity
+
+    def _input_recordings(self):
+        if self.data is None:
+            return []
+        return list(self.data.dataset) if hasattr(self.data, "dataset") else [self.data]
+
+    def selected_modules(self) -> List[cedalion_module]:
+        """Return executable steps, including the reset hidden from the step list."""
+        from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+        prefix = [remove_prior_analysis()] if self.remove_previous_checkbox.isChecked() else []
+        return prefix + list(self.pipeline_modules)
 
     def _refresh_pipeline_list(self, select_row: int = -1) -> None:
         validity = self._compute_pipeline_validity()
@@ -980,6 +1029,7 @@ class PipelineManagerDialog(QDialog):
 
         # re-read: the option may have coerced or normalised the value
         self._refresh_option_row(row)
+        self._update_done_button()
         return True
 
     def _reset_option_row(self, row: int) -> None:
@@ -1186,11 +1236,14 @@ class PipelineManagerDialog(QDialog):
 
     def _update_done_button(self) -> None:
         """Done is only enabled when there is at least one module and all are valid."""
-        if not self.pipeline_modules:
+        if not self.selected_modules():
             self.done_button.setEnabled(False)
             return
         validity = self._compute_pipeline_validity()
-        self.done_button.setEnabled(all(validity))
+        reset_valid = not self.remove_previous_checkbox.isChecked() or all(
+            "amp" in rec.timeseries for rec in self._input_recordings()
+        )
+        self.done_button.setEnabled(all(validity) and reset_valid)
 
     def _module_index_from_list_row(self, row: int) -> int:
         if row < 0:
@@ -1218,10 +1271,10 @@ class PipelineManagerDialog(QDialog):
         self._refresh_pipeline_list()
 
     def build_pipeline(self) -> Optional[cedalion_module]:
-        if not self.pipeline_modules:
+        if not self.selected_modules():
             return None
 
-        modules_copy = [copy.deepcopy(module) for module in self.pipeline_modules]
+        modules_copy = [copy.deepcopy(module) for module in self.selected_modules()]
         previous: Optional[cedalion_module] = None
         for module in modules_copy:
             module.previous_job = previous
@@ -1232,7 +1285,9 @@ class PipelineManagerDialog(QDialog):
 def pipeline_manager(
     initial_modules: Optional[List[cedalion_module]] = None,
     parent: Optional[QWidget] = None,
-) -> Optional[List[cedalion_module]]:
+    *,
+    data: Any = None,
+) -> Optional[cedalion_module]:
     """Open the visual editor for building an analysis pipeline.
 
     Parameters
@@ -1241,10 +1296,12 @@ def pipeline_manager(
         Optional ordered list of pipeline steps to show when the editor opens.
     parent:
         Optional parent window when opening the editor from another GUI.
+    data:
+        Optional recording or DataSet whose existing results seed validation.
 
     Returns
     -------
-    The selected ordered pipeline steps when the user chooses Done, or
+    The executable pipeline tail when the user chooses Done, or
     ``None`` if the editor is cancelled.
 
     Notebook examples: ``examples/06_Example_GUI_use.ipynb``.
@@ -1258,7 +1315,7 @@ def pipeline_manager(
     if QApplication.instance() is None:
         QApplication(sys.argv)
 
-    dialog = PipelineManagerDialog(initial_modules=initial_modules, parent=parent)
+    dialog = PipelineManagerDialog(initial_modules=initial_modules, parent=parent, data=data)
     result = dialog.exec()
     if result == QDialog.Accepted:
         return dialog.build_pipeline()  # (dialog.pipeline_modules)

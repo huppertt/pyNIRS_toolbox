@@ -18,6 +18,7 @@ units = cedalion.units
 
 def _combine_recording_masks(rec, data, mask):
     """Combine stored clean/bad flags with a generated Cedalion quality mask."""
+    mask = mask.astype(bool)
     for name, recording_mask in quality_masks(rec, data).items():
         if not isinstance(recording_mask, xr.DataArray):
             raise TypeError(f"Recording mask {name!r} must be an xarray DataArray.")

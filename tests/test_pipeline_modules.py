@@ -53,6 +53,7 @@ ALL_MODULES = [
     prep.TrimBaseline,
     filters.ShortSeparationFilter,
     util.DiscardData,
+    util.remove_prior_analysis,
     util.RemoveShortSeparationChannels,
     util.DiscardTypes,
     util.KeepTypes,
@@ -72,6 +73,58 @@ ALL_MODULES = [
 ]
 
 MODULE_IDS = [cls.__name__ for cls in ALL_MODULES]
+
+
+@pytest.mark.parametrize("dataset_scope", [False, True])
+def test_remove_prior_analysis_preserves_acquisition_data(simulated_recording, dataset_scope):
+    import copy
+    import pandas as pd
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+    from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+    from pyBrainAnalyzIR.sigproc.roi import roi_average
+
+    rec, _ = simulated_recording
+    amp = rec["amp"]
+    stim = rec.stim.copy()
+    geo2d, geo3d = rec.geo2d, rec.geo3d
+    rec["od"] = amp.copy()
+    rec["stats"] = Statistics()
+    rec.aux_ts["sensor"] = amp.copy()
+    sensor = rec.aux_ts["sensor"]
+    rec.masks["quality"] = xr.ones_like(amp, dtype=bool)
+    roi_average(rec, pd.DataFrame({
+        "source": amp.source.values[:2], "detector": amp.detector.values[:2],
+        "name": ["ROI", "ROI"],
+    }))
+    data = DataSet([rec]) if dataset_scope else rec
+    metadata = copy.deepcopy(rec.meta_data)
+    if dataset_scope:
+        data.statistics["group"] = Statistics()
+    result = util.remove_prior_analysis().run(data)
+    assert result is data
+    assert list(rec.timeseries) == ["amp"]
+    assert rec["amp"] is amp
+    assert not rec.masks and not rec.aux_obj
+    assert rec.aux_ts["sensor"] is sensor
+    assert rec.geo2d is geo2d and rec.geo3d is geo3d
+    assert rec.meta_data == metadata
+    pd.testing.assert_frame_equal(rec.stim, stim)
+    if dataset_scope:
+        assert not data.statistics
+
+
+def test_remove_prior_analysis_validates_dataset_before_mutating(simulated_recording):
+    import copy
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+
+    rec, _ = simulated_recording
+    rec["od"] = rec["amp"].copy()
+    missing = copy.deepcopy(rec)
+    del missing.timeseries["amp"]
+    dataset = DataSet([rec, missing])
+    with pytest.raises(ValueError, match="amp in every recording"):
+        util.remove_prior_analysis().run(dataset)
+    assert "od" in rec.timeseries
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +212,11 @@ def test_motion_artifact_mask_module_runs_on_dataset_and_stores_boolean_masks():
 def test_motion_correct_pca_combines_recording_quality_masks(monkeypatch):
     recording, _truth = simData.Data(snr=10, random_seed=2026)
     data = recording.timeseries["amp"]
-    detected_mask = xr.ones_like(data, dtype=bool)
+    detected_mask = xr.ones_like(data, dtype=int)
     detected_mask.values[3, 0, 0] = False
     detected_mask.values[4, 1, 0] = False
 
-    stored_mask = xr.ones_like(data.isel(wavelength=0, drop=True), dtype=bool)
+    stored_mask = xr.ones_like(data.isel(wavelength=0, drop=True), dtype=int)
     stored_mask.values[3, 1] = False
     stored_mask.values[5, 0] = False
     recording.set_mask("existing_quality", stored_mask)
@@ -189,8 +242,12 @@ def test_motion_correct_pca_combines_recording_quality_masks(monkeypatch):
     returned = module.run(recording)
 
     assert returned is recording
-    actual_mask = captured["tInc"].broadcast_like(data)
-    expected_mask = detected_mask & stored_mask.broadcast_like(data)
+    actual_mask = captured["tInc"]
+    expected_mask = (
+        detected_mask.astype(bool) & stored_mask.broadcast_like(data).astype(bool)
+    ).all(dim=("channel", "wavelength"))
+    assert actual_mask.dims == ("time",)
+    assert actual_mask.dtype == bool
     xr.testing.assert_equal(actual_mask, expected_mask)
     xr.testing.assert_equal(recording.timeseries["amp"], data)
 

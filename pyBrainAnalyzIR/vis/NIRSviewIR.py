@@ -67,6 +67,8 @@ from PySide6.QtWidgets import (
 )
 
 from pyBrainAnalyzIR.vis.demographics_manager import DemographicsManager, _to_display_str
+from pyBrainAnalyzIR.utils.metadata import meaningful_demographics, has_meaningful_value
+from pyBrainAnalyzIR.dataclasses.connectivity import Connectivity
 from pyBrainAnalyzIR.vis.plot_nirs_inline import (
     draw_probe, linecolors, to_string, _ROI_COLORS, _roi_probe_data,
     _roi_channel_contributions, _color_roi_channels, _roi_label_buttons,
@@ -329,9 +331,6 @@ class NIRSviewIRWindow(QMainWindow):
         edit_data_menu.addAction("Edit Stimulus Timing").triggered.connect(
             self._edit_stimulus_timing
         )
-        edit_data_menu.addAction("Edit Data Quality Mask").triggered.connect(
-            self._open_data_masking_manager
-        )
 
         # Analysis menu
         analysis_menu = menu_bar.addMenu("Analysis")
@@ -345,6 +344,9 @@ class NIRSviewIRWindow(QMainWindow):
         data_review_menu = menu_bar.addMenu("Data Review")
         data_review_menu.addAction("Data Quality Manager").triggered.connect(
             self._open_data_quality_manager
+        )
+        data_review_menu.addAction("Edit Data Quality Mask").triggered.connect(
+            self._open_data_masking_manager
         )
 
         # Help menu
@@ -806,9 +808,10 @@ class NIRSviewIRWindow(QMainWindow):
         dialog = PipelineManagerDialog(
             initial_modules=self._pipeline_modules if self._pipeline_modules else None,
             parent=self,
+            data=self.dataset,
         )
         if dialog.exec():
-            self._pipeline_modules = list(dialog.pipeline_modules)
+            self._pipeline_modules = dialog.selected_modules()
             n = len(self._pipeline_modules)
             self._mark_dataset_changed()
             self._set_status(
@@ -1080,10 +1083,7 @@ class NIRSviewIRWindow(QMainWindow):
 
         rec = recordings[row]
         meta = getattr(rec, "meta_data", None) or {}
-        visible_meta = {
-            k: v for k, v in meta.items()
-            if str(k).strip().lower() != "_bids_descriptions"
-        }
+        visible_meta = meaningful_demographics(meta)
         if visible_meta:
             demographic_lines = [
                 f"  - {k}: {_to_display_str(v)}" for k, v in visible_meta.items()
@@ -1104,8 +1104,15 @@ class NIRSviewIRWindow(QMainWindow):
         duration, n_channels = self._recording_metrics(rec, key)
         duration_text = f"{duration:.2f}" if duration is not None else "N/A"
         channels_text = str(n_channels) if n_channels is not None else "N/A"
+        descriptions = meta.get("_bids_descriptions", {})
         stim_text = (
-            "\n".join(f"  - {name} ({stim_counts[name]})" for name in stim_names)
+            "\n".join(
+                f"  - {name} ({stim_counts[name]})"
+                + (f": {descriptions[f'event:{name}']}"
+                   if has_meaningful_value(descriptions.get(f"event:{name}"))
+                   else "")
+                for name in stim_names
+            )
             if stim_names else "  - <none>"
         )
 
@@ -1290,7 +1297,7 @@ class NIRSviewIRWindow(QMainWindow):
         data = self.data
 
         # Dispatch to the statistics viewer when the data object is a Statistics instance.
-        if isinstance(data, Statistics):
+        if isinstance(data, (Statistics, Connectivity)):
             self._draw_stats(data)
             return
 
@@ -1378,7 +1385,7 @@ class NIRSviewIRWindow(QMainWindow):
 
     # ------------------------------------------------------------ statistics view
 
-    def _draw_stats(self, stats: Statistics) -> None:
+    def _draw_stats(self, stats: Statistics | Connectivity) -> None:
         """Render channel maps or ROI beta/SE panels and a filterable results table.
 
         ROI figures share ``plot_roi_statistics`` with notebook drawing.
@@ -1389,7 +1396,14 @@ class NIRSviewIRWindow(QMainWindow):
 
         # Store stats object for re-draw on filter change
         self._current_stats_obj = stats
-        is_roi = stats.geoROI is not None
+        is_connectivity = isinstance(stats, Connectivity)
+        self._filter_vartype_combo.blockSignals(True)
+        self._filter_vartype_combo.clear()
+        self._filter_vartype_combo.addItems(
+            ["r", "z", "t"] if is_connectivity else ["tstat", "beta"]
+        )
+        self._filter_vartype_combo.blockSignals(False)
+        is_roi = not is_connectivity and stats.geoROI is not None
         self._filter_vartype_combo.setEnabled(not is_roi)
         if is_roi:
             self._filter_vartype_combo.setCurrentText("beta")
@@ -1408,7 +1422,10 @@ class NIRSviewIRWindow(QMainWindow):
 
         # --- table (load full unfiltered data first) --------------------------
         try:
-            df = stats.table()
+            df = stats.table().reset_index(drop=True)
+            if is_connectivity:
+                df = df.rename(columns={"Pvalue": "P-values", "Qvalue": "Q-values"})
+                df["Type"] = self._connectivity_type_labels(df)
             self._current_stats_df = df
             self._populate_stats_model(df)
             self._export_stats_button.setEnabled(True)
@@ -1422,13 +1439,75 @@ class NIRSviewIRWindow(QMainWindow):
             self._export_stats_filtered_button.setEnabled(False)
 
         # --- figure (no filter active yet, draw all) -------------------------
-        self._redraw_stats_figure()
+        self._apply_stats_filter()
         self._set_status("Statistics rendered.")
+
+    @staticmethod
+    def _connectivity_type_labels(df):
+        to_type, from_type = df["Type_to"].astype(str), df["Type_from"].astype(str)
+        return to_type.where(to_type == from_type, from_type + " -> " + to_type)
+
+    def _redraw_connectivity_figure(self, connectivity: Connectivity) -> None:
+        shown = np.zeros(len(connectivity.coef), dtype=bool)
+        for row in range(self._stats_proxy.rowCount()):
+            source_row = self._stats_proxy.mapToSource(self._stats_proxy.index(row, 0)).row()
+            shown[source_row] = True
+        plot_data = copy.copy(connectivity)
+        plot_data.coef = connectivity.coef.copy().reset_index(drop=True)
+        # Mask significance in this display-only copy, retaining coefficients and original results.
+        plot_data.coef["Pvalue"] = plot_data.coef["Pvalue"].where(shown, 1.0)
+        if self._stats_type_filter is not None:
+            labels = self._connectivity_type_labels(plot_data.coef)
+            plot_data.coef = plot_data.coef.loc[labels.isin(self._stats_type_filter)]
+        conditions = (sorted(self._stats_condition_filter)
+                      if self._stats_condition_filter is not None else None)
+        if plot_data.coef.empty or conditions == []:
+            self._stats_figure.clear()
+            ax = self._stats_figure.add_subplot(1, 1, 1)
+            ax.text(0.5, 0.5, "No connectivity results match the selected conditions/types.",
+                    ha="center", va="center", wrap=True)
+            ax.axis("off")
+            self._stats_canvas.draw_idle()
+            return
+        plot_data.coef = plot_data.coef.reset_index(drop=True)
+        try:
+            fig = plot_data.show(
+                type=self._filter_vartype_combo.currentText(),
+                threshold_type="p", thres=1.0,
+                show_cross_types=bool(
+                    (plot_data.coef.Type_to != plot_data.coef.Type_from).any()
+                ),
+                condnames=conditions,
+            )
+            self._embed_result_figure(fig if fig is not None else plt.gcf())
+        except Exception as exc:
+            self._stats_figure.clear()
+            ax = self._stats_figure.add_subplot(1, 1, 1)
+            ax.text(0.5, 0.5, f"Error rendering connectivity:\n{exc}",
+                    ha="center", va="center", wrap=True)
+            ax.axis("off")
+            self._stats_canvas.draw_idle()
+
+    def _embed_result_figure(self, figure) -> None:
+        self._stats_figure.clear()
+        figure.canvas.draw()
+        buf = io.BytesIO()
+        figure.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+        buf.seek(0)
+        plt.close(figure)
+        img = mpimg.imread(buf)
+        ax = self._stats_figure.add_subplot(1, 1, 1)
+        ax.imshow(img)
+        ax.axis("off")
+        self._stats_canvas.draw_idle()
 
     def _redraw_stats_figure(self) -> None:
         """Re-render the stats figure using the current filter state."""
         stats = self._current_stats_obj
         if stats is None:
+            return
+        if isinstance(stats, Connectivity):
+            self._redraw_connectivity_figure(stats)
             return
 
         # Determine condnames from Condition filter
@@ -1484,18 +1563,7 @@ class NIRSviewIRWindow(QMainWindow):
                 types=types_arg,
                 fdr_correct_full=fdr_full,
             )
-            src_fig = plt.gcf()
-            self._stats_figure.clear()
-            src_fig.canvas.draw()
-            buf = io.BytesIO()
-            src_fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-            buf.seek(0)
-            plt.close(src_fig)
-            img = mpimg.imread(buf)
-            ax = self._stats_figure.add_subplot(1, 1, 1)
-            ax.imshow(img)
-            ax.axis("off")
-            self._stats_canvas.draw_idle()
+            self._embed_result_figure(plt.gcf())
         except Exception as exc:
             self._stats_figure.clear()
             ax = self._stats_figure.add_subplot(1, 1, 1)
@@ -1555,7 +1623,16 @@ class NIRSviewIRWindow(QMainWindow):
         q_new = df["Q-values"].values.copy()  # default: keep original q
 
         global_fdr = self._global_fdr_checkbox.isChecked()
-        if not global_fdr or subset_mask.sum() < len(df):
+        if isinstance(self._current_stats_obj, Connectivity):
+            subset = df.loc[subset_mask & df["P-values"].notna()]
+            groups = ([subset] if global_fdr else
+                      [group for _, group in subset.groupby(["Condition", "Type"])])
+            for group in groups:
+                if not group.empty:
+                    q_new[df.index.get_indexer(group.index)] = multipletests(
+                        group["P-values"].values, method="fdr_bh"
+                    )[1]
+        elif not global_fdr or subset_mask.sum() < len(df):
             # Recompute Q only on the subset
             p_sub = df.loc[subset_mask, "P-values"].values
             if len(p_sub) > 1:

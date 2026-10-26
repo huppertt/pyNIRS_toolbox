@@ -44,11 +44,24 @@ def pytest_collection_modifyitems(config, items):
     """Auto-skip marked tests when their optional dependency is missing."""
     skip_cedalion = pytest.mark.skip(reason="cedalion is not installed")
     skip_qt = pytest.mark.skip(reason="PySide6 is not installed")
+    matlab_skip_reason = None
+    if any("requires_matlab" in item.keywords for item in items):
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            matlab_skip_reason = "Local MATLAB comparison tests are not run on GitHub Actions"
+        else:
+            from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable
+
+            try:
+                find_matlab_executable()
+            except FileNotFoundError as exc:
+                matlab_skip_reason = str(exc)
     for item in items:
         if "requires_cedalion" in item.keywords and not HAS_CEDALION:
             item.add_marker(skip_cedalion)
         if "requires_qt" in item.keywords and not HAS_QT:
             item.add_marker(skip_qt)
+        if "requires_matlab" in item.keywords and matlab_skip_reason is not None:
+            item.add_marker(pytest.mark.skip(reason=matlab_skip_reason))
 
 
 @pytest.fixture(scope="session")

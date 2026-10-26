@@ -70,7 +70,7 @@ def _synthetic_ts_and_design():
 
 
 @pytest.mark.parametrize(
-    "noise_model", ["ols", "rls", "wls", "glsar", "ar_irls"]
+    "noise_model", ["ols", "rls", "wls", "glsar"]
 )
 def test_local_glm_matches_cedalion_without_missing_data(noise_model):
     ts, design = _synthetic_ts_and_design()

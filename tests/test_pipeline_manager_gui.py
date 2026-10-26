@@ -46,6 +46,102 @@ def dialog(qt_app):
     return dlg
 
 
+def test_pipeline_continues_from_existing_recording_and_can_reset(simulated_recording, qt_app):
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import input_data
+    from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+
+    rec, _ = simulated_recording
+    rec["od"] = rec["amp"].copy()
+    module = input_data()
+    module.inputName = "od"
+    module.outputName = "od"
+    dlg = pm.PipelineManagerDialog([module], data=rec)
+    assert not dlg.remove_previous_checkbox.isHidden()
+    assert not dlg.remove_previous_checkbox.isChecked()
+    assert dlg._compute_pipeline_validity() == [True]
+    dlg.remove_previous_checkbox.setChecked(True)
+    assert dlg._compute_pipeline_validity() == [False]
+    assert not dlg.done_button.isEnabled()
+    dlg.pipeline_modules[0].inputName = "amp"
+    dlg.pipeline_modules[0].outputName = "amp"
+    dlg._refresh_pipeline_list()
+    assert dlg._compute_pipeline_validity() == [True]
+    assert dlg.pipeline_list.count() == 1
+    assert isinstance(dlg.selected_modules()[0], remove_prior_analysis)
+    tail = dlg.build_pipeline()
+    assert isinstance(tail.previous_job, remove_prior_analysis)
+    assert tail.run(rec) is rec
+    assert list(rec.timeseries) == ["amp"]
+    reopened = pm.PipelineManagerDialog(dlg.selected_modules(), data=rec)
+    assert reopened.remove_previous_checkbox.isChecked()
+    assert len(reopened.pipeline_modules) == 1
+    assert len(reopened.selected_modules()) == 2
+
+
+def test_pipeline_validates_every_dataset_recording_and_resolves_last(simulated_recording, qt_app):
+    import copy
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import input_data
+
+    rec, _ = simulated_recording
+    other = copy.deepcopy(rec)
+    rec["od"] = rec["amp"].copy()
+    module = input_data()
+    module.inputName = "od"
+    module.outputName = "od"
+    dlg = pm.PipelineManagerDialog([module], data=DataSet([rec, other]))
+    assert dlg._compute_pipeline_validity() == [False]
+    module.inputName = "last"
+    dlg = pm.PipelineManagerDialog([module], data=DataSet([rec, other]))
+    assert dlg._compute_pipeline_validity() == [True]
+    module.inputName = "amp"
+    module.outputName = "processed"
+    following = input_data()
+    following.inputName = "last"
+    dlg = pm.PipelineManagerDialog([module, following], data=other)
+    assert dlg._compute_pipeline_validity() == [True, True]
+
+
+def test_pipeline_missing_context_retains_amp_default_and_reset_only_is_executable(qt_app):
+    from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+
+    dlg = pm.PipelineManagerDialog()
+    assert dlg.remove_previous_checkbox.isHidden()
+    assert not dlg.done_button.isEnabled()
+    reset = pm.PipelineManagerDialog([remove_prior_analysis()])
+    assert reset.pipeline_list.count() == 0
+    assert reset.done_button.isEnabled()
+    assert isinstance(reset.build_pipeline(), remove_prior_analysis)
+
+
+def test_pipeline_discard_invalidates_later_consumers(simulated_recording, qt_app):
+    from pyBrainAnalyzIR.pipelines.modules.utilities import DiscardData
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import input_data
+
+    rec, _ = simulated_recording
+    rec["od"] = rec["amp"].copy()
+    discard = DiscardData()
+    discard.remove_type = "od"
+    following = input_data()
+    following.inputName = "od"
+    dlg = pm.PipelineManagerDialog([discard, following], data=rec)
+    assert dlg._compute_pipeline_validity() == [True, False]
+
+
+def test_advanced_reset_selection_is_hidden_from_step_list(qt_app):
+    from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+
+    dlg = pm.PipelineManagerDialog()
+    dlg.show_advanced_checkbox.setChecked(True)
+    row = next(index for index, spec in enumerate(dlg.available_row_specs)
+               if spec is not None and spec.cls is remove_prior_analysis)
+    dlg.available_list.setCurrentRow(row)
+    dlg._add_selected_module()
+    assert dlg.remove_previous_checkbox.isChecked()
+    assert dlg.pipeline_list.count() == 0
+    assert isinstance(dlg.build_pipeline(), remove_prior_analysis)
+
+
 # ---------------------------------------------------------------------------
 # table layout
 # ---------------------------------------------------------------------------
