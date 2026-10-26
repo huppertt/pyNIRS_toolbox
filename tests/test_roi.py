@@ -58,6 +58,21 @@ def test_roi_average_exact_formula_and_independent_definitions(
         roi_average(rec, roi_table)
 
 
+def test_roi_average_supports_signed_membership_weights(simulated_recording):
+    rec, _ = simulated_recording
+    data = rec["amp"].copy(deep=True)
+    table = pd.DataFrame({
+        "source": data.source.values[:2],
+        "detector": data.detector.values[:2],
+        "weight": [1.0, -1.0],
+        "name": ["Difference", "Difference"],
+    })
+    roi_average(rec, table, weighted=False)
+    expected = (data.pint.magnitude[:, 0, :] - data.pint.magnitude[:, 1, :]) / 2
+    np.testing.assert_allclose(rec["amp_roi"].pint.magnitude[:, 0, :], expected)
+
+
+
 def test_roi_masks_exclude_bad_channels_and_do_not_touch_channel_masks(
     simulated_recording, roi_table
 ):
@@ -319,13 +334,43 @@ def test_roi_pipeline_definition_json_roundtrip(roi_table):
     pd.testing.assert_frame_equal(restored[0].options["roi_table"], roi_table)
 
 
-@pytest.mark.parametrize("problem", ["missing_pair", "negative", "duplicate", "empty"])
+@pytest.mark.requires_qt
+@pytest.mark.parametrize("output_name", [None, "my_regions"])
+def test_named_roi_module_tables_selection_and_data_names_roundtrip(simulated_recording, output_name):
+    pytest.importorskip("PySide6")
+    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+    from pyBrainAnalyzIR.vis.pipeline_manager import pipeline_from_json, pipeline_to_json
+
+    rec, _ = simulated_recording
+    tables = {
+        "ROI A": pd.DataFrame({
+            "source": rec["amp"].source.values[:2],
+            "detector": rec["amp"].detector.values[:2],
+            "weight": [1.0, -1.0], "name": ["ROI A", "ROI A"],
+        })
+    }
+    module = ROIAverage()
+    module.inputName = "conc"
+    module.set_roi_selection(tables, ["ROI A"])
+    if output_name is not None:
+        module.outputName = output_name
+    restored = pipeline_from_json(pipeline_to_json([module]))[0]
+    assert restored.inputName == "conc"
+    assert restored.outputName == (output_name or "conc_roi")
+    assert restored.options["roi_names"] == ["ROI A"]
+    pd.testing.assert_frame_equal(restored.options["roi_tables"]["ROI A"], tables["ROI A"])
+    restored.inputName = "stats"
+    restored.set_roi_selection(tables, ["ROI A"])
+    assert restored.outputName == (output_name or "stats_roi")
+
+
+@pytest.mark.parametrize("problem", ["missing_pair", "zero_weights", "duplicate", "empty"])
 def test_invalid_roi_definitions(simulated_recording, roi_table, problem):
     rec, _ = simulated_recording
     if problem == "missing_pair":
         roi_table.loc[0, "source"] = "absent"
-    elif problem == "negative":
-        roi_table.loc[0, "weight"] = -1
+    elif problem == "zero_weights":
+        roi_table.loc[:, "weight"] = 0
     elif problem == "duplicate":
         roi_table = pd.concat([roi_table, roi_table.iloc[:1]])
     else:

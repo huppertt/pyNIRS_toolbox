@@ -104,7 +104,38 @@ class cedalion_module:
         # Make sure all previous jobs are run
         if self.previous_job is not None:
             rec = self.previous_job.run(rec)
-        return self._run_with_roi(rec)
+        input_name, output_name = self.inputName, self.outputName
+        aliases = {"last", "prev", "previous"}
+        input_alias = isinstance(input_name, str) and input_name.lower() in aliases
+        output_alias = isinstance(output_name, str) and output_name.lower() in aliases
+        if input_alias or output_alias:
+            if self.previous_job is not None:
+                previous_output = self.previous_job._resolved_output_name
+            else:
+                recordings = getattr(rec, "dataset", [rec])
+                keys = [
+                    next(reversed(recording.timeseries), None)
+                    for recording in recordings
+                ]
+                if not keys or keys[0] is None or any(key != keys[0] for key in keys):
+                    raise ValueError(
+                        "Cannot resolve previous pipeline data: recordings must "
+                        "have a common last data key or an explicit input name."
+                    )
+                previous_output = keys[0]
+            if previous_output is None:
+                raise ValueError("The previous pipeline step has no output data name.")
+            if input_alias:
+                self.inputName = previous_output
+            if output_alias:
+                self.outputName = previous_output
+        try:
+            result = self._run_with_roi(rec)
+            self._resolved_output_name = self.outputName
+            return result
+        finally:
+            self.inputName = input_name
+            self.outputName = output_name
 
     def _run_with_roi(self, rec):
         from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, propagate_roi

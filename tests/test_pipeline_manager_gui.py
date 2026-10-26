@@ -128,6 +128,172 @@ def test_pipeline_discard_invalidates_later_consumers(simulated_recording, qt_ap
     assert dlg._compute_pipeline_validity() == [True, False]
 
 
+def test_flow_arrows_menu_reordering_and_explicit_inputs(simulated_recording, qt_app, monkeypatch):
+    from PySide6.QtCore import QPoint, QTimer
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import resample
+
+    rec, _ = simulated_recording
+    first, second, third = resample(), resample(), resample()
+    first.inputName, first.outputName = "amp", "processed"
+    second.inputName, second.outputName = "previous", "filtered"
+    third.inputName, third.outputName = "processed", "result"
+    dlg = pm.PipelineManagerDialog([first, second, third], data=rec)
+    role = pm.PipelineFlowDelegate.flow_role
+
+    def flow(index):
+        return dlg.pipeline_list.item(index + dlg.pipeline_row_offset).data(role)
+
+    assert flow(0)["depth"] == 0
+    assert flow(1)["depth"] == flow(2)["depth"] == 1
+    assert flow(1)["label"] == "Previous output: processed"
+    assert all(flow(i)["valid"] for i in range(3))
+    menu = dlg._input_flow_menu(2)
+    assert [a.text() for a in menu.actions() if not a.isSeparator()] == [
+        "Previous output", "amp", "filtered", "processed",
+    ]
+    menu.actions()[0].trigger()
+    assert dlg.pipeline_modules[2].inputName == "previous"
+    assert flow(2)["depth"] == 2
+    dlg._move_row(2, 1)
+    assert dlg.pipeline_modules[1].inputName == "previous"
+    assert flow(1)["label"] == "Previous output: processed"
+    assert flow(2)["label"] == "Previous output: result"
+
+    dlg._set_flow_input(1, "filtered")
+    assert dlg._compute_pipeline_validity() == [True, False, False]
+    assert not flow(1)["valid"] and not flow(2)["valid"]
+    assert dlg.pipeline_modules[1].inputName == "filtered"
+    assert not dlg.done_button.isEnabled()
+    dlg._move_row(1, 2)
+    assert dlg.pipeline_modules[2].inputName == "filtered"
+    assert dlg._compute_pipeline_validity() == [True, True, True]
+
+    seen = []
+    build_menu = dlg._input_flow_menu
+    def choose_previous(index):
+        menu = build_menu(index)
+        def activate():
+            seen.extend(a.text() for a in menu.actions())
+            menu.actions()[0].trigger()
+            menu.close()
+        QTimer.singleShot(0, activate)
+        return menu
+    monkeypatch.setattr(dlg, "_input_flow_menu", choose_previous)
+    item = dlg.pipeline_list.item(2)
+    rect = dlg.pipeline_list.visualItemRect(item)
+    dlg._show_pipeline_menu(QPoint(rect.left() + 20, rect.top() + 10))
+    assert "Previous output" in seen
+    assert dlg.pipeline_modules[2].inputName == "previous"
+    restored = pm.pipeline_from_json(pm.pipeline_to_json(dlg.selected_modules()))
+    assert [m.inputName for m in restored] == ["amp", "previous", "previous"]
+    dlg.show()
+    qt_app.processEvents()
+    image = dlg.pipeline_list.viewport().grab().toImage()
+    green = pm.QColor(25, 145, 65)
+    assert any(
+        image.pixelColor(x, y) == green
+        for y in range(image.height()) for x in range(min(image.width(), 100))
+    )
+    dlg._set_flow_input(2, "missing")
+    restored = pm.pipeline_from_json(pm.pipeline_to_json(dlg.selected_modules()))
+    assert restored[2].inputName == "missing"
+    qt_app.processEvents()
+    image = dlg.pipeline_list.viewport().grab().toImage()
+    assert any(
+        image.pixelColor(x, y) == pm.QColor(200, 0, 0)
+        for y in range(image.height()) for x in range(min(image.width(), 100))
+    )
+    dlg.close()
+
+
+def test_flow_menu_excludes_removed_and_noncommon_dataset_inputs(simulated_recording, qt_app):
+    import copy
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+    from pyBrainAnalyzIR.pipelines.modules.utilities import DiscardData
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import resample
+
+    rec, _ = simulated_recording
+    other = copy.deepcopy(rec)
+    rec["only_first"] = rec["amp"].copy()
+    rec["od"] = rec["amp"].copy()
+    other["od"] = other["amp"].copy()
+    discard = DiscardData()
+    discard.remove_type = "od"
+    following = resample()
+    following.inputName, following.outputName = "amp", "processed"
+    dlg = pm.PipelineManagerDialog([discard, following], data=DataSet([rec, other]))
+    assert dlg._pipeline_flow()[3][1] == {"amp"}
+    assert "only_first" not in {a.text() for a in dlg._input_flow_menu(1).actions()}
+    dlg.remove_previous_checkbox.setChecked(True)
+    assert dlg._pipeline_flow()[3][0] == {"amp"}
+
+
+def test_roi_module_controls_select_definitions_and_dynamic_inputs(simulated_recording, qt_app):
+    import pandas as pd
+    from pyBrainAnalyzIR.pipelines.modules.preproccessing import input_data
+    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+
+    rec, _ = simulated_recording
+    rec["existing_stats_name"] = rec["amp"].copy()
+    tables = {
+        name: pd.DataFrame({
+            "source": rec["amp"].source.values[:1],
+            "detector": rec["amp"].detector.values[:1],
+            "weight": [1.0], "name": [name],
+        })
+        for name in ("ROI 1", "ROI 2")
+    }
+    previous = input_data()
+    previous.inputName = "amp"
+    previous.outputName = "derived_timecourse"
+    module = ROIAverage()
+    dlg = pm.PipelineManagerDialog(
+        [previous, module], data=rec, roi_tables=tables
+    )
+    dlg._refresh_pipeline_list(select_row=1)
+    roi_module = dlg.pipeline_modules[1]
+    assert not dlg.roi_controls.isHidden()
+    assert {"amp", "existing_stats_name", "derived_timecourse"}.issubset(
+        {dlg.roi_input_combo.itemText(i) for i in range(dlg.roi_input_combo.count())}
+    )
+    assert dlg._compute_pipeline_validity() == [True, False]
+
+    dlg.roi_selection_list.blockSignals(True)
+    dlg.roi_selection_list.item(0).setSelected(True)
+    dlg.roi_selection_list.item(1).setSelected(True)
+    dlg.roi_selection_list.blockSignals(False)
+    dlg._on_roi_selection_changed()
+    assert roi_module.selected_roi_names == ["ROI 1", "ROI 2"]
+    assert roi_module.output_names() == ["amp_roi"]
+    assert dlg.roi_output_edit.text() == "amp_roi"
+    assert dlg._compute_pipeline_validity() == [True, True]
+
+    dlg.roi_input_combo.setCurrentText("existing_stats_name")
+    assert roi_module.inputName == "existing_stats_name"
+    assert roi_module.outputName == "existing_stats_name_roi"
+    assert dlg.roi_output_edit.text() == "existing_stats_name_roi"
+    dlg.roi_output_edit.setText("my_regions")
+    dlg.roi_output_edit.editingFinished.emit()
+    assert roi_module.outputName == "my_regions"
+    dlg.roi_input_combo.setCurrentText("derived_timecourse")
+    assert roi_module.outputName == "my_regions"
+    assert dlg.roi_output_edit.text() == "my_regions"
+    assert "my_regions" in dlg._roi_input_names(2)
+    assert "existing_stats_name_roi" not in dlg._roi_input_names(2)
+    assert dlg._compute_pipeline_validity() == [True, True]
+    restored = pm.pipeline_from_json(pm.pipeline_to_json(dlg.selected_modules()))[-1]
+    assert restored.outputName == "my_regions"
+    restored.set_roi_selection(tables, ["ROI 2"])
+    assert restored.outputName == "my_regions"
+    dlg.roi_output_edit.clear()
+    dlg.roi_output_edit.editingFinished.emit()
+    assert dlg._compute_pipeline_validity() == [True, False]
+    assert not dlg.done_button.isEnabled()
+    dlg.roi_output_edit.setText("derived_timecourse")
+    dlg.roi_output_edit.editingFinished.emit()
+    assert dlg._compute_pipeline_validity() == [True, False]
+
+
 def test_advanced_reset_selection_is_hidden_from_step_list(qt_app):
     from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
 

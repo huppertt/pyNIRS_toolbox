@@ -67,21 +67,50 @@ statistics. It is applied only when the pipeline runs, not while editing it.
 ## Region-of-interest time courses
 
 See [15_ROI_Analysis.ipynb](examples/15_ROI_Analysis.ipynb) for a complete example.
-The `ROIAverage` pipeline module (or `pyBrainAnalyzIR.sigproc.roi.roi_average`)
-stores regional time courses alongside physical channel data:
+The **Registration > Define Region-of-Interest** window in NIRSviewIR or the
+modal notebook helper creates named source-detector tables:
 
 ```python
-from pyBrainAnalyzIR.sigproc.roi import roi_average
+from pyBrainAnalyzIR.vis.roi_manager import roi_manager
 
-# roi_table is a DataFrame with source, detector, name, and optional weight.
-roi_average(rec, roi_table, input_name="amp", output_name="amp_roi",
-            roi_name="motor", weighted=True)
+roi_tables = roi_manager(rec)  # Save returns {ROI name: membership DataFrame}
 ```
 
+Right-click probe channels to add or remove them; set positive or negative
+weights in the channel table. On 3D probes, anatomical localization is listed
+but remains unavailable; manual selection is currently supported. In the
+Pipeline Manager, **ROI Average** accepts one or more named tables and lets
+you select an existing or preceding time-course/statistics result. All selected
+ROIs are pooled into one time-course or statistics object, including
+cross-ROI covariance for statistics. The **Output data name** field defaults to
+`<input>_roi` and can be edited; a custom name is preserved when changing inputs.
+From Python, use
+`ROIAverage(roi_tables=roi_tables)` and select a subset with
+`set_roi_selection(roi_tables, ["ROI name"])`; omitting the subset applies all
+definitions. Set `module.outputName` to customize the output key. The older
+single-table `roi_table` option remains supported.
+Following pipeline steps with input `last`, `prev`, or `previous` use the
+preceding step's output key. For example, ROI Average followed by GLM with input
+`last` fits the ROI time courses, including when the ROI output name is customized.
+When adding steps in Pipeline Manager, ROI Average initially selects the preceding
+output, and a GLM added after another step defaults to `last`. The **GLM input
+data** selector also permits explicit inputs. Existing pipelines retain their
+configured input names: if a GLM still specifies `conc`, select `last` or the
+ROI output key to fit ROI rather than channel time courses.
+
+The Pipeline Manager module list displays indented data-flow arrows with the
+resolved input name. Right-click an arrow to choose **Previous output** or an
+explicit data key available from the loaded data or preceding valid steps.
+Newly appended processing modules default to previous output. Moving a module
+updates automatic links; explicit input selections remain unchanged. An
+unavailable input (or otherwise invalid step) turns its arrow red and disables
+**Done** until the pipeline is repaired. Input selections are saved in pipeline
+JSON. Right-click the module label rather than its arrow for move/remove actions.
+
 Inverse-variance weighting is enabled by default; `weighted=False` uses only
-the table weights. Contributions are normalized over valid samples. Entirely
-masked channels are excluded with a warning; constant channels with valid
-samples cannot be inverse-variance weighted. ROI definitions are kept in
+the table weights. Signed contributions are normalized by their absolute sum.
+Entirely masked channels are excluded with a warning; constant channels with
+valid samples cannot be inverse-variance weighted. ROI definitions are kept in
 `rec.aux_obj["roi_definitions"]`; explicit attributes on each time course
 identify its definition and its separate quality-mask grid. Additional named
 definitions can coexist in the recording without changing `geo2d` or `geo3d`.

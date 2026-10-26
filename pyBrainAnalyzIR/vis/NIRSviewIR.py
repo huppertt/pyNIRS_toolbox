@@ -80,6 +80,7 @@ from pyBrainAnalyzIR.vis.pipeline_manager import (
     pipeline_to_json,
     pipeline_from_json,
 )
+from pyBrainAnalyzIR.vis.roi_manager import roi_manager
 from pyBrainAnalyzIR.vis._about import get_about_text
 from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
 import pyBrainAnalyzIR.dataclasses.dataset as dataset_module
@@ -299,6 +300,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._roi_colors = []
         self._roi_contributions = None
         self._pipeline_modules: List[cedalion_module] = []  # current stored pipeline
+        self.roi_tables: Dict[str, pd.DataFrame] = {}
         self._pipeline_dirty = True   # False once the pipeline ran on the current data
         self._current_stats_df = None       # last drawn statistics DataFrame (for export)
         self._current_stats_obj = None      # the Statistics object currently displayed
@@ -330,6 +332,11 @@ class NIRSviewIRWindow(QMainWindow):
         )
         edit_data_menu.addAction("Edit Stimulus Timing").triggered.connect(
             self._edit_stimulus_timing
+        )
+
+        registration_menu = menu_bar.addMenu("Registration")
+        registration_menu.addAction("Define Region-of-Interest").triggered.connect(
+            self._define_rois
         )
 
         # Analysis menu
@@ -618,6 +625,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._stim_handles = []
         self._ts_legends = {"channels": None, "stim": None}
         self._pipeline_modules = []
+        self.roi_tables = {}
         self._pipeline_dirty = True
         self._current_stats_df = None
         self._current_stats_obj = None
@@ -809,6 +817,7 @@ class NIRSviewIRWindow(QMainWindow):
             initial_modules=self._pipeline_modules if self._pipeline_modules else None,
             parent=self,
             data=self.dataset,
+            roi_tables=self.roi_tables,
         )
         if dialog.exec():
             self._pipeline_modules = dialog.selected_modules()
@@ -869,6 +878,12 @@ class NIRSviewIRWindow(QMainWindow):
 
         # Build the linked pipeline tail
         modules_copy = [copy.deepcopy(m) for m in self._pipeline_modules]
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        for module in modules_copy:
+            if isinstance(module, ROIAverage):
+                selected = module.selected_roi_names or module.options["roi_names"]
+                tables = self.roi_tables or module.roi_tables or module.options["roi_tables"]
+                module.set_roi_selection(tables, selected)
         previous = None
         for m in modules_copy:
             m.previous_job = previous
@@ -889,6 +904,34 @@ class NIRSviewIRWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Run Pipeline", f"Pipeline failed:\n{exc}")
             self._set_status("Pipeline run failed.")
+
+    def _define_rois(self) -> None:
+        if not getattr(self.dataset, "dataset", []):
+            QMessageBox.information(
+                self, "Define Regions-of-Interest", "Load a recording first."
+            )
+            return
+        try:
+            tables = roi_manager(self.dataset, self.roi_tables, parent=self)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Define Regions-of-Interest",
+                f"Could not open the ROI manager:\n{exc}",
+            )
+            return
+        if tables is None:
+            self._set_status("ROI definition cancelled.")
+            return
+        self.roi_tables = tables
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        for module in self._pipeline_modules:
+            if isinstance(module, ROIAverage):
+                current_selection = module.selected_roi_names or module.options["roi_names"]
+                selected = [name for name in current_selection if name in tables]
+                module.set_roi_selection(tables, selected)
+        self._pipeline_dirty = True
+        self._update_run_pipeline_enabled()
+        self._set_status(f"Saved {len(tables)} ROI definition(s).")
 
     # --------------------------------------------------------- file list menu
 

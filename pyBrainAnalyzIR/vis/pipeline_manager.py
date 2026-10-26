@@ -20,8 +20,10 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+import pandas as pd
+import xarray as xr
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -39,6 +41,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -372,6 +376,8 @@ def pipeline_to_json(modules: List[cedalion_module]) -> str:
         steps.append({
             "class": module.__class__.__name__,
             "module": module.__class__.__module__,
+            "inputName": getattr(module, "inputName", None),
+            "outputName": getattr(module, "outputName", None),
             "options": options_raw,
         })
     return json.dumps({"pipeline": steps}, indent=2)
@@ -391,6 +397,10 @@ def pipeline_from_json(json_str: str) -> List[cedalion_module]:
         except Exception as exc:
             raise ValueError(f"Cannot load class '{cls_name}' from '{mod_path}': {exc}") from exc
         instance = cls()
+        if "inputName" in step:
+            instance.inputName = step["inputName"]
+        if "outputName" in step:
+            instance.outputName = step["outputName"]
         raw_opts = step.get("options", {})
         if isinstance(instance.options, dict):
             for k, v_raw in raw_opts.items():
@@ -560,6 +570,50 @@ class OptionEditorDelegate(QStyledItemDelegate):
         self._dialog.apply_option_value(index.row(), new_value)
 
 
+class PipelineFlowDelegate(QStyledItemDelegate):
+    """Draw an incoming elbow arrow separately from the selectable module label."""
+
+    flow_role = Qt.UserRole + 1
+
+    def sizeHint(self, option, index):
+        flow = index.data(self.flow_role)
+        if flow is None:
+            return super().sizeHint(option, index)
+        width = max(
+            option.fontMetrics.horizontalAdvance(index.data()),
+            option.fontMetrics.horizontalAdvance(flow["label"]),
+        ) + 60 + flow["depth"] * 18
+        return QSize(width, 48)
+
+    def paint(self, painter, option, index):
+        flow = index.data(self.flow_role)
+        if flow is None:
+            super().paint(painter, option, index)
+            return
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.text = ""
+        style = option.widget.style() if option.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, background, painter, option.widget)
+        painter.save()
+        x = option.rect.left() + 10 + flow["depth"] * 18
+        y = option.rect.top()
+        color = QColor(25, 145, 65) if flow["valid"] else QColor(200, 0, 0)
+        painter.setPen(QPen(color, 2))
+        painter.drawLine(x, y + 2, x, y + 15)
+        painter.drawLine(x, y + 15, x + 16, y + 15)
+        painter.drawLine(x + 16, y + 15, x + 11, y + 10)
+        painter.drawLine(x + 16, y + 15, x + 11, y + 20)
+        painter.drawText(x + 24, y + 19, flow["label"])
+        text_color = (
+            option.palette.highlightedText().color()
+            if option.state & QStyle.State_Selected else option.palette.text().color()
+        )
+        painter.setPen(text_color if flow["valid"] else color)
+        painter.drawText(x + 24, y + 40, index.data())
+        painter.restore()
+
+
 class PipelineManagerDialog(QDialog):
     def __init__(
         self,
@@ -567,11 +621,13 @@ class PipelineManagerDialog(QDialog):
         parent: Optional[QWidget] = None,
         *,
         data: Any = None,
+        roi_tables: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Pipeline Manager")
         self.resize(1180, 720)
         self.data = data
+        self.roi_tables = copy.deepcopy(roi_tables or {})
 
         self.available_specs: List[ModuleSpec] = _discover_modules()
         self.available_row_specs: List[Optional[ModuleSpec]] = []
@@ -647,6 +703,7 @@ class PipelineManagerDialog(QDialog):
         self.remove_previous_checkbox.toggled.connect(lambda: self._refresh_pipeline_list())
         right_layout.addWidget(self.remove_previous_checkbox)
         self.pipeline_list = QListWidget(right_panel)
+        self.pipeline_list.setItemDelegate(PipelineFlowDelegate(self.pipeline_list))
         self.pipeline_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.pipeline_list.setContextMenuPolicy(Qt.CustomContextMenu)
         right_layout.addWidget(self.pipeline_list, stretch=2)
@@ -671,6 +728,33 @@ class PipelineManagerDialog(QDialog):
             | QAbstractItemView.SelectedClicked
         )
         right_layout.addWidget(self.options_table, stretch=3)
+        self.model_input_controls = QWidget(right_panel)
+        model_input_layout = QVBoxLayout(self.model_input_controls)
+        model_input_layout.setContentsMargins(0, 0, 0, 0)
+        model_input_layout.addWidget(QLabel("GLM input data"))
+        self.model_input_combo = QComboBox(self.model_input_controls)
+        self.model_input_combo.setToolTip(
+            "last / prev / previous use the preceding pipeline step's output. "
+            "Choose a named input to fit that data explicitly."
+        )
+        model_input_layout.addWidget(self.model_input_combo)
+        right_layout.addWidget(self.model_input_controls)
+        self.model_input_controls.hide()
+        self.roi_controls = QWidget(right_panel)
+        roi_layout = QVBoxLayout(self.roi_controls)
+        roi_layout.setContentsMargins(0, 0, 0, 0)
+        roi_layout.addWidget(QLabel("Input time course or statistics"))
+        self.roi_input_combo = QComboBox(self.roi_controls)
+        roi_layout.addWidget(self.roi_input_combo)
+        roi_layout.addWidget(QLabel("Output data name"))
+        self.roi_output_edit = QLineEdit(self.roi_controls)
+        roi_layout.addWidget(self.roi_output_edit)
+        roi_layout.addWidget(QLabel("ROI definitions (select one or more)"))
+        self.roi_selection_list = QListWidget(self.roi_controls)
+        self.roi_selection_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        roi_layout.addWidget(self.roi_selection_list)
+        right_layout.addWidget(self.roi_controls)
+        self.roi_controls.hide()
         content.addWidget(right_panel, stretch=5)
 
         # Footer
@@ -693,6 +777,10 @@ class PipelineManagerDialog(QDialog):
         self.move_down_button.clicked.connect(self._move_selected_down)
         self.remove_button.clicked.connect(self._remove_selected_module)
         self.options_table.itemChanged.connect(self._on_option_item_changed)
+        self.roi_input_combo.currentTextChanged.connect(self._on_roi_input_changed)
+        self.roi_output_edit.editingFinished.connect(self._on_roi_output_changed)
+        self.model_input_combo.currentTextChanged.connect(self._on_model_input_changed)
+        self.roi_selection_list.itemSelectionChanged.connect(self._on_roi_selection_changed)
         self.options_table.customContextMenuRequested.connect(self._show_options_menu)
         self.clear_button.clicked.connect(self._clear_pipeline)
         self.done_button.clicked.connect(self.accept)
@@ -803,6 +891,16 @@ class PipelineManagerDialog(QDialog):
                 f"Could not instantiate '{spec.cls.__name__}':\n{exc}",
             )
             return
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        if isinstance(module, ROIAverage) and self.roi_tables:
+            module.set_roi_selection(self.roi_tables, [])
+            previous = self._preceding_output_name(len(self.pipeline_modules))
+            if previous in self._roi_input_names(len(self.pipeline_modules)):
+                module.inputName = previous
+        if module.inputName is not None and self.pipeline_modules:
+            if isinstance(module, ROIAverage):
+                module.outputName = f"{module.inputName}_roi"
+            module.inputName = "last"
         from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
         if isinstance(module, remove_prior_analysis):
             self.remove_previous_checkbox.show()
@@ -819,12 +917,52 @@ class PipelineManagerDialog(QDialog):
         name_str = str(name).strip()
         if name_str == "":
             return None
-        if name_str.lower() in ("last", "prev"):
+        if name_str.lower() in ("last", "prev", "previous"):
             return previous_output
         return name_str
 
-    def _compute_pipeline_validity(self) -> List[bool]:
+    def _preceding_output_name(self, module_index: int) -> str:
+        recordings = self._input_recordings()
+        previous = (
+            next(reversed(recordings[0].timeseries), "amp") if recordings else "amp"
+        )
+        if self.remove_previous_checkbox.isChecked():
+            previous = "amp"
+        for module in self.pipeline_modules[:module_index]:
+            output = self._resolve_name(module.outputName, previous)
+            if output is not None:
+                previous = output
+        return previous
+
+    def _refresh_model_input_controls(self, module_index: int) -> None:
+        from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+        module = self.pipeline_modules[module_index]
+        if not isinstance(module, GLM):
+            self.model_input_controls.hide()
+            return
+        choices = ["last", "prev", "previous"] + self._roi_input_names(module_index)
+        if module.inputName not in choices:
+            choices.append(module.inputName)
+        self.model_input_combo.blockSignals(True)
+        self.model_input_combo.clear()
+        self.model_input_combo.addItems(choices)
+        self.model_input_combo.setCurrentText(module.inputName)
+        self.model_input_combo.blockSignals(False)
+        self.model_input_controls.show()
+
+    def _on_model_input_changed(self, name: str) -> None:
+        index = self.option_table_module_index
+        if not name or not 0 <= index < len(self.pipeline_modules):
+            return
+        from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+        module = self.pipeline_modules[index]
+        if isinstance(module, GLM):
+            module.inputName = name
+            self._refresh_pipeline_list(select_row=index)
+
+    def _pipeline_flow(self):
         from pyBrainAnalyzIR.pipelines.modules.utilities import DiscardData, remove_prior_analysis
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
         recordings = self._input_recordings()
         contexts = []
         for rec in recordings or [None]:
@@ -832,33 +970,204 @@ class PipelineManagerDialog(QDialog):
             available = set(keys) | set(getattr(self.data, "statistics", {}))
             contexts.append((available, keys[-1] if keys else "amp"))
         validity = [True] * len(self.pipeline_modules)
+        inputs = [None] * len(self.pipeline_modules)
+        outputs = [None] * len(self.pipeline_modules)
+        choices = [None] * len(self.pipeline_modules)
         for available, previous in contexts:
             if self.remove_previous_checkbox.isChecked():
                 available.intersection_update({"amp"})
                 previous = "amp"
             for index, module in enumerate(self.pipeline_modules):
+                choices[index] = (
+                    set(available) if choices[index] is None
+                    else choices[index] & available
+                )
                 input_name = self._resolve_name(module.inputName, previous)
                 output_name = self._resolve_name(module.outputName, previous)
+                inputs[index] = input_name
+                outputs[index] = output_name
                 valid = input_name is None or input_name in available
                 if isinstance(module, remove_prior_analysis):
                     valid = "amp" in available
                     available.intersection_update({"amp"})
+                if isinstance(module, ROIAverage):
+                    valid = valid and input_name in self._roi_input_names(index)
+                    valid = valid and (
+                        isinstance(module.outputName, str)
+                        and bool(module.outputName.strip())
+                        and module.outputName != input_name
+                    )
+                    available_rois = (
+                        self.roi_tables or module.roi_tables
+                        or module.options["roi_tables"]
+                    )
+                    selected = (
+                        module.selected_roi_names or module.options["roi_names"]
+                    )
+                    legacy_table = module.options["roi_table"]
+                    has_legacy_table = (
+                        not available_rois and isinstance(legacy_table, pd.DataFrame)
+                        and not legacy_table.empty
+                    )
+                    valid = valid and (
+                        bool(selected) and set(selected).issubset(available_rois)
+                        or has_legacy_table
+                    )
                 validity[index] &= valid
                 if valid and isinstance(module, DiscardData):
                     available.discard(self._resolve_name(module.remove_type, previous))
-                if valid and output_name is not None:
+                if valid and isinstance(module, ROIAverage):
+                    roi_outputs = module.output_names() or [output_name]
+                    available.update(name for name in roi_outputs if name is not None)
+                    if roi_outputs and roi_outputs[0] is not None:
+                        previous = roi_outputs[0]
+                elif valid and output_name is not None:
                     available.add(output_name)
+                    previous = output_name
+                if output_name is not None:
                     previous = output_name
         if self.remove_previous_checkbox.isChecked() and any(
             "amp" not in rec.timeseries for rec in recordings
         ):
-            return [False] * len(validity)
-        return validity
+            validity = [False] * len(validity)
+        return validity, inputs, outputs, choices
+
+    def _compute_pipeline_validity(self) -> List[bool]:
+        return self._pipeline_flow()[0]
 
     def _input_recordings(self):
         if self.data is None:
             return []
         return list(self.data.dataset) if hasattr(self.data, "dataset") else [self.data]
+
+    def _roi_input_names(self, module_index: int) -> List[str]:
+        from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+
+        def is_roi_input(value):
+            return isinstance(value, (xr.DataArray, Statistics))
+
+        recordings = self._input_recordings()
+        if self.remove_previous_checkbox.isChecked():
+            names = ["amp"] if any("amp" in rec.timeseries for rec in recordings) else []
+        elif recordings:
+            common = {
+                name for name, value in recordings[0].timeseries.items()
+                if is_roi_input(value)
+            }
+            for rec in recordings[1:]:
+                common.intersection_update(
+                    name for name, value in rec.timeseries.items() if is_roi_input(value)
+                )
+            names = sorted(common)
+        else:
+            names = ["amp"]
+        if not self.remove_previous_checkbox.isChecked() and hasattr(self.data, "statistics"):
+            names.extend(
+                name for name, value in self.data.statistics.items()
+                if name not in names and isinstance(value, Statistics)
+            )
+        previous_output = names[-1] if names else "amp"
+        for module in self.pipeline_modules[:module_index]:
+            from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+            if isinstance(module, ROIAverage):
+                outputs = module.output_names()
+                names.extend(name for name in outputs if name not in names)
+                if outputs:
+                    previous_output = outputs[0]
+            else:
+                from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+                from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects
+                from pyBrainAnalyzIR.pipelines.modules.connectivity import (
+                    hyperscanning, resting_state_connectivity,
+                )
+                if isinstance(module, (hyperscanning, resting_state_connectivity)):
+                    continue
+                output_name = self._resolve_name(
+                    getattr(module, "outputName", None), previous_output
+                )
+                if output_name is not None and (
+                    isinstance(module, (GLM, MixedEffects))
+                    or not getattr(module, "is_statistics_output", False)
+                ):
+                    if output_name not in names:
+                        names.append(output_name)
+                    previous_output = output_name
+        return names or ["amp"]
+
+    def _refresh_roi_controls(self, module_index: int) -> None:
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        if module_index < 0 or module_index >= len(self.pipeline_modules):
+            self.roi_controls.hide()
+            return
+        module = self.pipeline_modules[module_index]
+        if not isinstance(module, ROIAverage):
+            self.roi_controls.hide()
+            return
+        available_tables = self.roi_tables or module.roi_tables or module.options["roi_tables"]
+        if not available_tables:
+            self.roi_controls.hide()
+            return
+        available_names = list(available_tables)
+        selected = module.selected_roi_names or module.options["roi_names"]
+        selected_names = [name for name in selected if name in available_names]
+        module.selected_roi_names = selected_names
+        self.roi_selection_list.blockSignals(True)
+        self.roi_selection_list.clear()
+        for name in available_names:
+            item = QListWidgetItem(name, self.roi_selection_list)
+            item.setSelected(name in selected_names)
+        self.roi_selection_list.blockSignals(False)
+        choices = ["last", "prev", "previous"] + self._roi_input_names(module_index)
+        current = module.inputName if module.inputName in choices else (
+            choices[-1] if choices else "amp"
+        )
+        self.roi_input_combo.blockSignals(True)
+        self.roi_input_combo.clear()
+        self.roi_input_combo.addItems(choices)
+        self.roi_input_combo.setCurrentText(current)
+        self.roi_input_combo.blockSignals(False)
+        module.inputName = current
+        module.set_roi_selection(available_tables, selected_names)
+        self.roi_output_edit.setText(module.outputName)
+        self.roi_controls.show()
+
+    def _on_roi_output_changed(self) -> None:
+        index = self.option_table_module_index
+        if not 0 <= index < len(self.pipeline_modules):
+            return
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        module = self.pipeline_modules[index]
+        if isinstance(module, ROIAverage):
+            module.outputName = self.roi_output_edit.text().strip()
+            self._refresh_pipeline_list(select_row=index)
+
+    def _on_roi_input_changed(self, name: str) -> None:
+        index = self.option_table_module_index
+        if not name or not 0 <= index < len(self.pipeline_modules):
+            return
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        module = self.pipeline_modules[index]
+        if isinstance(module, ROIAverage):
+            module.inputName = name
+            module.set_roi_selection(
+                self.roi_tables or module.roi_tables or module.options["roi_tables"],
+                module.selected_roi_names or module.options["roi_names"],
+            )
+            self._refresh_pipeline_list(select_row=index)
+
+    def _on_roi_selection_changed(self) -> None:
+        index = self.option_table_module_index
+        if not 0 <= index < len(self.pipeline_modules):
+            return
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        module = self.pipeline_modules[index]
+        if not isinstance(module, ROIAverage):
+            return
+        names = [item.text() for item in self.roi_selection_list.selectedItems()]
+        module.set_roi_selection(
+            self.roi_tables or module.roi_tables or module.options["roi_tables"], names
+        )
+        self._refresh_pipeline_list(select_row=index)
 
     def selected_modules(self) -> List[cedalion_module]:
         """Return executable steps, including the reset hidden from the step list."""
@@ -867,7 +1176,7 @@ class PipelineManagerDialog(QDialog):
         return prefix + list(self.pipeline_modules)
 
     def _refresh_pipeline_list(self, select_row: int = -1) -> None:
-        validity = self._compute_pipeline_validity()
+        validity, inputs, outputs, _ = self._pipeline_flow()
         has_invalid = any(not is_valid for is_valid in validity)
         self.pipeline_row_offset = 1 if has_invalid else 0
 
@@ -878,10 +1187,26 @@ class PipelineManagerDialog(QDialog):
             warning_item.setFlags(Qt.ItemIsEnabled)
             warning_item.setForeground(QColor(200, 0, 0))
             self.pipeline_list.addItem(warning_item)
+        producers = {}
+        depths = []
         for idx, module in enumerate(self.pipeline_modules):
             display_name = str(getattr(module, "name", module.__class__.__name__))
             prefix = "⚠ " if idx < len(validity) and not validity[idx] else ""
             item = QListWidgetItem(f"{idx + 1}. {prefix}{display_name}")
+            producer = producers.get(inputs[idx])
+            depth = depths[producer] + 1 if producer is not None else 0
+            depths.append(depth)
+            if module.inputName is not None:
+                automatic = str(module.inputName).lower() in ("last", "prev", "previous")
+                label = f"Previous output: {inputs[idx]}" if automatic else f"Input: {inputs[idx]}"
+                item.setData(PipelineFlowDelegate.flow_role, {
+                    "depth": depth, "valid": validity[idx], "label": label,
+                })
+                item.setToolTip(
+                    f"{label}\nOutput: {outputs[idx]}\nRight-click the arrow to change input."
+                )
+            if validity[idx] and outputs[idx] is not None:
+                producers[outputs[idx]] = idx
             if idx < len(validity) and not validity[idx]:
                 item.setForeground(QColor(200, 0, 0))
             self.pipeline_list.addItem(item)
@@ -898,6 +1223,8 @@ class PipelineManagerDialog(QDialog):
             self.options_table.blockSignals(True)
             self.options_table.setRowCount(0)
             self.options_table.blockSignals(False)
+            self.roi_controls.hide()
+            self.model_input_controls.hide()
 
         self._update_pipeline_buttons()
         self._update_done_button()
@@ -923,7 +1250,13 @@ class PipelineManagerDialog(QDialog):
             self.options_table.blockSignals(False)
             return
 
+        from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
         entries = list(_iter_option_objects(options))
+        if isinstance(module, ROIAverage):
+            hidden = {"roi_tables", "roi_names"}
+            if self.roi_tables or module.roi_tables or module.options["roi_tables"]:
+                hidden |= {"roi_table", "roi_name"}
+            entries = [(key, option) for key, option in entries if key not in hidden]
         self.option_row_keys = [key for key, _ in entries]
         self.options_table.setRowCount(len(entries))
         for row_idx, (key, opt) in enumerate(entries):
@@ -960,6 +1293,8 @@ class PipelineManagerDialog(QDialog):
 
         self.options_table.resizeColumnsToContents()
         self.options_table.blockSignals(False)
+        self._refresh_roi_controls(row)
+        self._refresh_model_input_controls(row)
 
     # ------------------------------------------------------------------
     # option table helpers
@@ -1131,6 +1466,11 @@ class PipelineManagerDialog(QDialog):
         has_module_selection = 0 <= module_idx < len(self.pipeline_modules)
         if has_module_selection:
             self.pipeline_list.setCurrentRow(row)
+            rect = self.pipeline_list.visualItemRect(item)
+            if item.data(PipelineFlowDelegate.flow_role) is not None and pos.y() < rect.top() + 24:
+                menu = self._input_flow_menu(module_idx)
+                menu.exec(self.pipeline_list.viewport().mapToGlobal(pos))
+                return
 
         menu = QMenu(self)
         load_defaults_menu = menu.addMenu("Load Default Pipelines")
@@ -1162,6 +1502,29 @@ class PipelineManagerDialog(QDialog):
             self._move_row(module_idx, module_idx + 1)
         elif action == remove_action:
             self._remove_row(module_idx)
+
+    def _input_flow_menu(self, module_index: int) -> QMenu:
+        menu = QMenu("Input data", self)
+        module = self.pipeline_modules[module_index]
+        previous = menu.addAction("Previous output")
+        previous.setCheckable(True)
+        previous.setChecked(str(module.inputName).lower() in ("last", "prev", "previous"))
+        previous.triggered.connect(
+            lambda: self._set_flow_input(module_index, "previous")
+        )
+        menu.addSeparator()
+        for name in sorted(self._pipeline_flow()[3][module_index]):
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(module.inputName == name)
+            action.triggered.connect(
+                lambda checked=False, value=name: self._set_flow_input(module_index, value)
+            )
+        return menu
+
+    def _set_flow_input(self, module_index: int, name: str) -> None:
+        self.pipeline_modules[module_index].inputName = name
+        self._refresh_pipeline_list(select_row=module_index)
 
     @staticmethod
     def _modules_from_pipeline_tail(tail: cedalion_module) -> List[cedalion_module]:
@@ -1287,6 +1650,7 @@ def pipeline_manager(
     parent: Optional[QWidget] = None,
     *,
     data: Any = None,
+    roi_tables: Optional[Dict[str, Any]] = None,
 ) -> Optional[cedalion_module]:
     """Open the visual editor for building an analysis pipeline.
 
@@ -1298,6 +1662,8 @@ def pipeline_manager(
         Optional parent window when opening the editor from another GUI.
     data:
         Optional recording or DataSet whose existing results seed validation.
+    roi_tables:
+        Optional named membership tables made available to ROI Average steps.
 
     Returns
     -------
@@ -1315,7 +1681,9 @@ def pipeline_manager(
     if QApplication.instance() is None:
         QApplication(sys.argv)
 
-    dialog = PipelineManagerDialog(initial_modules=initial_modules, parent=parent, data=data)
+    dialog = PipelineManagerDialog(
+        initial_modules=initial_modules, parent=parent, data=data, roi_tables=roi_tables
+    )
     result = dialog.exec()
     if result == QDialog.Accepted:
         return dialog.build_pipeline()  # (dialog.pipeline_modules)

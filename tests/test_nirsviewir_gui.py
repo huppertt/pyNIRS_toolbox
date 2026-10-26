@@ -285,6 +285,173 @@ def test_edit_data_menu_puts_bids_information_first():
     ]
 
 
+def test_registration_menu_opens_roi_manager_and_stores_tables(monkeypatch):
+    dataset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dataset)
+    table = pd.DataFrame({
+        "source": ["S1"], "detector": ["D1"], "weight": [1.0], "name": ["ROI 1"],
+    })
+    calls = []
+
+    def open_roi_manager(data, roi_tables, parent):
+        calls.append((data, roi_tables, parent))
+        return {"ROI 1": table}
+
+    monkeypatch.setattr(nirsview, "roi_manager", open_roi_manager)
+    menu_bar = window.findChild(QMenuBar)
+    assert [action.text() for action in menu_bar.actions()][1:4] == [
+        "Edit Data", "Registration", "Analysis",
+    ]
+    registration_menu = menu_bar.actions()[2].menu()
+    assert [action.text() for action in registration_menu.actions()] == [
+        "Define Region-of-Interest",
+    ]
+    window._define_rois()
+    assert calls == [(dataset, {}, window)]
+    pd.testing.assert_frame_equal(window.roi_tables["ROI 1"], table)
+
+
+def test_pipeline_manager_receives_defined_roi_tables(monkeypatch):
+    from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
+
+    dataset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dataset)
+    window.roi_tables = {"ROI 1": pd.DataFrame({
+        "source": ["S1"], "detector": ["D1"], "weight": [1.0], "name": ["ROI 1"],
+    })}
+    calls = []
+
+    def accept(dialog):
+        calls.append((dialog.data, dialog.roi_tables))
+        return QDialog.Accepted
+
+    monkeypatch.setattr(PipelineManagerDialog, "exec", accept)
+    window._edit_pipeline()
+    assert len(calls) == 1
+    assert calls[0][0] is dataset
+    assert set(calls[0][1]) == {"ROI 1"}
+    pd.testing.assert_frame_equal(calls[0][1]["ROI 1"], window.roi_tables["ROI 1"])
+
+
+def test_nirsview_runs_combined_rois_with_custom_output_name(simulated_recording):
+    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+
+    rec, _ = simulated_recording
+    dataset = DataSet([rec])
+    window = nirsview.NIRSviewIRWindow(dataset)
+    window.roi_tables = {
+        name: pd.DataFrame({
+            "source": rec["amp"].source.values[start:start + 2],
+            "detector": rec["amp"].detector.values[start:start + 2],
+            "weight": [1.0, 1.0],
+        })
+        for name, start in [("Left", 0), ("Right", 2)]
+    }
+    module = ROIAverage()
+    module.set_roi_selection(window.roi_tables, ["Left", "Right"])
+    module.outputName = "my_regions"
+    window._pipeline_modules = [module]
+    window._run_pipeline()
+    assert rec["my_regions"].channel.values.tolist() == ["Left", "Right"]
+    assert "amp_roi_Left" not in rec.timeseries
+    window.type_selector.setCurrentText("my_regions")
+    assert window._right_stack.currentIndex() == 0
+    assert window._roi_geometry.region_names == ["Left", "Right"]
+
+
+@pytest.mark.parametrize("repair_existing", [False, True])
+def test_nirsview_pipeline_manager_full_roi_glm_chain(simulated_recording, monkeypatch, repair_existing):
+    from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
+    from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+    from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
+
+    rec, _ = simulated_recording
+    window = nirsview.NIRSviewIRWindow(DataSet([rec]))
+    window.roi_tables = {
+        name: pd.DataFrame({
+            "source": rec["amp"].source.values[start:start + 2],
+            "detector": rec["amp"].detector.values[start:start + 2],
+            "weight": [1.0, 1.0],
+        })
+        for name, start in [("Left", 0), ("Right", 2)]
+    }
+
+    def configure(dialog):
+        for cls in [prep.intensity_opticaldensity, prep.mbll, prep.resample, ROIAverage, GLM]:
+            row = next(
+                i for i, spec in enumerate(dialog.available_row_specs)
+                if spec is not None and spec.cls is cls
+            )
+            dialog.available_list.setCurrentRow(row)
+            dialog.add_button.click()
+            module = dialog.pipeline_modules[-1]
+            if isinstance(module, prep.resample):
+                module.options["Fs"] = 2
+            if isinstance(module, ROIAverage):
+                assert module.inputName == "last"
+                for i in range(dialog.roi_selection_list.count()):
+                    dialog.roi_selection_list.item(i).setSelected(True)
+                dialog.roi_output_edit.setText("selected_regions")
+                dialog.roi_output_edit.editingFinished.emit()
+            if isinstance(module, GLM):
+                assert module.inputName == "last"
+                module.options.update(verbose=False)
+        assert dialog._compute_pipeline_validity() == [True] * 5
+        return QDialog.Accepted
+
+    monkeypatch.setattr(PipelineManagerDialog, "exec", configure)
+    window._edit_pipeline()
+    if repair_existing:
+        window._pipeline_modules[-1].inputName = "conc"
+
+        def repair(dialog):
+            dialog._refresh_pipeline_list(select_row=4)
+            assert not dialog.model_input_controls.isHidden()
+            assert dialog.model_input_combo.currentText() == "conc"
+            choices = {
+                dialog.model_input_combo.itemText(i)
+                for i in range(dialog.model_input_combo.count())
+            }
+            assert {"last", "previous", "conc", "selected_regions"} <= choices
+            dialog.model_input_combo.setCurrentText("previous")
+            assert dialog.pipeline_modules[-1].inputName == "previous"
+            assert dialog._compute_pipeline_validity() == [True] * 5
+            return QDialog.Accepted
+
+        monkeypatch.setattr(PipelineManagerDialog, "exec", repair)
+        window._edit_pipeline()
+    window._run_pipeline()
+    assert "stats" in rec.timeseries
+    assert set(rec["stats"].betas.channels.values) == {"Left", "Right"}
+    assert rec["stats"].geoROI.region_names == ["Left", "Right"]
+    window.type_selector.setCurrentText("stats")
+    assert window._current_stats_obj is rec["stats"]
+    assert window._current_stats_obj.geoROI.region_names == ["Left", "Right"]
+
+
+def test_nirsview_displays_roi_timecourses_and_connectivity(roi_dataset):
+    from pyBrainAnalyzIR.pipelines.modules.connectivity import resting_state_connectivity
+
+    rec = roi_dataset.dataset[0]
+    module = resting_state_connectivity()
+    module.inputName = "amp_roi"
+    module.options.update(AR=0, robust=False, short_separation_correction=False)
+    module.run(rec)
+    window = nirsview.NIRSviewIRWindow(roi_dataset)
+
+    window.type_selector.setCurrentText("amp_roi")
+    assert window._right_stack.currentIndex() == 0
+    assert window._roi_geometry is not None
+    window.type_selector.setCurrentText("stats_roi")
+    assert window._right_stack.currentIndex() == 1
+    assert window._current_stats_obj is rec["stats_roi"]
+    window.type_selector.setCurrentText("conn")
+    assert window._right_stack.currentIndex() == 1
+    assert window._current_stats_obj is rec["conn"]
+    assert window._stats_figure.axes
+
+
 def test_edit_data_quality_mask_launches_manager(monkeypatch):
     dset = DataSet([Recording()])
     window = nirsview.NIRSviewIRWindow(dset)

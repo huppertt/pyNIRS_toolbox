@@ -32,8 +32,8 @@ def _roi_membership(roi_table, data):
     if "weight" not in table:
         table["weight"] = 1.0
     weights = pd.to_numeric(table["weight"], errors="raise").to_numpy(dtype=float)
-    if not np.isfinite(weights).all() or (weights < 0).any():
-        raise ValueError("ROI weights must be finite and nonnegative.")
+    if not np.isfinite(weights).all():
+        raise ValueError("ROI weights must be finite.")
     table["weight"] = weights
     if table.duplicated(["source", "detector", "name"]).any():
         raise ValueError("Duplicate source-detector pair within an ROI.")
@@ -49,8 +49,8 @@ def _roi_membership(roi_table, data):
         if pair not in pairs:
             raise ValueError(f"ROI source-detector pair {pair!r} is absent from input.")
         membership[names.index(row["name"]), pairs.index(pair)] = row["weight"]
-    if (membership.sum(axis=1) <= 0).any():
-        raise ValueError("Each ROI needs at least one positive contribution.")
+    if not np.any(membership != 0, axis=1).all():
+        raise ValueError("Each ROI needs at least one nonzero weight.")
     return table, names, membership
 
 
@@ -61,9 +61,10 @@ def roi_average(
     """Add an ROI average of time courses or fitted channel statistics.
 
     ``roi_table`` has source, detector, name (or MATLAB Name), and optional
-    nonnegative weight columns. Effective weights are table weights divided by
+    finite signed weight columns. Effective weights are table weights divided by
     temporal variance when ``weighted=True`` (the default), normalized over
-    available channels at each sample. Masked samples do not estimate variance
+    the absolute sum of available channels at each sample. Negative weights
+    contribute in the opposite direction. Masked samples do not estimate variance
     or contribute to averages. Entirely masked channels are excluded with a
     warning. Constant/undersampled contributors with otherwise valid samples
     are rejected rather than assigned infinite weight.
@@ -162,11 +163,10 @@ def roi_average(
     )
     effective = base / variance.where(variance > 0) if weighted else base
     effective = effective.fillna(0)
-    effective = effective / effective.sum("channel").where(
-        effective.sum("channel") > 0
-    )
+    absolute_weight_sum = np.abs(effective).sum("channel")
+    effective = effective / absolute_weight_sum.where(absolute_weight_sum > 0)
     effective = effective.fillna(0)
-    denominator = effective.where(valid, 0).sum("channel")
+    denominator = np.abs(effective.where(valid, 0)).sum("channel")
     averaged = (values.fillna(0) * effective).sum("channel") / denominator
     averaged = averaged.rename(region="channel").transpose(*data.dims)
     averaged.attrs = data.attrs.copy()
@@ -179,7 +179,7 @@ def roi_average(
         roi_good = roi_good.all(mask_subtypes)
     roi_good = roi_good.rename(region="channel").transpose("time", "channel")
     distances = cedalion.nirs.channel_distances(data, rec.geo3d)
-    distance_weights = base / base.sum("channel")
+    distance_weights = np.abs(base) / np.abs(base).sum("channel")
     roi_distances = xr.dot(
         distance_weights, distances, dim="channel"
     ).rename(region="channel")
@@ -265,8 +265,9 @@ def roi_average_statistics(stats, roi_table, roi_name="default", weighted=True):
         weights[~valid] = 0
         if weighted:
             weights = np.divide(weights, variances, out=np.zeros_like(weights), where=valid & (variances > 0))
-        if weights.sum() > 0:
-            weights /= weights.sum()
+        absolute_weight_sum = np.abs(weights).sum()
+        if absolute_weight_sum > 0:
+            weights /= absolute_weight_sum
         projection[row] = weights
         for index in np.flatnonzero(weights):
             effective[names.index(name), channels.index(labels[index][0]),
@@ -318,7 +319,10 @@ def roi_average_statistics(stats, roi_table, roi_name="default", weighted=True):
     distances = cedalion.nirs.channel_distances(physical, stats.geo3d)
     base = xr.DataArray(membership, dims=("region", "channel"),
                         coords={"region": names, "channel": channels})
-    roi_distances = xr.dot(base / base.sum("channel"), distances, dim="channel").rename(region="channel")
+    absolute_weights = np.abs(base)
+    roi_distances = xr.dot(
+        absolute_weights / absolute_weights.sum("channel"), distances, dim="channel"
+    ).rename(region="channel")
     stored_weights = xr.DataArray(
         effective, dims=("channel", "source_channel", "type", "condition"),
         coords={"channel": names, "source_channel": channels, "type": types,

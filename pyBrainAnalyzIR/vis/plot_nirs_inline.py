@@ -210,22 +210,26 @@ def _roi_channel_contributions(geometry, names, probe_data):
             if pair not in pairs:
                 raise ValueError(f"ROI channel {pair!r} is missing from the physical probe.")
             contributions[index, pairs.index(pair)] = member.weight
-        maximum = contributions[index].max()
+        maximum = np.abs(contributions[index]).max()
         if maximum > 0:
             contributions[index] /= maximum
     return contributions
 
 
 def _color_roi_channels(lines, contributions, selected, colors):
-    """Blend selected ROI definition colors, shared by inline/statistics plots."""
+    """Blend ROI colors, showing negative membership with blue probe lines."""
     for channel_index, line in enumerate(lines):
         weights = contributions[selected, channel_index]
-        total = weights.sum()
+        magnitudes = np.abs(weights)
+        total = magnitudes.sum()
         line.set_color("k")
         if total > 0:
-            rgb = np.array([to_rgb(colors[index]) for index in selected])
-            color = (rgb * weights[:, None]).sum(axis=0) / total
-            strength = weights.max()
+            rgb = np.array([
+                to_rgb(colors[index] if weight > 0 else "#2166ac")
+                for index, weight in zip(selected, weights)
+            ])
+            color = (rgb * magnitudes[:, None]).sum(axis=0) / total
+            strength = min(float(magnitudes.max()), 1.0)
             line.set_color(1 - strength + strength * color)
 
 

@@ -127,6 +127,59 @@ def test_remove_prior_analysis_validates_dataset_before_mutating(simulated_recor
     assert "od" in rec.timeseries
 
 
+@pytest.mark.parametrize("dataset_scope", [False, True])
+def test_roi_average_module_accepts_multiple_named_roi_tables(simulated_recording, dataset_scope):
+    import numpy as np
+    import pandas as pd
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+
+    rec, _ = simulated_recording
+    source = rec["amp"].source.values
+    detector = rec["amp"].detector.values
+    tables = {
+        "Left ROI": pd.DataFrame({
+            "source": source[:2], "detector": detector[:2],
+            "weight": [1.0, -1.0], "name": ["Left ROI", "Left ROI"],
+        }),
+        "Right ROI": pd.DataFrame({
+            "source": source[2:4], "detector": detector[2:4],
+            "weight": [2.0, 1.0], "name": ["Right ROI", "Right ROI"],
+        }),
+    }
+    module = ROIAverage(roi_tables=tables)
+    module.options["weighted"] = False
+    assert module.selected_roi_names == ["Left ROI", "Right ROI"]
+    assert module.output_names() == ["amp_roi"]
+    original_keys = set(rec.timeseries)
+    data = DataSet([rec]) if dataset_scope else rec
+    assert module.run(data) is data
+    assert set(rec.timeseries) - original_keys == {"amp_roi"}
+    assert rec["amp_roi"].channel.values.tolist() == ["Left ROI", "Right ROI"]
+    assert rec["amp_roi"].attrs["roi_definition"] == "amp_roi"
+    expected = (rec["amp"].isel(channel=0) - rec["amp"].isel(channel=1)) / 2
+    np.testing.assert_allclose(
+        rec["amp_roi"].pint.dequantify().sel(channel="Left ROI"),
+        expected.pint.dequantify(),
+    )
+    assert rec.aux_obj["roi_definitions"]["amp_roi"].region_names == ["Left ROI", "Right ROI"]
+
+    module.outputName = "selected_regions"
+    module.set_roi_selection(tables, ["Right ROI"])
+    module.run(data)
+    assert rec["selected_regions"].channel.values.tolist() == ["Right ROI"]
+    assert rec["amp_roi"].channel.values.tolist() == ["Left ROI", "Right ROI"]
+
+    missing_selection = ROIAverage(roi_tables=tables)
+    missing_selection.set_roi_selection(tables, [])
+    with pytest.raises(ValueError, match="Select at least one"):
+        missing_selection.run(rec)
+
+    module.outputName = ""
+    with pytest.raises(ValueError, match="output name"):
+        module.run(data)
+
+
 # ---------------------------------------------------------------------------
 # generic contract shared by every module
 # ---------------------------------------------------------------------------
@@ -371,6 +424,36 @@ def test_pipeline_chains_previous_jobs():
     assert job.name == "GLM Model"
     assert job.previous_job is not None
     assert job.previous_job.name == "Resample"
+
+
+@pytest.mark.parametrize("alias", ["last", "prev", "previous"])
+def test_pipeline_aliases_resolve_in_place_and_restore_after_errors(simulated_recording, alias):
+    from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
+
+    rec, _ = simulated_recording
+
+    class CopyData(cedalion_module):
+        def _runlocal(self, recording):
+            recording[self.outputName] = recording[self.inputName].copy()
+            return recording
+
+    first = CopyData()
+    first.inputName, first.outputName = alias, "processed"
+    first.run(rec)
+    assert first.inputName == alias
+    second = CopyData(first)
+    second.inputName = second.outputName = alias
+    second.run(rec)
+    assert "last" not in rec.timeseries
+    assert "prev" not in rec.timeseries
+    assert "previous" not in rec.timeseries
+    assert second._resolved_output_name == "processed"
+    assert second.inputName == second.outputName == alias
+    second.inputName = "missing"
+    with pytest.raises(KeyError):
+        second.run(rec)
+    assert second.inputName == "missing"
+    assert second.outputName == alias
 
 
 def test_get_option_searches_the_whole_pipeline():
