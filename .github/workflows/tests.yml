@@ -44,6 +44,8 @@ jobs:
   cedalion:
     name: Pytest with latest Cedalion and SNIRF (Python 3.11)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     env:
       QT_QPA_PLATFORM: offscreen
