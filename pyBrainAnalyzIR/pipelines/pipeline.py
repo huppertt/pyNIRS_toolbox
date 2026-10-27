@@ -68,6 +68,7 @@ class cedalion_module:
         self.description = None  # "Write a description of what the module does"
 
         self.previous_job = previous_job
+        self._resolved_output_name = None
 
     """Return a string representation of the pipeline step object.
     def __repr__(self):

@@ -37,6 +37,37 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run the test suite
-        # Keep tests requiring local Cedalion or MATLAB installations out of
-        # hosted CI; run those with plain `pytest` in a suitable local setup.
+        # Keep optional-dependency tests out of the core matrix; the job below
+        # covers Cedalion, while MATLAB comparisons remain local.
         run: pytest --color=yes -m "not requires_cedalion and not requires_matlab"
+
+  cedalion:
+    name: Pytest with latest Cedalion and SNIRF (Python 3.11)
+    runs-on: ubuntu-latest
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Install latest stable Cedalion
+        # Cedalion provides the latest compatible snirf (pysnirf2) parser.
+        run: pip install git+https://github.com/ibs-lab/cedalion.git@v26.5.1
+
+      - name: Run the test suite without MATLAB comparisons
+        run: pytest --color=yes -m "not requires_matlab"

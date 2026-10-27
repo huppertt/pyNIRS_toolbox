@@ -287,8 +287,12 @@ def test_roi_statistics_beta_errors_stars_and_fixed_color_keys(
     ):
         selected = table[(table.Condition == condition) & (table.Type == signal_type)]
         selected = selected.set_index("Channel").loc[["Left", "Right"]]
-        np.testing.assert_allclose([bar.get_height() for bar in axis.patches], selected.Beta)
-        assert [to_rgb(bar.get_facecolor()) for bar in axis.patches] == [to_rgb("red"), to_rgb("blue")]
+        np.testing.assert_allclose(
+            [bar_patch.get_height() for bar_patch in axis.patches], selected.Beta
+        )
+        assert [to_rgb(bar_patch.get_facecolor()) for bar_patch in axis.patches] == [
+            to_rgb("red"), to_rgb("blue")
+        ]
         segments = axis.containers[0].lines[2][0].get_segments()
         np.testing.assert_allclose([segment[:, 1] for segment in segments], np.column_stack(
             [selected.Beta - selected.StdErr, selected.Beta + selected.StdErr]
@@ -337,7 +341,6 @@ def test_roi_pipeline_definition_json_roundtrip(roi_table):
 @pytest.mark.parametrize("output_name", [None, "my_regions"])
 def test_named_roi_module_tables_selection_and_data_names_roundtrip(simulated_recording, output_name):
     pytest.importorskip("PySide6")
-    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
     from pyBrainAnalyzIR.vis.pipeline_manager import pipeline_from_json, pipeline_to_json
 
     rec, _ = simulated_recording

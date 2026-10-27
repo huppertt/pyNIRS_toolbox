@@ -684,3 +684,4 @@ class Statistics:
                 ax[idxc, idxt].set_axis_off()
                 ax[idxc, idxt].set_title(condname + " : " + type)
                 plt.colorbar(sm, ax=ax[idxc, idxt], label=vartype + " (" + thresh + ")", shrink=0.5)
+        return None

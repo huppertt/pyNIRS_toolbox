@@ -186,7 +186,9 @@ def test_triangle_collection_sorts_faces_back_to_front(qt_app):
     ], dtype=float)
     collection = registration._TriangleMeshCollection(vertices, [[3, 4, 5], [0, 1, 2]], "ivory", 0.5)
     window.axes.add_collection3d(collection, autolim=False)
-    window.axes.set_xlim(-1, 2), window.axes.set_ylim(-1, 2), window.axes.set_zlim(-2, 2)
+    window.axes.set_xlim(-1, 2)
+    window.axes.set_ylim(-1, 2)
+    window.axes.set_zlim(-2, 2)
     for elev, far_face in [(90, 1), (-90, 0)]:
         window.axes.view_init(elev=elev, azim=0)
         window.canvas.draw()
@@ -433,7 +435,11 @@ def test_preset_buttons_reset_camera_angles_but_preserve_limits(qt_app):
 
 def test_notebook_launch_close_and_reopen_keeps_shared_qt_alive(qt_app, monkeypatch):
     calls = []
-    shell = SimpleNamespace(active_eventloop=None, enable_gui=lambda gui: calls.append(gui))
+
+    def enable_gui(gui):
+        calls.append(gui)
+
+    shell = SimpleNamespace(active_eventloop=None, enable_gui=enable_gui)
     monkeypatch.setattr(registration, "_active_ipython", lambda: shell)
     monkeypatch.setattr(registration.QApplication, "exec", lambda: pytest.fail("Nested Qt loop"))
     old_quit = qt_app.quitOnLastWindowClosed()

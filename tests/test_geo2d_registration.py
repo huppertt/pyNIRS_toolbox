@@ -173,10 +173,12 @@ def test_symmetrize_on_head_averages_close_pairs_only(sphere_head):
     np.testing.assert_allclose(np.linalg.norm(out, axis=1), 90, atol=0.5)
 
 
-def _geo2d_recording(head, labels=GRID[:6], units="mm", landmarks=("Cz",)):
+def _geo2d_recording(head, labels=None, units="mm", landmarks=("Cz",)):
     import cedalion.dataclasses as cdc
     import xarray as xr
 
+    if labels is None:
+        labels = GRID[:6]
     sources, detectors = labels[::2], labels[1::2]
     names = [f"S{i + 1}" for i in range(len(sources))] + [f"D{i + 1}" for i in range(len(detectors))]
     xy = _layout(head, list(sources) + list(detectors) + list(landmarks))
@@ -346,6 +348,7 @@ def test_project_to_scalp_hits_faces_exactly_and_independent_of_resolution():
     directions = rng.normal(size=(200, 3))
     directions[:, 2] = np.abs(directions[:, 2])
     results = {}
+    coarse_vertex = None
     for subdivisions in (2, 4):
         mesh = trimesh.creation.icosphere(subdivisions=subdivisions, radius=90)
         scalp = g2.ScalpSurface(mesh.vertices, mesh.faces)
@@ -362,6 +365,7 @@ def test_project_to_scalp_hits_faces_exactly_and_independent_of_resolution():
         vertex_snap = g2.project_to_scalp(directions, center, mesh.vertices)
         if subdivisions == 2:
             coarse_vertex = vertex_snap
+    assert coarse_vertex is not None
     face_change = np.linalg.norm(results[2] - results[4], axis=1)
     vertex_change = np.linalg.norm(coarse_vertex - results[4], axis=1)
     assert np.median(face_change) < 0.25 * np.median(vertex_change)

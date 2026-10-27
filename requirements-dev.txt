@@ -1,8 +1,7 @@
 # Development / CI dependencies.
 #
-# NOTE: cedalion is not published on PyPI and is installed from source, and
-# MATLAB is a licensed local dependency. Tests requiring either are excluded
-# from hosted CI and can be selected locally with pytest markers.
+# Cedalion is installed from source for the dedicated integration CI job.
+# MATLAB is licensed and unavailable on hosted runners, so its tests are skipped.
 pytest>=7.0
 flake8>=6.0
 pylint>=3.0,<4.0

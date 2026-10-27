@@ -277,7 +277,7 @@ def test_roi_then_glm_resolves_previous_output(analysis_recording, alias, datase
     # Keep an unrelated newer key to catch reliance on dictionary insertion order.
     rec["pooled"] = rec["conc"].copy()
     rec["unrelated"] = rec["conc"].copy()
-    tables = {name: rows for name, rows in table.groupby("name", sort=False)}
+    tables = dict(table.groupby("name", sort=False))
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "pooled"
     roi.options.update(weighted=False, overwrite=True)
@@ -301,7 +301,7 @@ def test_pipeline_manager_roi_then_glm_uses_roi_input(analysis_recording, qt_app
     from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
 
     rec, table = analysis_recording
-    tables = {name: rows for name, rows in table.groupby("name", sort=False)}
+    tables = dict(table.groupby("name", sort=False))
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "selected_regions"
     model = GLM()

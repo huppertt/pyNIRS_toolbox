@@ -9,7 +9,7 @@ ignore=.git,__pycache__,build,dist,.eggs
 ignored-modules=cedalion,cedalion.nirs,cedalion.dataclasses,cedalion.models,
                 cedalion.sigproc,cedalion.typing,cedalion.math,cedalion.io,
                 statsmodels,statsmodels.api,statsmodels.formula.api,
-                pywt,snirf,pysnirf2,nilearn,mne,PySide6
+                pywt,snirf,pysnirf2,nilearn,mne,PySide6,pyvista,trimesh
 
 jobs=0
 persistent=no

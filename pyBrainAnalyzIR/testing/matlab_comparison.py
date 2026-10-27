@@ -1,6 +1,7 @@
 """Opt-in numerical comparisons between pyBrainAnalyzIR and MATLAB nirs-toolbox."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 from math import gamma
@@ -114,18 +115,18 @@ def run_matlab_python_roc_comparison(
         raise FileNotFoundError(f"MATLAB comparison driver is missing: {_MATLAB_DRIVER}")
 
     executable = find_matlab_executable(matlab_executable)
-    output_root = None
-    if output_dir is not None:
-        output_root = Path(output_dir).expanduser()
-        output_root.mkdir(parents=True, exist_ok=True)
-        work_dir = Path(tempfile.mkdtemp(prefix="matlab-comparison-", dir=output_root))
-        keep_work_dir = True
-    else:
-        temporary_directory = tempfile.TemporaryDirectory(prefix="matlab-comparison-")
-        work_dir = Path(temporary_directory.name)
-        keep_work_dir = False
-
-    try:
+    with ExitStack() as stack:
+        if output_dir is not None:
+            output_root = Path(output_dir).expanduser()
+            output_root.mkdir(parents=True, exist_ok=True)
+            work_dir = Path(tempfile.mkdtemp(prefix="matlab-comparison-", dir=output_root))
+            keep_work_dir = True
+        else:
+            temporary_directory = stack.enter_context(
+                tempfile.TemporaryDirectory(prefix="matlab-comparison-")
+            )
+            work_dir = Path(temporary_directory)
+            keep_work_dir = False
         _run_matlab_driver(
             executable, work_dir, num_iterations, seed, simulation, timeout
         )
@@ -134,9 +135,6 @@ def run_matlab_python_roc_comparison(
             result.output_dir = work_dir
             _save_results(result, work_dir)
         return result
-    finally:
-        if not keep_work_dir:
-            temporary_directory.cleanup()
 
 
 def _run_matlab_driver(

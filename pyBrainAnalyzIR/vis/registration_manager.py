@@ -148,6 +148,7 @@ class _TriangleMeshCollection(Poly3DCollection):
         self._base_alpha = alpha
         self._order = np.zeros(0, dtype=int)
         super().__init__(np.zeros((0, 3, 3)), linewidths=0, rasterized=True)
+        self._facecolors2d = self._edgecolors2d = np.empty((0, 4))
         self.set_mesh(vertices, faces)
 
     def set_mesh(self, vertices, faces) -> None:
@@ -169,7 +170,7 @@ class _TriangleMeshCollection(Poly3DCollection):
         return self._base_alpha
 
     def do_3d_projection(self):
-        if not len(self._mesh_faces):
+        if self._mesh_faces.size == 0:
             PolyCollection.set_verts(self, np.zeros((0, 3, 2)))
             self._facecolors2d = self._edgecolors2d = np.empty((0, 4))
             return np.nan
@@ -231,7 +232,7 @@ class _LandmarkCollection(PathCollection):
                 text.set_visible(False)
 
     def do_3d_projection(self):
-        if not len(self._points):
+        if self._points.size == 0:
             self.set_offsets(np.zeros((0, 2)))
             return -np.inf
         count = len(self._points)
@@ -720,7 +721,7 @@ def refine_probe_fit_icp(
     normals = np.asarray(normals, dtype=float)
     normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
     center = fit.center
-    if not len(points):
+    if points.size == 0:
         return fit
     tree = cKDTree(vertices)
 
@@ -1005,6 +1006,7 @@ class RegistrationManager(QMainWindow):
         self._surface_cache = {}
         self._scalp_cache = {}
         self._head_position_cache = {}
+        self._scan_items = []
         self._base_display_levels = {}
         self._base_interaction_surfaces = ()
         self._base_landmarks = None
@@ -1955,7 +1957,7 @@ class RegistrationManager(QMainWindow):
         if cached is not None and cached[0] is model:
             return cached[1]
         mesh = getattr(getattr(model, "scalp", None), "mesh", None)
-        if mesh is None or not len(getattr(mesh, "vertices", ())):
+        if mesh is None or np.size(getattr(mesh, "vertices", ())) == 0:
             return None
         matrix = _model_matrix(model, "t_ijk2ras")
         vertices = _homogeneous(np.asarray(mesh.vertices), matrix)
@@ -1985,7 +1987,7 @@ class RegistrationManager(QMainWindow):
         """Move RAS points along rays from the head's center to where they cross the scalp."""
         scalp = self._scalp_ras(model)
         points = np.asarray(points_ras, dtype=float)
-        if scalp is None or not len(points):
+        if scalp is None or points.size == 0:
             return points
         try:
             center, _ = fit_sphere(np.array(list(self._head_landmarks_ras(model).values())))

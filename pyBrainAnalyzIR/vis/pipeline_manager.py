@@ -313,7 +313,6 @@ _KEEP_DEFAULT = _KeepDefault()
 
 def _option_value_to_json(value: Any) -> Any:
     """Serialize a single option value to a JSON-safe form."""
-    import pandas as pd
     if isinstance(value, PresetOption):
         # presets are stored by name; custom objects fall through below
         value = value.selection
@@ -343,7 +342,6 @@ def _option_value_from_json(raw: Any) -> Any:
     if not isinstance(raw, dict):
         return raw
     if "__dataframe__" in raw:
-        import pandas as pd
         return pd.DataFrame(**raw["__dataframe__"])
     if raw.get("__enum__"):
         return raw["name"]  # EnumOption resolves the member name on assignment
@@ -700,7 +698,7 @@ class PipelineManagerDialog(QDialog):
             for rec in recordings
         ) or bool(getattr(self.data, "statistics", {}))
         self.remove_previous_checkbox.setVisible(bool(has_analysis or self._initial_reset))
-        self.remove_previous_checkbox.toggled.connect(lambda: self._refresh_pipeline_list())
+        self.remove_previous_checkbox.toggled.connect(self._refresh_pipeline_list)
         right_layout.addWidget(self.remove_previous_checkbox)
         self.pipeline_list = QListWidget(right_panel)
         self.pipeline_list.setItemDelegate(PipelineFlowDelegate(self.pipeline_list))

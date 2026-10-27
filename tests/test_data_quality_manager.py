@@ -104,8 +104,6 @@ def test_psp_matches_cedalion_without_fallback(
 
 
 def test_metric_mask_uses_thresholds():
-    import numpy as np
-
     rec = _recording()
     _, sci = compute_quality_metric(rec, "sci")
     mask = metric_mask(sci, "sci", {"sci": 0.75})
@@ -145,8 +143,6 @@ def test_gui_exposes_gvtd_thresholds_window_and_display_mode():
 
 
 def test_mask_display_mode_applies_to_channel_detail_and_heatmap():
-    import numpy as np
-
     rec = _recording()
     window = DataQualityManager(rec)
     window._channel_display_mode.setCurrentIndex(1)
