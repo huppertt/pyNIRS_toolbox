@@ -277,7 +277,7 @@ def test_roi_then_glm_resolves_previous_output(analysis_recording, alias, datase
     # Keep an unrelated newer key to catch reliance on dictionary insertion order.
     rec["pooled"] = rec["conc"].copy()
     rec["unrelated"] = rec["conc"].copy()
-    tables = dict(table.groupby("name", sort=False))
+    tables = {name: rows for name, rows in table.groupby("name", sort=False)}
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "pooled"
     roi.options.update(weighted=False, overwrite=True)

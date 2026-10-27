@@ -127,10 +127,10 @@ def test_local_gls_matches_cedalion_channel_fit_without_missing_data():
         design.common.sel(chromo="HbO").values,
         columns=design.common.regressor.values,
     )
-    y = ts.sel(channel="S1D1", chromo="HbO").to_numpy()
+    y = pd.Series(ts.sel(channel="S1D1", chromo="HbO").to_numpy())
 
-    expected = cedalion_channel_fit(y, x.to_numpy(), "gls", ar_order=8)
-    actual = local_glm.solve._channel_fit(y, x.to_numpy(), "gls", ar_order=8)
+    expected = cedalion_channel_fit(y, x, "gls", ar_order=8)
+    actual = local_glm.solve._channel_fit(y, x, "gls", ar_order=8)
 
     np.testing.assert_array_equal(actual.params, expected.params)
     np.testing.assert_array_equal(actual.bse, expected.bse)

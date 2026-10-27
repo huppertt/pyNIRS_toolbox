@@ -12,6 +12,7 @@ import pytest
 pytest.importorskip("cedalion")
 
 import cedalion  # noqa: E402
+from cedalion.nirs import cw as nirs_cw  # noqa: E402
 from cedalion.io.snirf import read_snirf  # noqa: E402
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
 import pyBrainAnalyzIR.io.bids as bids_module  # noqa: E402
@@ -1161,7 +1162,7 @@ def test_bids_dataset_splits_and_reads_derivative_snirf_files(tmp_path):
     rec, _ = simData.Data(snr=10)
     rec.meta_data["subject"] = "subj_1"
     rec.meta_data["task"] = "finger"
-    rec["od"], _ = cedalion.nirs.int2od(rec["amp"], return_baseline=True)
+    rec["od"], _ = nirs_cw.int2od(rec["amp"], return_baseline=True)
     dset = DataSet([rec])
 
     write_bids_dataset(dset, tmp_path)
@@ -1191,7 +1192,7 @@ def test_write_bids_dataset_can_skip_derivative_snirf_files(tmp_path):
     rec, _ = simData.Data(snr=10)
     rec.meta_data["subject"] = "subj_1"
     rec.meta_data["task"] = "finger"
-    rec["od"], _ = cedalion.nirs.int2od(rec["amp"], return_baseline=True)
+    rec["od"], _ = nirs_cw.int2od(rec["amp"], return_baseline=True)
     dset = DataSet([rec])
 
     write_bids_dataset(dset, tmp_path, include_derivatives=False)

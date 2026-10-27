@@ -386,6 +386,9 @@ def test_symmetric_standard_positions_are_exact_mirrors_on_an_ellipsoid():
     import trimesh
     from pyBrainAnalyzIR.vis import standard_positions as sp
 
+    if not g2.template_1005():
+        pytest.skip("the 10-5 template (MNE) is not available")
+
     mesh = trimesh.creation.icosphere(subdivisions=5, radius=1.0)
     vertices = np.asarray(mesh.vertices) * [75.0, 95.0, 85.0] + [1.0, -2.0, 3.0]
     fiducials = {"Nz": [1, 93, 3], "Iz": [1, -97, 3], "LPA": [-74, -2, 3], "RPA": [76, -2, 3]}

@@ -1,7 +1,7 @@
 import cedalion.nirs
 import xarray as xr
 import pyBrainAnalyzIR.pipelines
-import cedalion.sigproc.motion_correct as motion_correct
+import cedalion.sigproc.motion as motion_correct
 import pyBrainAnalyzIR.sigproc.TDDR
 import pyBrainAnalyzIR.sigproc.Wavelet
 import pyBrainAnalyzIR.dataclasses.dataset
@@ -56,7 +56,7 @@ class MotionCorrectPCA(cedalion_module):
     Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook users and pipeline-manager users.
     Direct dependencies: ``cedalion.sigproc.quality.id_motion`` and
-    ``cedalion.sigproc.motion_correct.motion_correct_PCA``.
+    ``cedalion.sigproc.motion.motion_correct_PCA``.
     Tests: ``tests/test_pipeline_modules.py`` and
     ``tests/test_glm_quality_masks.py``.
     """

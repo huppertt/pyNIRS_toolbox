@@ -1,9 +1,8 @@
 import warnings
 
 import numpy as np
-import cedalion.nirs
+from cedalion.nirs import cw as nirs_cw
 import xarray as xr
-import cedalion.math.resample
 import pyBrainAnalyzIR.dataclasses.dataset
 from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks
 from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, quality_masks
@@ -109,7 +108,7 @@ class intensity_opticaldensity(cedalion_module):
     ``examples/07_StatisticsDataClass_Format.ipynb``, and
     ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook users and connected GLM pipeline steps.
-    Direct dependency: ``cedalion.nirs.int2od``.
+    Direct dependency: ``cedalion.nirs.cw.int2od``.
     Tests: ``tests/test_pipeline_modules.py`` and
     ``tests/test_analysis_pipeline.py``.
     """
@@ -129,7 +128,7 @@ class intensity_opticaldensity(cedalion_module):
                 self._runlocal(r)
             return rec
         else:
-            rec[self.outputName] = cedalion.nirs.int2od(rec[self.inputName], return_baseline=False)
+            rec[self.outputName] = nirs_cw.int2od(rec[self.inputName], return_baseline=False)
 
             return rec
 
@@ -140,7 +139,7 @@ class opticaldensity_intensity(cedalion_module):
     Notebook examples: ``examples/01_SimulatingData.ipynb``.
     Direct callers: simulated-data construction in
     ``pyBrainAnalyzIR.testing.simData.Data`` and notebook users.
-    Direct dependency: ``cedalion.nirs.od2int``.
+    Direct dependency: ``cedalion.nirs.cw.od2int``.
     Tests: ``tests/test_pipeline_modules.py``.
     """
     # Module to convert optical density data back to raw intensity
@@ -172,7 +171,7 @@ class opticaldensity_intensity(cedalion_module):
             else:
                 baseline = self.options['baseline']
 
-            rec[self.outputName] = cedalion.nirs.od2int(rec[self.inputName], baseline)
+            rec[self.outputName] = nirs_cw.od2int(rec[self.inputName], baseline)
             return rec
 
 
@@ -182,7 +181,7 @@ class conc2od(cedalion_module):
     Notebook examples: ``examples/01_SimulatingData.ipynb``.
     Direct callers: ``pyBrainAnalyzIR.testing.simData.Data`` and notebook
     users.
-    Direct dependency: ``cedalion.nirs.conc2od``.
+    Direct dependency: ``cedalion.nirs.cw.conc2od``.
     Tests: ``tests/test_pipeline_modules.py``.
     """
     # Module to convert concentration data to optical density
@@ -223,7 +222,7 @@ class conc2od(cedalion_module):
                     rec, rec[self.inputName], dpf, self.options['spectrum']
                 )
             else:
-                rec[self.outputName] = cedalion.nirs.conc2od(
+                rec[self.outputName] = nirs_cw.conc2od(
                     rec[self.inputName], rec.geo3d, dpf, self.options['spectrum'])
             return rec
 
@@ -236,7 +235,7 @@ class mbll(cedalion_module):
     ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook users and connected GLM steps.
     Direct dependency: Cedalion's modified Beer-Lambert implementation,
-    ``cedalion.nirs.od2conc``.
+    ``cedalion.nirs.cw.od2conc``.
     Tests: ``tests/test_pipeline_modules.py`` and
     ``tests/test_analysis_pipeline.py``.
     """
@@ -278,7 +277,7 @@ class mbll(cedalion_module):
                     rec, rec[self.inputName], dpf, self.options['spectrum']
                 )
             else:
-                rec[self.outputName] = cedalion.nirs.od2conc(
+                rec[self.outputName] = nirs_cw.od2conc(
                     rec[self.inputName], rec.geo3d, dpf, self.options['spectrum'])
             return rec
 

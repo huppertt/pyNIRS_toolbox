@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("cedalion")
 
 import cedalion.nirs  # noqa: E402
+from cedalion.nirs import cw as nirs_cw  # noqa: E402
 
 from pyBrainAnalyzIR.forward import ApproxSlab, slab_mesh  # noqa: E402
 from pyBrainAnalyzIR.math.connectivity import compute_connectivity  # noqa: E402
@@ -85,7 +86,7 @@ def test_connectivity_shortsep_structure():
 def test_connectivity_shortsep_truth_is_recovered_after_short_regression():
     np.random.seed(3)
     rec, truth = simData.connectivity_shortsep(sigma=0, snr=2)
-    ts_long, _ = cedalion.nirs.split_long_short_channels(cedalion.nirs.int2od(rec["amp"]), rec.geo3d)
+    ts_long, _ = cedalion.nirs.split_long_short_channels(nirs_cw.int2od(rec["amp"]), rec.geo3d)
     df = compute_connectivity(ts_long, robust=False, AR=10)
     df = df[(df.Channel_to != df.Channel_from) & (df.Type_to == df.Type_from)]
     is_true = np.array([truth.sel(channel_to=r.Channel_to, channel_from=r.Channel_from).item() != 0

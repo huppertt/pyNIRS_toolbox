@@ -20,7 +20,7 @@ class ApproxSlab:
         mesh: cedalion ``Voxels`` (or list of them) holding the node positions.
         prop: optical properties (e.g. ``pyBrainAnalyzIR.media.tissues.brain``);
             its wavelengths define the wavelengths of the model.
-        geo3d: cedalion LabeledPointCloud with the optode positions.
+        geo3d: cedalion LabeledPoints with the optode positions.
         channel: xr.DataArray of channel labels with ``source`` and ``detector``
             coordinates (e.g. ``rec['amp'].channel``).
         Fm: modulation frequency in MHz (0 for continuous wave).
