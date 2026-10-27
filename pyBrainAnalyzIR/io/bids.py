@@ -10,7 +10,8 @@ from collections import OrderedDict
 from cedalion.dataclasses.geometry import PointType
 import cedalion.xrutils as xrutils
 
-from cedalion.io.snirf import read_snirf, write_snirf
+from cedalion.io.snirf import read_snirf
+from pyBrainAnalyzIR.io.snirf import write_snirf
 from datetime import datetime
 from typing import Any
 

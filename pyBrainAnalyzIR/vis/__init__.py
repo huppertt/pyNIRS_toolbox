@@ -8,6 +8,7 @@ from pyBrainAnalyzIR.vis.data_masking_manager import (
     data_masking_manager,
 )
 from pyBrainAnalyzIR.vis.roi_manager import ROIDefinitionDialog, roi_manager
+from pyBrainAnalyzIR.vis.registration_manager import RegistrationManager, registration_manager
 
 __all__ = [
     "NIRSviewIR",
@@ -21,4 +22,6 @@ __all__ = [
     "data_masking_manager",
     "ROIDefinitionDialog",
     "roi_manager",
+    "RegistrationManager",
+    "registration_manager",
 ]
