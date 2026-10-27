@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -438,7 +437,7 @@ def roi_manager(data: Any, roi_tables: Optional[dict] = None, parent=None) -> Op
     """
     if data is None:
         raise TypeError("data must be a recording or DataSet.")
-    app = QApplication.instance() or QApplication(sys.argv or ["roi_manager"])
+    _ = QApplication.instance() or QApplication(sys.argv or ["roi_manager"])
     dialog = ROIDefinitionDialog(data, roi_tables=roi_tables, parent=parent)
     if dialog.exec() != QDialog.Accepted:
         return None

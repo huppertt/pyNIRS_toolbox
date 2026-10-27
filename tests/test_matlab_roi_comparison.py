@@ -7,8 +7,8 @@ import pytest
 
 pytest.importorskip("cedalion")
 
-from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable
-from pyBrainAnalyzIR.testing.matlab_roi_comparison import (
+from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable  # noqa: E402
+from pyBrainAnalyzIR.testing.matlab_roi_comparison import (  # noqa: E402
     run_matlab_python_roi_glm_comparison,
 )
 

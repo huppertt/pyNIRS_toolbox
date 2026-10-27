@@ -71,8 +71,10 @@ def test_register_probe_2d_recovers_probe_and_pins_anchors(sphere_head):
     # A directional attractor can replace one anchor.
     two = {GRID.index("FC3"): "FC3", GRID.index("CP4"): "CP4"}
     xy = _layout(head, GRID)
-    tail, tip = xy[GRID.index("C1")], xy[GRID.index("C1")] + (xy[GRID.index("Cz")]
-                                                             - xy[GRID.index("C1")]) * 0.3
+    tail = xy[GRID.index("C1")]
+    tip = xy[GRID.index("C1")] + (
+        xy[GRID.index("Cz")] - xy[GRID.index("C1")]
+    ) * 0.3
     guided = g2.register_probe_2d(xy, two, [(tail, tip, "C2")], head, vertices)
     assert np.linalg.norm(guided.positions - truth, axis=1).max() < 10
 

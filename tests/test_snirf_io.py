@@ -3,13 +3,13 @@ import pytest
 
 pytest.importorskip("snirf")
 
-import cedalion
-import cedalion.dataclasses as cdc
-import xarray as xr
-from cedalion.dataclasses import PointType
-from cedalion.io.snirf import read_snirf
+import cedalion  # noqa: E402
+import cedalion.dataclasses as cdc  # noqa: E402
+import xarray as xr  # noqa: E402
+from cedalion.dataclasses import PointType  # noqa: E402
+from cedalion.io.snirf import read_snirf  # noqa: E402
 
-from pyBrainAnalyzIR.io.snirf import probe_landmarks, write_snirf
+from pyBrainAnalyzIR.io.snirf import probe_landmarks, write_snirf  # noqa: E402
 
 
 def _recording(geo3d=True, geo2d_units="cm"):

@@ -7,11 +7,11 @@ import pytest
 import xarray as xr
 
 pytest.importorskip("cedalion")
-from pyBrainAnalyzIR.dataclasses.dataset import DataSet
-from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
-from pyBrainAnalyzIR.pipelines.modules.glm import GLM
-from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
-from pyBrainAnalyzIR.sigproc.roi import roi_average
+from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.glm import GLM  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage  # noqa: E402
+from pyBrainAnalyzIR.sigproc.roi import roi_average  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

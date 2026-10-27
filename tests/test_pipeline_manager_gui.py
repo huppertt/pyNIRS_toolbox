@@ -170,8 +170,10 @@ def test_flow_arrows_menu_reordering_and_explicit_inputs(simulated_recording, qt
 
     seen = []
     build_menu = dlg._input_flow_menu
+
     def choose_previous(index):
         menu = build_menu(index)
+
         def activate():
             seen.extend(a.text() for a in menu.actions())
             menu.actions()[0].trigger()

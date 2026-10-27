@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
-from PySide6.QtCore import QEventLoop, QTimer
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
+from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
 registration = importlib.import_module("pyBrainAnalyzIR.vis.registration_manager")
 pytestmark = [pytest.mark.requires_qt, pytest.mark.requires_cedalion]
@@ -42,6 +42,7 @@ def test_atlas_uses_notebook_two_surface_loader(monkeypatch, tmp_path, atlas, lo
     monkeypatch.setattr(cedalion.datasets, loader, lambda: (str(tmp_path), {"gm": "gm.nii"}, "landmarks.json"))
     calls = []
     model = object()
+
     def build(**kwargs):
         calls.append(kwargs)
         return model
@@ -131,6 +132,7 @@ def test_loading_error_is_visible_and_retains_previous_model(qt_app, monkeypatch
     _wait_for_load(window)
     errors = []
     monkeypatch.setattr(QMessageBox, "critical", lambda *args: errors.append(args[-1]))
+
     def fail(atlas):
         raise OSError("atlas unavailable")
     monkeypatch.setattr(registration, "load_atlas_head_model", fail)
@@ -160,6 +162,7 @@ def test_display_face_limit_preserves_model_and_scene_is_cached(monkeypatch):
     assert len(coarse_faces) <= registration.INTERACTION_FACE_LIMIT
     calls = []
     model = _model()
+
     def load(atlas):
         calls.append(atlas)
         return model
@@ -223,6 +226,7 @@ def test_scene_builds_1010_landmarks_or_reports_why_not(monkeypatch):
     assert (np.einsum("ij,ij->i", normals, points) > 0).all()
 
     registration._load_atlas_scene.cache_clear()
+
     def fail(m):
         raise ValueError("missing fiducials")
     monkeypatch.setattr(registration, "build_1010_landmarks", fail)
@@ -250,6 +254,7 @@ def test_landmark_toggle_hides_back_facing_points_and_labels(qt_app, monkeypatch
     assert window.landmarks_button.isEnabled() and window.landmarks_button.isChecked()
     assert collection in window.axes.collections
     assert "6 10-10 landmarks" in window.statusBar().currentMessage()
+
     def shown():
         return {label for label, text in zip(labels, collection.texts) if text.get_visible()}
     window._set_preset_view("Front")
@@ -307,6 +312,7 @@ def test_display_resolution_selector_swaps_meshes_and_preserves_camera(qt_app, m
     window.load_atlas("Colin-27")
     _wait_for_load(window)
     full = len(model.brain.mesh.faces)
+
     def counts():
         return [c.face_count for c in window._surface_collections]
     assert max(counts()) <= 12000 and min(counts()) > 4000
@@ -325,9 +331,15 @@ def test_display_resolution_selector_swaps_meshes_and_preserves_camera(qt_app, m
         assert window.statusBar().currentMessage().startswith(level)
     x = (window.axes.bbox.x0 + window.axes.bbox.x1) / 2
     y = (window.axes.bbox.y0 + window.axes.bbox.y1) / 2
-    window.canvas.callbacks.process("button_press_event", MouseEvent("button_press_event", window.canvas, x, y, button=1))
+    window.canvas.callbacks.process(
+        "button_press_event",
+        MouseEvent("button_press_event", window.canvas, x, y, button=1),
+    )
     assert max(counts()) <= registration.INTERACTION_FACE_LIMIT
-    window.canvas.callbacks.process("button_release_event", MouseEvent("button_release_event", window.canvas, x, y, button=1))
+    window.canvas.callbacks.process(
+        "button_release_event",
+        MouseEvent("button_release_event", window.canvas, x, y, button=1),
+    )
     assert counts() == [full, len(model.scalp.mesh.faces)]
     window.close()
 
@@ -448,6 +460,7 @@ def test_close_during_load_defers_cleanup_without_rendering_or_dialogs(qt_app, m
 
     started, release = Event(), Event()
     model = _model()
+
     def load(atlas):
         started.set()
         if not release.wait(5):
@@ -589,6 +602,7 @@ def test_head_size_panel_resizes_atlas_linked_and_unlinked(qt_app, monkeypatch):
 
 def test_head_size_panel_disabled_when_measurement_unavailable(qt_app, monkeypatch):
     monkeypatch.setattr(registration, "load_atlas_head_model", lambda atlas: _model())
+
     def fail(m):
         raise ValueError("no fiducials")
     monkeypatch.setattr(registration, "build_1010_landmarks", fail)
@@ -626,6 +640,7 @@ def _recording(subject=None):
 
 def _tree_leaves(window):
     leaves = []
+
     def walk(item):
         for i in range(item.childCount()):
             child = item.child(i)
@@ -760,7 +775,6 @@ def test_fit_probe_to_head_recovers_rotation_translation_and_axis_scale():
         registration.fit_probe_to_head(probe[:2], head[:2], np.zeros(3))
 
 
-
 def _ellipsoid_head(axes=(80.0, 100.0, 90.0)):
     import trimesh
 
@@ -781,7 +795,10 @@ def test_icp_refines_fiducial_fit_with_head_points():
     on_scalp = directions / np.linalg.norm(directions / axes, axis=1, keepdims=True)
     fiducials = np.array([[0, axes[1], 0], [-axes[0], 0, 0], [axes[0], 0, 0]])
     rotation, translation, true_scale = _rotation_z(15), np.array([3.0, -5, 4]), 1.12
-    to_probe = lambda head: (head / true_scale - translation) @ rotation
+
+    def to_probe(head):
+        return (head / true_scale - translation) @ rotation
+
     probe_fiducials, probe_points = to_probe(fiducials), to_probe(on_scalp)
     # Atlas fiducials 8 mm inside the scalp (as on Colin-27) bias the fiducial-only fit.
     atlas_fiducials = fiducials * (1 - 8 / np.linalg.norm(fiducials, axis=1, keepdims=True))
@@ -812,13 +829,14 @@ def test_icp_refines_fiducial_fit_with_head_points():
         initial, probe_fiducials, atlas_fiducials, np.zeros((0, 3)), vertices, normals,
     ) is initial
 
+
 def _geo3d_recording(points, labels, types, units="mm", subject=None):
     import cedalion.dataclasses as cdc
 
     geo3d = cdc.build_labeled_points(np.asarray(points, float), crs="digitized",
                                      units=units, labels=labels, types=types)
-    sources = [l for l, t in zip(labels, types) if str(t).endswith("SOURCE")]
-    detectors = [l for l, t in zip(labels, types) if str(t).endswith("DETECTOR")]
+    sources = [label for label, t in zip(labels, types) if str(t).endswith("SOURCE")]
+    detectors = [label for label, t in zip(labels, types) if str(t).endswith("DETECTOR")]
     pairs = [(s, d) for s in sources for d in detectors]
     import xarray as xr
     amp = xr.DataArray(
@@ -970,7 +988,10 @@ def test_register_to_geo3d_menu_fits_landmarks_and_draws_probe_on_head(qt_app, m
     np.testing.assert_allclose(on_head.pint.dequantify().values[:3], optodes_head, atol=0.1)
     subject = window.registered_geo3d(0, "subject").pint.dequantify().values
     original = scan.geo3d.pint.to("mm").pint.dequantify().values
-    pair = lambda p: np.linalg.norm(p[0] - p[1])
+
+    def pair(points):
+        return np.linalg.norm(points[0] - points[1])
+
     head_to_subject = transforms["head_to_subject"].pint.dequantify().values
     state = window.scan_registration[0]
     if method == "resize_probe":
@@ -1162,7 +1183,9 @@ def test_head_size_edits_give_selected_scans_their_own_size(qt_app, monkeypatch)
     )
     window.load_atlas("Colin-27")
     _wait_for_load(window)
-    keys = lambda: [state.head_size_key for state in window.scan_registration]
+
+    def keys():
+        return [state.head_size_key for state in window.scan_registration]
 
     window._scan_item_clicked(_tree_leaves(window)[0], 0)
     window.set_head_scale([1.1] * 3)

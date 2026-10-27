@@ -654,8 +654,12 @@ def midsagittal_plane(head_positions: dict, scalp_vertices=None, tree=None):
     """
     head = {canonical_label(k): np.asarray(v, dtype=float) for k, v in head_positions.items()}
     midline = np.array([v for k, v in head.items() if k.endswith("z")])
-    right = next(((head[r] - head[l]) for l, r in (("LPA", "RPA"), ("T7", "T8"))
-                  if l in head and r in head), np.array([1.0, 0, 0]))
+    right = next(
+        (head[right_label] - head[left_label]
+         for left_label, right_label in (("LPA", "RPA"), ("T7", "T8"))
+         if left_label in head and right_label in head),
+        np.array([1.0, 0, 0]),
+    )
     if len(midline) >= 3:
         point = midline.mean(axis=0)
         normal = np.linalg.svd(midline - point)[2][-1]
