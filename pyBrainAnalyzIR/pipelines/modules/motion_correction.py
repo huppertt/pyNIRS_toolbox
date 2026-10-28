@@ -3,6 +3,7 @@ import xarray as xr
 import pyBrainAnalyzIR.pipelines
 import cedalion.sigproc.motion as motion_correct
 import pyBrainAnalyzIR.sigproc.TDDR
+from pyBrainAnalyzIR.sigproc.motion_pca import motion_correct_pca, motion_correct_pca_recurse
 import pyBrainAnalyzIR.sigproc.Wavelet
 import pyBrainAnalyzIR.dataclasses.dataset
 import pyBrainAnalyzIR.pipelines.pipeline
@@ -56,7 +57,7 @@ class MotionCorrectPCA(cedalion_module):
     Notebook examples: ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook users and pipeline-manager users.
     Direct dependencies: ``cedalion.sigproc.quality.id_motion`` and
-    ``cedalion.sigproc.motion.motion_correct_PCA``.
+    :mod:`pyBrainAnalyzIR.sigproc.motion_pca` (Cedalion's PCA with edge-case guards).
     Tests: ``tests/test_pipeline_modules.py`` and
     ``tests/test_glm_quality_masks.py``.
     """
@@ -163,22 +164,20 @@ class MotionCorrectPCA(cedalion_module):
                 )
                 ma_mask = _combine_recording_masks(rec, rec[inputName], ma_mask)
                 ma_mask = _time_inclusion_mask(ma_mask)
-                corrected, _, _ = motion_correct.motion_correct_PCA(
-                    rec[inputName],
-                    nSV=self.options['nSV'],
-                    tInc=ma_mask,
+                corrected, _, _ = motion_correct_pca(
+                    rec[inputName], ma_mask, n_sv=self.options['nSV'],
                 )
                 rec[outputName] = corrected
             else:
-                rec[outputName] = motion_correct.motion_correct_PCA_recurse(
+                rec[outputName] = motion_correct_pca_recurse(
                     rec[inputName],
-                    nSV=self.options['nSV'],
+                    n_sv=self.options['nSV'],
                     t_motion=self.options['t_motion'],
                     t_mask=self.options['t_mask'],
                     stdev_thresh=self.options['stdev_thresh'],
                     amp_thresh=self.options['amp_thresh'],
-                    maxIter=self.options['maxIter'],
-                )
+                    max_iter=self.options['maxIter'],
+                )[0]
             return rec
 
 

@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
-from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
+from PySide6.QtCore import QEvent, QEventLoop, QTimer  # noqa: E402
 from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
 registration = importlib.import_module("pyBrainAnalyzIR.vis.registration_manager")
@@ -28,27 +28,54 @@ def clear_scene_cache():
     registration._load_atlas_scene.cache_clear()
 
 
+@pytest.mark.parametrize("parcels_available", [True, False])
 @pytest.mark.parametrize("supplied_surfaces", [False, True])
-@pytest.mark.parametrize("atlas,loader", [
-    ("Colin-27", "get_colin27_segmentation"), ("ICBM", "get_icbm152_segmentation"),
+@pytest.mark.parametrize("atlas,loader,parcel_loader", [
+    ("Colin-27", "get_colin27_segmentation", "get_colin27_parcel_file"),
+    ("ICBM", "get_icbm152_segmentation", "get_icbm152_parcel_file"),
 ])
-def test_atlas_uses_notebook_two_surface_loader(monkeypatch, tmp_path, atlas, loader, supplied_surfaces):
-    import cedalion.datasets
-    from cedalion.imagereco.forward_model import TwoSurfaceHeadModel
+def test_legacy_atlas_uses_notebook_two_surface_loader(
+    tmp_path, atlas, loader, parcel_loader, supplied_surfaces, parcels_available,
+):
+    """Cedalion < 26.5: notebook 44's surfaces plus a separate parcellation file."""
+    import json
 
     if supplied_surfaces:
         (tmp_path / "mask_brain.obj").touch()
         (tmp_path / "mask_scalp.obj").touch()
-    monkeypatch.setattr(cedalion.datasets, loader, lambda: (str(tmp_path), {"gm": "gm.nii"}, "landmarks.json"))
+    parcel_file = tmp_path / "parcels.json"
+    parcel_file.write_text(json.dumps([
+        {"Label": "SomMotA 4 R", "Color": [0.1, 0.2, 0.3], "Vertices": [1, 2], "Region": "M1"},
+        {"Label": "Background+FreeSurfer_Defined_Medial_Wall L", "Color": [0, 0, 0],
+         "Vertices": [3], "Region": ""},
+    ]))
+
+    def fetch_parcels():
+        if not parcels_available:
+            raise OSError("offline")
+        return str(parcel_file)
+
+    datasets = SimpleNamespace(**{
+        loader: lambda: (str(tmp_path), {"gm": "gm.nii"}, "landmarks.json"),
+        parcel_loader: fetch_parcels,
+    })
     calls = []
-    model = object()
+    model = SimpleNamespace()
 
     def build(**kwargs):
         calls.append(kwargs)
         return model
     method = "from_surfaces" if supplied_surfaces else "from_segmentation"
-    monkeypatch.setattr(TwoSurfaceHeadModel, method, build)
-    assert registration.load_atlas_head_model(atlas) is model
+    head_model_class = SimpleNamespace(**{method: build})
+
+    def load():
+        return registration._load_legacy_atlas_head_model(atlas, datasets, head_model_class)
+    if supplied_surfaces and not parcels_available:
+        with pytest.raises(OSError, match="offline"):
+            load()
+        assert not calls
+        return
+    assert load() is model
     expected = {
         "segmentation_dir": str(tmp_path), "mask_files": {"gm": "gm.nii"},
         "landmarks_ras_file": "landmarks.json",
@@ -59,7 +86,48 @@ def test_atlas_uses_notebook_two_surface_loader(monkeypatch, tmp_path, atlas, lo
             brain_surface_file=str(tmp_path / "mask_brain.obj"),
             scalp_surface_file=str(tmp_path / "mask_scalp.obj"),
         )
-    assert calls == [expected]
+    # Notebook 44's parcellation labels the supplied brain surface's vertices.
+    if supplied_surfaces:
+        assert calls == [dict(expected, parcel_file=str(parcel_file))]
+        assert set(model.parcel_colors) == {"SomMotA_4_RH", "Background+FreeSurfer_Defined_Medial_Wall_LH"}
+        np.testing.assert_allclose(model.parcel_colors["SomMotA_4_RH"], (0.1, 0.2, 0.3))
+    else:
+        assert calls == [expected] and not hasattr(model, "parcel_colors")
+
+
+@pytest.mark.parametrize("atlas,key", [("Colin-27", "colin27"), ("ICBM", "icbm152")])
+def test_atlas_uses_cedalion_head_model_files(monkeypatch, tmp_path, atlas, key):
+    """Cedalion >= 26.5: surfaces, vertex parcel table and 0-255 parcel colors."""
+    import json
+
+    import cedalion.data
+
+    (tmp_path / "parcel_colors.json").write_text(json.dumps({"SomMotA_4_RH": [51, 102, 255]}))
+    files = SimpleNamespace(
+        basedir=tmp_path, mask_files={"gm": "gm.nii"}, landmarks_ras_file="landmarks.mrk.json",
+        brain_vertex_coordinates="brain_vertex_coordinates.csv", scalp_surface_obj="mask_scalp.obj",
+        brain_surface_obj="mask_brain.obj", parcel_colors="parcel_colors.json",
+    )
+    monkeypatch.setattr(cedalion.data, f"get_{key}_headmodel_files", lambda: files)
+    calls = []
+    model = SimpleNamespace()
+
+    def build(**kwargs):
+        calls.append(kwargs)
+        return model
+    head_model_class = registration._two_surface_head_model_class()
+    monkeypatch.setattr(head_model_class, "from_surfaces", build)
+    assert registration.load_atlas_head_model(atlas) is model
+    assert calls == [{
+        "segmentation_dir": str(tmp_path), "mask_files": {"gm": "gm.nii"},
+        "brain_surface_file": str(tmp_path / "mask_brain.obj"),
+        "scalp_surface_file": str(tmp_path / "mask_scalp.obj"),
+        "landmarks_ras_file": str(tmp_path / "landmarks.mrk.json"),
+        "coordinates_file": str(tmp_path / "brain_vertex_coordinates.csv"),
+        "brain_face_count": None, "scalp_face_count": None,
+    }]
+    np.testing.assert_allclose(model.parcel_colors["SomMotA_4_RH"], (0.2, 0.4, 1.0))
+    assert "no brain parcel" in model.parcel_load_error
     with pytest.raises(ValueError, match="Unknown atlas"):
         registration.load_atlas_head_model("missing")
 
@@ -92,7 +160,7 @@ def test_menus_and_async_mesh_rendering(qt_app, monkeypatch):
     monkeypatch.setattr(registration, "load_atlas_head_model", lambda atlas: model)
     window = registration.RegistrationManager()
     assert [a.text() for a in window.menuBar().actions()] == [
-        "Load Head Model", "fNIRS Registration", "Forward Models",
+        "Load Head Model", "fNIRS Registration", "Regions-of-Interest", "Forward Models",
     ]
     subject = window.load_menu.actions()[1].menu()
     assert [a.text() for a in subject.actions()] == [
@@ -309,7 +377,7 @@ def test_display_resolution_selector_swaps_meshes_and_preserves_camera(qt_app, m
     combo = window.resolution_combo
     assert combo.parent() is window.view_group
     assert [combo.itemText(i) for i in range(combo.count())] == ["Low", "Medium", "High"]
-    assert combo.currentText() == "Low"
+    assert combo.currentText() == "High" == window.display_resolution
     window.resolution_combo.setCurrentText("Medium")
     window.load_atlas("Colin-27")
     _wait_for_load(window)
@@ -407,6 +475,7 @@ def test_exclusive_drag_modes_and_sidebar(qt_app, mode):
 
 def test_preset_buttons_reset_camera_angles_but_preserve_limits(qt_app):
     window = registration.RegistrationManager()
+    assert (window.axes.elev, window.axes.azim) == (45, 135)
     expected_views = [
         ("Left-rear", (45, -135)), ("Rear", (0, -90)), ("Right-rear", (45, -45)),
         ("Left", (0, 180)), ("Top", (90, -90)), ("Right", (0, 0)),
@@ -430,6 +499,17 @@ def test_preset_buttons_reset_camera_angles_but_preserve_limits(qt_app):
         assert window.axes.get_ylim() == (1, 4)
         assert window.axes.get_zlim() == (-1, 2)
         assert window.interaction_mode == "off"
+    window.close()
+
+
+def test_initial_head_uses_left_front_view_and_head_switch_preserves_camera(qt_app):
+    window = registration.RegistrationManager()
+    window.add_head_model("First", _model())
+    assert (window.axes.elev, window.axes.azim, window.axes.roll) == (45, 135, 0)
+    window.axes.view_init(elev=17, azim=23, roll=5)
+    window.add_head_model("Second", _model())
+    window._show_head("Second", "Second")
+    assert (window.axes.elev, window.axes.azim, window.axes.roll) == (17, 23, 5)
     window.close()
 
 
@@ -1401,3 +1481,218 @@ def test_make_registration_symmetric_averages_close_mirror_pairs(qt_app, monkeyp
     drawn = window._scan_display_points(index)
     np.testing.assert_allclose(drawn[:6], symmetric, atol=1e-6)  # ijk == RAS for this head
     window.close()
+
+
+def _parcel_model():
+    """Sphere head whose brain vertices carry cedalion's ``parcel`` coordinate."""
+    import trimesh
+    import xarray as xr
+
+    brain = trimesh.creation.icosphere(subdivisions=3, radius=70)
+    x, z = brain.vertices[:, 0], brain.vertices[:, 2]
+    labels = np.where(x < 0, "Left_A_LH", "Right_B_RH").astype(object)
+    labels[(x < 0) & (z < 0)] = "Left_C_LH"
+    labels[np.abs(x) < 8] = "Background+FreeSurfer_Defined_Medial_Wall_LH"
+    vertices = xr.DataArray(np.asarray(brain.vertices), dims=("label", "ijk"),
+                            coords={"parcel": ("label", labels.astype(str))})
+    return SimpleNamespace(
+        brain=SimpleNamespace(mesh=brain, vertices=vertices),
+        scalp=SimpleNamespace(mesh=trimesh.creation.icosphere(subdivisions=1, radius=90)),
+        parcel_colors={"Left_A_LH": (1.0, 0.0, 0.0), "Right_B_RH": (0.0, 0.0, 1.0)},
+    )
+
+
+def _face_pixel(window, face):
+    """Canvas pixel of the centroid of displayed brain face ``face``."""
+    from mpl_toolkits.mplot3d import proj3d
+
+    brain = window._surface_collections[0]
+    centroid = brain._mesh_vertices[brain._mesh_faces[face]].mean(axis=0)
+    x, y, _ = proj3d.proj_transform(*centroid, window.axes.M)
+    return window.axes.transData.transform((x, y))
+
+
+def test_show_parcellations_colors_brain_and_names_parcel_under_cursor(qt_app, monkeypatch):
+    from matplotlib.colors import to_rgba
+
+    window = registration.RegistrationManager()
+    window.resize(900, 700)
+    window.add_head_model("Plain", _model())
+    action = window.parcels_action
+    assert action.isCheckable() and not action.isEnabled()
+    assert not window.depth_map_action.isEnabled()
+    assert window.depth_map_action.text() == "Show Depth Map"
+    assert "no brain parcellation" in action.toolTip()
+
+    entry = window.add_head_model("Parcels", _parcel_model())
+    parcels = entry.scene.parcels
+    assert parcels.names == ("Left_A_LH", "Left_C_LH", "Right_B_RH")  # medial wall is not a parcel
+    assert window.depth_map_action.isEnabled()
+    window._show_head("Parcels", "Parcels")
+    assert action.isEnabled() and "3 parcels" in action.toolTip()
+    window.axes.view_init(elev=0, azim=0)  # looking at the right hemisphere's lateral side
+    window.canvas.draw()
+    brain = window._surface_collections[0]
+    ivory = np.asarray(to_rgba("ivory")[:3])
+
+    def hue(colors):
+        return colors / colors.max(axis=1, keepdims=True)
+
+    assert brain.face_parcels is None
+    assert np.allclose(hue(brain._mesh_facecolors[:, :3]), ivory, atol=0.02)
+
+    action.setChecked(True)
+    assert window.parcels_visible and "3 brain parcels" in window.statusBar().currentMessage()
+    window.canvas.draw()
+    faces = brain.face_parcels
+    assert len(faces) == brain.face_count
+    # Shaded face colors keep each parcel's hue: blue faces on the right, red on the upper left.
+    colors = brain._mesh_facecolors[:, :3]
+    right = faces == parcels.names.index("Right_B_RH")
+    upper_left = faces == parcels.names.index("Left_A_LH")
+    assert (colors[right, 2] > colors[right, 0]).all()
+    assert (colors[upper_left, 0] > colors[upper_left, 2]).all()
+    wall = faces < 0
+    assert wall.any() and np.allclose(hue(colors[wall]), ivory, atol=0.02)
+
+    # The front-most right-hemisphere face under the cursor is named.
+    centroids = brain._mesh_vertices[brain._mesh_faces].mean(axis=1)
+    front = int(np.argmax(np.where(right, centroids[:, 0], -np.inf)))
+    assert window.parcel_at(*_face_pixel(window, front)) == "Right_B_RH"
+    assert window.parcel_at(-50, -50) is None
+
+    x, y = _face_pixel(window, front)
+    window._hover_parcel(SimpleNamespace(inaxes=window.axes, x=x, y=y))
+    assert not window.parcel_info.isHidden()
+    assert "Right_B_RH" in window.parcel_info.toPlainText()
+    assert "Description:" in window.parcel_info.toPlainText()
+    window._hover_parcel(SimpleNamespace(inaxes=None, x=x, y=y))
+    assert not window.parcel_info.isHidden()
+    assert window._parcel_info_hide_timer.isActive()
+    window._parcel_info_hide_timer.stop()
+    window._hide_parcel_info()
+    assert window.parcel_info.isHidden()
+
+    # Every display resolution (and the drag-time mesh) carries the parcels.
+    for level in ("Medium", "High"):
+        window._set_display_resolution(level)
+        assert len(brain.face_parcels) == brain.face_count
+    window._begin_interaction(SimpleNamespace(inaxes=window.axes, button=1))
+    assert np.array_equal(brain.face_parcels, parcels.interaction_faces)
+    window._end_interaction(None)
+
+    action.setChecked(False)
+    assert brain.face_parcels is None and window.parcel_at(x, y) is None
+    assert np.allclose(hue(brain._mesh_facecolors[:, :3]), ivory, atol=0.02)
+    window._show_head("Plain", "Plain")
+    assert not action.isEnabled() and not window.parcels_visible
+    window.close()
+
+
+def test_vertex_parcels_require_one_label_per_brain_vertex():
+    model = _parcel_model()
+    assert len(registration._vertex_parcels(model)) == len(model.brain.mesh.vertices)
+    model.brain.vertices = model.brain.vertices.isel(label=slice(1, None))
+    assert registration._vertex_parcels(model) is None
+    assert registration._vertex_parcels(_model()) is None
+
+
+def test_surface_parcellation_level_and_hover_information(qt_app, monkeypatch):
+    model = _parcel_model()
+    labels = model.brain.vertices.coords["parcel"].values
+    replacements = {
+        "Left_A_LH": "SomMotA_1_LH", "Left_C_LH": "SomMotA_2_LH",
+        "Right_B_RH": "SomMotA_1_RH",
+    }
+    model.brain.vertices = model.brain.vertices.assign_coords(
+        parcel=("label", [replacements.get(label, label) for label in labels])
+    )
+    window = registration.RegistrationManager()
+    window.add_head_model("Parcels", model)
+    window.parcels_action.setChecked(True)
+    assert not window.show_subregion_parcels
+    assert window._active_parcels.names == ("Left Sensorimotor cortex", "Right Sensorimotor cortex")
+    window.axes.view_init(elev=0, azim=180)
+    window.canvas.draw()
+    brain = window._surface_collections[0]
+    centroids = brain._mesh_vertices[brain._mesh_faces].mean(axis=1)
+    front = int(np.argmin(centroids[:, 0]))
+    x, y = _face_pixel(window, front)
+    assert window.parcel_at(x, y) == "Left Sensorimotor cortex"
+    window._hover_parcel(SimpleNamespace(inaxes=window.axes, x=x, y=y))
+    text = window.parcel_info.toPlainText()
+    assert "SomMotA_1_LH" in text and "SomMotA_2_LH" in text
+    assert "Description:" in text and "central sulcus" in text
+    window._hover_parcel(SimpleNamespace(inaxes=None, x=x, y=y))
+    assert window._parcel_info_hide_timer.isActive()
+    window.eventFilter(window.parcel_info.viewport(), QEvent(QEvent.Type.Enter))
+    assert not window._parcel_info_hide_timer.isActive()
+    monkeypatch.setattr(window.parcel_info, "underMouse", lambda: True)
+    window._hide_parcel_info()
+    assert not window.parcel_info.isHidden()
+    monkeypatch.setattr(window.parcel_info, "underMouse", lambda: False)
+    window.eventFilter(window.parcel_info.viewport(), QEvent(QEvent.Type.Leave))
+    assert window._parcel_info_hide_timer.isActive()
+    window._hover_parcel(SimpleNamespace(inaxes=window.axes, x=x, y=y))
+    assert not window._parcel_info_hide_timer.isActive()
+    menu = window._make_brain_parcellation_menu()
+    coarse, fine = menu.actions()
+    assert coarse.isChecked() and not fine.isChecked()
+    fine.trigger()
+    assert fine.isChecked() and not coarse.isChecked()
+    assert window.parcel_info.isHidden()
+    window.canvas.draw()
+    assert window.parcel_at(x, y) in ("SomMotA_1_LH", "SomMotA_2_LH")
+    window._hover_parcel(SimpleNamespace(inaxes=window.axes, x=x, y=y))
+    assert "Larger region: Left Sensorimotor cortex" in window.parcel_info.toPlainText()
+    for level in ("Medium", "High"):
+        window._set_display_resolution(level)
+        assert len(brain.face_parcels) == brain.face_count
+    coarse.trigger()
+    window._begin_interaction(SimpleNamespace(inaxes=window.axes, button=1))
+    np.testing.assert_array_equal(brain.face_parcels, window._larger_parcels.interaction_faces)
+    window._end_interaction(None)
+    window.parcels_action.setChecked(False)
+    assert window.parcel_info.isHidden()
+    window.close()
+
+
+def test_depth_map_scan_uses_registered_geo3d_head_coordinates(qt_app):
+    scan, truth = _probe_scan(np.eye(3), np.zeros(3), np.ones(3))
+    window = registration.RegistrationManager(data=[scan])
+    model = _landmark_model()
+    window.add_head_model("head", model)
+    state = window.scan_registration[0]
+    state.registered = True
+    state.probe_to_subject = np.eye(4)
+
+    depth_scan = window._depth_map_scan(0)
+    assert depth_scan.optode_labels == ("S1", "S2", "D1")
+    assert depth_scan.optode_kinds == ("SOURCE", "SOURCE", "DETECTOR")
+    np.testing.assert_allclose(depth_scan.optode_points, truth)
+    assert depth_scan.pairs == (("S1", "D1"), ("S2", "D1"))
+    window.close()
+
+
+def test_display_faces_take_the_label_covering_most_of_the_face():
+    vertex_labels = np.array([0, 1, 1, 2, -1])
+    samples = np.array([
+        [0, 1, 1, 2, 2, 2, 0],  # label 1 covers most of the face, though not its centroid
+        [0, 3, 0, 3, 1, 4, 4],  # three-way tie goes to the centroid's label
+        [4, 4, 4, 0, 0, 1, 2],  # unlabeled cortex can win
+    ])
+    np.testing.assert_array_equal(registration._vote_faces(samples, vertex_labels), [1, 0, -1])
+    assert registration._vote_faces(np.zeros((0, 7), dtype=int), vertex_labels).size == 0
+
+    # Larger regions vote with their own labels: two small left parcels
+    # outvote one bigger right parcel that the original-label vote picks.
+    names = ("SomMotA_1_LH", "SomMotA_1_RH", "SomMotA_2_LH")
+    parcels = registration.ParcelDisplay(
+        names, np.zeros((3, 3)), {"High": np.array([1])}, np.array([1]),
+        np.array([0, 1, 2]), {"High": np.array([[1, 1, 1, 0, 0, 2, 2]]), None: np.array([[1] * 7])},
+    )
+    grouped = registration._grouped_parcels(parcels)
+    assert grouped.names == ("Left Sensorimotor cortex", "Right Sensorimotor cortex")
+    np.testing.assert_array_equal(grouped.level_faces["High"], [0])
+    np.testing.assert_array_equal(grouped.interaction_faces, [1])
+    np.testing.assert_allclose(grouped.colors[0], grouped.colors[1])

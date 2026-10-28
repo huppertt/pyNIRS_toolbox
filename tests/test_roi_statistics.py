@@ -304,7 +304,10 @@ def test_pipeline_manager_roi_then_glm_uses_roi_input(analysis_recording, qt_app
     from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
 
     rec, table = analysis_recording
-    tables = dict(table.groupby("name", sort=False))
+    tables = {
+        name: rows.drop(columns="name")
+        for name, rows in table.groupby("name", sort=False)
+    }
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "selected_regions"
     model = GLM()

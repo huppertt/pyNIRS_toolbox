@@ -9,13 +9,13 @@ from typing import NamedTuple
 
 import numpy as np
 
-from PySide6.QtCore import QItemSelectionModel, QThread, Signal, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
     QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QMainWindow, QMenu, QMessageBox, QPushButton, QStyle, QToolButton, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTextBrowser, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from matplotlib import get_data_path
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -36,11 +36,17 @@ from pyBrainAnalyzIR.vis.geo2d_registration import (
     probe_2d_layout,
     project_to_scalp,
     symmetrize_on_head,
+    topographic_frame,
+)
+from pyBrainAnalyzIR.vis.roi_depth_map import DepthMapDialog, DepthMapHead, DepthMapScan
+from pyBrainAnalyzIR.vis.parcel_regions import (
+    add_parcellation_actions, larger_region, parcel_information, region_color, region_members,
 )
 
 
 DISPLAY_RESOLUTIONS = {"Low": 4000, "Medium": 12000, "High": None}
 DISPLAY_FACE_LIMIT = DISPLAY_RESOLUTIONS["Low"]
+DEFAULT_DISPLAY_RESOLUTION = "High"
 INTERACTION_FACE_LIMIT = 2000
 FIDUCIAL_LABELS = ("Nz", "Iz", "LPA", "RPA")
 LANDMARK_COLOR = "red"
@@ -83,22 +89,79 @@ PRESET_VIEWS = {
 }
 
 
-def load_atlas_head_model(atlas: str):
-    """Load notebook 44's supplied surfaces, or construct them if unavailable."""
-    import cedalion.datasets
-    from cedalion.imagereco.forward_model import TwoSurfaceHeadModel
+_ATLAS_FILE_KEYS = {"Colin-27": "colin27", "ICBM": "icbm152"}
 
-    loaders = {
-        "Colin-27": cedalion.datasets.get_colin27_segmentation,
-        "ICBM": cedalion.datasets.get_icbm152_segmentation,
-    }
-    if atlas not in loaders:
+
+def _two_surface_head_model_class():
+    try:
+        from cedalion.dot import TwoSurfaceHeadModel
+    except ImportError:  # Cedalion < 26.5
+        from cedalion.imagereco.forward_model import TwoSurfaceHeadModel
+    return TwoSurfaceHeadModel
+
+
+def load_atlas_head_model(atlas: str):
+    """Load an atlas head model with its brain parcel labels.
+
+    Cedalion >= 26.5 ships each atlas as head-model files whose brain vertex
+    table carries the parcel labels; older releases supply the surfaces of
+    notebook 44 plus a separate parcellation file.
+    """
+    if atlas not in _ATLAS_FILE_KEYS:
         raise ValueError(f"Unknown atlas: {atlas!r}")
-    directory, masks, landmarks = loaders[atlas]()
+    head_model_class = _two_surface_head_model_class()
+    try:
+        import cedalion.data as cedalion_data
+    except ImportError:  # Cedalion < 26.5
+        cedalion_data = None
+    files_loader = getattr(cedalion_data, f"get_{_ATLAS_FILE_KEYS[atlas]}_headmodel_files", None)
+    if files_loader is not None:
+        return _load_head_model_files(files_loader(), head_model_class)
+    import cedalion.datasets  # pylint: disable=import-outside-toplevel
+
+    return _load_legacy_atlas_head_model(atlas, cedalion.datasets, head_model_class)
+
+
+def _load_head_model_files(files, head_model_class):
+    """Build a model from Cedalion's ``HeadModelFiles`` as ``get_standard_headmodel`` does."""
+    import json
+
+    base = Path(files.basedir)
+    model = head_model_class.from_surfaces(
+        segmentation_dir=str(base),
+        mask_files=files.mask_files,
+        brain_surface_file=str(base / files.brain_surface_obj),
+        scalp_surface_file=str(base / files.scalp_surface_obj),
+        landmarks_ras_file=str(base / files.landmarks_ras_file),
+        coordinates_file=str(base / files.brain_vertex_coordinates),
+        brain_face_count=None,
+        scalp_face_count=None,
+    )
+    colors_file = base / files.parcel_colors
+    if colors_file.is_file():
+        with open(colors_file, encoding="utf-8") as handle:
+            model.parcel_colors = _normalized_colors(json.load(handle))
+    if _vertex_parcels(model) is None:
+        model.parcel_load_error = "The atlas head model has no brain parcel vertex labels."
+    return model
+
+
+def _normalized_colors(colors: dict) -> dict:
+    """Parcel label to RGB in [0, 1]; Cedalion stores 0-255 integers."""
+    values = np.asarray([list(c)[:3] for c in colors.values()], dtype=float)
+    scale = 255.0 if values.size and values.max() > 1 else 1.0
+    return {str(label): tuple(float(c) / scale for c in list(color)[:3])
+            for label, color in colors.items()}
+
+
+def _load_legacy_atlas_head_model(atlas: str, datasets, head_model_class):
+    """Notebook 44's surfaces and parcellation file (Cedalion < 26.5)."""
+    key = _ATLAS_FILE_KEYS[atlas]
+    directory, masks, landmarks = getattr(datasets, f"get_{key}_segmentation")()
     brain_file = Path(directory) / "mask_brain.obj"
     scalp_file = Path(directory) / "mask_scalp.obj"
     if brain_file.is_file() and scalp_file.is_file():
-        return TwoSurfaceHeadModel.from_surfaces(
+        surfaces = dict(
             segmentation_dir=directory,
             mask_files=masks,
             landmarks_ras_file=landmarks,
@@ -107,12 +170,162 @@ def load_atlas_head_model(atlas: str):
             brain_face_count=None,
             scalp_face_count=None,
         )
-    return TwoSurfaceHeadModel.from_segmentation(
+        # The parcellation labels the vertices of these brain surfaces (notebook 44).
+        parcel_file = getattr(datasets, f"get_{key}_parcel_file")()
+        model = head_model_class.from_surfaces(**surfaces, parcel_file=parcel_file)
+        model.parcel_colors = _parcel_file_colors(parcel_file)
+        return model
+    model = head_model_class.from_segmentation(
         segmentation_dir=directory,
         mask_files=masks,
         landmarks_ras_file=landmarks,
         brain_face_count=None,
         scalp_face_count=None,
+    )
+    model.parcel_load_error = (
+        "The generated brain surface has no matching atlas parcel vertex labels."
+    )
+    return model
+
+
+def _parcel_file_colors(parcel_file) -> dict:
+    """Parcel label to RGB color, as in the parcellation file."""
+    import cedalion.io
+
+    table = cedalion.io.read_parcellations(parcel_file).drop_duplicates("Label")
+    return {str(label): tuple(float(c) for c in color)
+            for label, color in zip(table.Label, table.Color)}
+
+
+def _vertex_parcels(model) -> np.ndarray | None:
+    """Parcel label of every brain vertex (cedalion's ``parcel`` coordinate), if any."""
+    vertices = getattr(getattr(model, "brain", None), "vertices", None)
+    coords = getattr(vertices, "coords", None)
+    if coords is None or "parcel" not in coords:
+        return None
+    labels = np.asarray(coords["parcel"].values).astype(str)
+    mesh = getattr(model.brain, "mesh", None)
+    if mesh is None or len(labels) != len(mesh.vertices):
+        return None
+    return labels
+
+
+def _is_parcel(label: str) -> bool:
+    """False for unlabeled cortex (e.g. Background+FreeSurfer_Defined_Medial_Wall_LH)."""
+    return bool(label) and not label.startswith("Background")
+
+
+def _parcel_color(label: str) -> tuple:
+    """Stable color for a parcel without a color in its head model."""
+    import zlib
+    from matplotlib import colormaps
+
+    return colormaps["tab20"](zlib.crc32(label.encode()) % 20)[:3]
+
+
+class ParcelDisplay(NamedTuple):
+    """Brain parcels of a head model, mapped onto its display meshes.
+
+    ``names``/``colors`` list the parcels; ``level_faces[level]`` and
+    ``interaction_faces`` give each displayed brain face's parcel index
+    (-1: no parcel, drawn in the brain color). ``vertex_parcels`` and
+    ``face_samples`` (full-resolution vertices nearest points sampled on each
+    displayed face, keyed by level and ``None`` for the drag-time mesh) let
+    grouped displays vote with their own labels.
+    """
+
+    names: tuple
+    colors: np.ndarray
+    level_faces: dict
+    interaction_faces: np.ndarray
+    vertex_parcels: np.ndarray | None = None
+    face_samples: dict | None = None
+
+
+# Barycentric sample points per displayed face: centroid first (tie-break),
+# then points toward each corner, so faces take the label covering most area.
+_FACE_SAMPLES = np.array([
+    [1 / 3, 1 / 3, 1 / 3],
+    [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6],
+    [0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8],
+])
+
+
+def _vote_faces(samples: np.ndarray, vertex_labels: np.ndarray) -> np.ndarray:
+    """Plurality label of each face's samples; ties go to the earliest sample."""
+    if len(samples) == 0:
+        return np.zeros(0, dtype=int)
+    labels = vertex_labels[samples]
+    counts = (labels[:, :, None] == labels[:, None, :]).sum(axis=2)
+    return labels[np.arange(len(labels)), counts.argmax(axis=1)]
+
+
+def _grouped_parcels(parcels: ParcelDisplay) -> ParcelDisplay:
+    groups = region_members(parcels.names)
+    names = tuple(groups)
+    indices = {name: index for index, name in enumerate(names)}
+    original = {name: index for index, name in enumerate(parcels.names)}
+    mapping = np.array([indices[larger_region(name)] for name in parcels.names], dtype=int)
+    colors = np.array([
+        region_color(name) or (
+            parcels.colors[original[name]] if name in original else _parcel_color(name)
+        )
+        for name in names
+    ]).reshape(-1, 3)
+
+    def remap(faces):
+        result = np.full(len(faces), -1, dtype=int)
+        labeled = faces >= 0
+        result[labeled] = mapping[faces[labeled]]
+        return result
+
+    if parcels.vertex_parcels is None or parcels.face_samples is None:
+        return ParcelDisplay(
+            names, colors,
+            {level: remap(faces) for level, faces in parcels.level_faces.items()},
+            remap(parcels.interaction_faces),
+        )
+    # Vote with the larger-region labels so each face shows the region that
+    # covers most of it, not the region of its most common original parcel.
+    vertex_parcels = remap(parcels.vertex_parcels)
+    samples = parcels.face_samples
+    return ParcelDisplay(
+        names, colors,
+        {level: _vote_faces(samples[level], vertex_parcels) for level in parcels.level_faces},
+        _vote_faces(samples[None], vertex_parcels),
+        vertex_parcels, samples,
+    )
+
+
+def _face_parcels(model, labels, surfaces) -> ParcelDisplay:
+    """Label each displayed (possibly decimated) brain face with the parcel that
+    covers most of it, judged by the full-resolution vertices nearest sample
+    points spread over the face (Cedalion labels the model's vertices)."""
+    from scipy.spatial import cKDTree
+
+    names = tuple(sorted({label for label in labels if _is_parcel(label)}))
+    index = {name: i for i, name in enumerate(names)}
+    vertex_index = np.array([index.get(label, -1) for label in labels], dtype=int)
+    known = getattr(model, "parcel_colors", None) or {}
+    colors = np.array([known.get(name) or _parcel_color(name) for name in names],
+                      dtype=float).reshape(-1, 3)
+    tree = cKDTree(np.asarray(model.brain.mesh.vertices))
+
+    def samples_of(vertices, faces):
+        faces = np.asarray(faces, dtype=int).reshape(-1, 3)
+        if len(faces) == 0:
+            return np.zeros((0, len(_FACE_SAMPLES)), dtype=int)
+        points = np.einsum("sk,fkd->fsd", _FACE_SAMPLES, np.asarray(vertices)[faces])
+        return tree.query(points.reshape(-1, 3))[1].reshape(len(faces), -1)
+
+    samples = {level: samples_of(*meshes[0]) for level, meshes in surfaces[0].items()}
+    samples[None] = samples_of(*surfaces[1][0])
+    level_faces = {
+        level: _vote_faces(samples[level], vertex_index) for level in surfaces[0]
+    }
+    return ParcelDisplay(
+        names, colors, level_faces, _vote_faces(samples[None], vertex_index),
+        vertex_index, samples,
     )
 
 
@@ -151,7 +364,8 @@ class _TriangleMeshCollection(Poly3DCollection):
         self._facecolors2d = self._edgecolors2d = np.empty((0, 4))
         self.set_mesh(vertices, faces)
 
-    def set_mesh(self, vertices, faces) -> None:
+    def set_mesh(self, vertices, faces, face_colors=None) -> None:
+        """Set the mesh; ``face_colors`` (faces x RGB) replaces the uniform color."""
         self._mesh_vertices = np.asarray(vertices, dtype=float)
         self._mesh_faces = np.asarray(faces, dtype=np.intp)
         triangles = self._mesh_vertices[self._mesh_faces]
@@ -159,6 +373,8 @@ class _TriangleMeshCollection(Poly3DCollection):
             triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
         )
         base = np.tile(to_rgba(self._base_color, self._base_alpha), (len(triangles), 1))
+        if face_colors is not None:
+            base[:, :3] = np.asarray(face_colors, dtype=float)[:, :3]
         self._mesh_facecolors = _shade_colors(base, normals) if len(triangles) else base
         self.stale = True
 
@@ -181,6 +397,27 @@ class _TriangleMeshCollection(Poly3DCollection):
         PolyCollection.set_verts(self, np.stack((txs[faces], tys[faces]), axis=-1))
         self._facecolors2d = self._edgecolors2d = self._mesh_facecolors[self._order]
         return np.min(tzs)
+
+    def face_at(self, x: float, y: float) -> int:
+        """Index of the front-most face under display pixel (x, y), or -1."""
+        if len(self._mesh_faces) == 0 or self.axes is None:
+            return -1
+        homogeneous = np.vstack((self._mesh_vertices.T, np.ones(len(self._mesh_vertices))))
+        txs, tys, tzs = proj3d._proj_transform_vec(homogeneous, self.axes.M)
+        pixels = self.axes.transData.transform(np.column_stack((txs, tys)))
+        a, b, c = (pixels[self._mesh_faces[:, k]] for k in range(3))
+        v0, v1, v2 = b - a, c - a, np.array([x, y]) - a
+        denominator = v0[:, 0] * v1[:, 1] - v1[:, 0] * v0[:, 1]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            u = (v2[:, 0] * v1[:, 1] - v1[:, 0] * v2[:, 1]) / denominator
+            v = (v0[:, 0] * v2[:, 1] - v2[:, 0] * v0[:, 1]) / denominator
+        inside = np.flatnonzero((u >= 0) & (v >= 0) & (u + v <= 1) & (denominator != 0))
+        if len(inside) == 0:
+            return -1
+        depth = tzs[self._mesh_faces[inside]]
+        depth = (1 - u[inside] - v[inside]) * depth[:, 0] + u[inside] * depth[:, 1] + v[inside] * depth[:, 2]
+        # Projected depth grows away from the camera.
+        return int(inside[np.argmin(depth)])
 
 
 class _LandmarkCollection(PathCollection):
@@ -438,6 +675,7 @@ class _AtlasScene(NamedTuple):
     landmark_note: str = ""
     head_size: HeadSizeArcs | None = None
     head_size_note: str = ""
+    parcels: ParcelDisplay | None = None
 
 
 @lru_cache(maxsize=2)
@@ -475,8 +713,16 @@ def _scene_from_model(model) -> _AtlasScene:
             head_size = measure_head_size(model)
         except Exception as exc:
             head_size_note = f"Head size unavailable ({type(exc).__name__}: {exc})"
+    parcels = None
+    labels = _vertex_parcels(model)
+    if labels is not None:
+        try:
+            parcels = _face_parcels(model, labels, (display_levels, interaction_surfaces))
+        except Exception:
+            parcels = None
     return _AtlasScene(
-        model, display_levels, interaction_surfaces, landmarks, note, head_size, head_size_note
+        model, display_levels, interaction_surfaces, landmarks, note, head_size, head_size_note,
+        parcels,
     )
 
 
@@ -1010,11 +1256,15 @@ class RegistrationManager(QMainWindow):
         self._base_display_levels = {}
         self._base_interaction_surfaces = ()
         self._base_landmarks = None
+        self._parcels = None
+        self._larger_parcels = None
+        self.show_subregion_parcels = False
+        self._depth_map_dialog = None
         self._loader = None
         self._close_pending = False
         self._closed = False
         self._display_levels = {}
-        self.display_resolution = "Low"
+        self.display_resolution = DEFAULT_DISPLAY_RESOLUTION
         self._interaction_surfaces = ()
         self._surface_collections = []
         self.landmark_collection = None
@@ -1022,11 +1272,30 @@ class RegistrationManager(QMainWindow):
         self._dragging = False
         self.figure = Figure()
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.parcel_info = QTextBrowser(self.canvas)
+        self.parcel_info.setReadOnly(True)
+        self.parcel_info.setStyleSheet(
+            "QTextBrowser { background: #fffff2; color: black; border: 1px solid #888; padding: 6px; }"
+        )
+        self.parcel_info.hide()
+        self._parcel_info_hide_timer = QTimer(self)
+        self._parcel_info_hide_timer.setSingleShot(True)
+        self._parcel_info_hide_timer.setInterval(400)
+        self._parcel_info_hide_timer.timeout.connect(self._hide_parcel_info)
+        self.parcel_info.installEventFilter(self)
+        self.parcel_info.viewport().installEventFilter(self)
+        self.canvas.installEventFilter(self)
+        self.canvas.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._brain_context_menu)
         self.axes = self.figure.add_subplot(111, projection="3d")
+        self.axes.view_init(*PRESET_VIEWS["Left-front"])
         self.axes.set_axis_off()
         self._interaction_callbacks = [
             self.canvas.mpl_connect("button_press_event", self._begin_interaction),
             self.canvas.mpl_connect("button_release_event", self._end_interaction),
+            self.canvas.mpl_connect("motion_notify_event", self._hover_parcel),
+            self.canvas.mpl_connect("axes_leave_event", self._hover_parcel),
+            self.canvas.mpl_connect("figure_leave_event", self._hover_parcel),
         ]
         central = QWidget(self)
         layout = QHBoxLayout(central)
@@ -1075,6 +1344,7 @@ class RegistrationManager(QMainWindow):
         resolution_layout.addWidget(QLabel("Display resolution:", self.view_group))
         self.resolution_combo = QComboBox(self.view_group)
         self.resolution_combo.addItems(list(DISPLAY_RESOLUTIONS))
+        self.resolution_combo.setCurrentText(self.display_resolution)
         self.resolution_combo.setToolTip(
             "Faces drawn per surface: Low 4k, Medium 12k, High full model mesh. "
             "Dragging always uses a 2k-face preview."
@@ -1184,6 +1454,17 @@ class RegistrationManager(QMainWindow):
         self.load_snirf_action = self.registration_menu.addAction("Load SNIRF file...")
         self.load_snirf_action.triggered.connect(self._choose_snirf_files)
         self.load_snirf_action.setVisible(self.allow_file_loading)
+        self.roi_menu = menu_bar.addMenu("Regions-of-Interest")
+        self.roi_menu.setToolTipsVisible(True)
+        self.parcels_action = self.roi_menu.addAction("Show Parcellations")
+        self.parcels_action.setCheckable(True)
+        self.parcels_action.setEnabled(False)
+        self.parcels_action.setToolTip("Load a head model with a brain parcellation.")
+        self.parcels_action.toggled.connect(self._set_parcels_visible)
+        self.depth_map_action = self.roi_menu.addAction("Show Depth Map")
+        self.depth_map_action.setEnabled(False)
+        self.depth_map_action.setToolTip("Load a head model with a brain parcellation.")
+        self.depth_map_action.triggered.connect(self._show_depth_map)
         menu_bar.addMenu("Forward Models")
         self.statusBar().showMessage(
             "Load head models under Load Head Model. Choose a drag mode in View controls."
@@ -1243,6 +1524,7 @@ class RegistrationManager(QMainWindow):
         entry = HeadModelEntry(name, model, scene, is_atlas, default_size=name)
         self.head_models[name] = entry
         self.head_sizes[name] = HeadSize(name, np.ones(3), center)
+        self._update_depth_map_action()
         assigned = 0
         for state in self.scan_registration:
             if state.head_model_key is None or (
@@ -1274,6 +1556,7 @@ class RegistrationManager(QMainWindow):
 
     def _show_head(self, model_key: str, size_key: str) -> None:
         """Display head model ``model_key`` at head size ``size_key``."""
+        self.parcel_info.hide()
         entry = self.head_models[model_key]
         scene = entry.scene
         if model_key != self.displayed_head_model:
@@ -1298,6 +1581,16 @@ class RegistrationManager(QMainWindow):
                 self.landmarks_button.setToolTip(
                     scene.landmark_note or "Show or hide 10-10 landmarks (blue: fiducials)."
                 )
+                self.parcels_action.setEnabled(scene.parcels is not None)
+                self.parcels_action.setToolTip(
+                    f"Color the brain by its {len(scene.parcels.names)} parcels; "
+                    "hover over a parcel to see its name."
+                    if scene.parcels is not None
+                    else getattr(
+                        entry.model, "parcel_load_error",
+                        f"{model_key} has no brain parcellation.",
+                    )
+                )
                 vertices = np.asarray(entry.model.scalp.mesh.vertices)
                 center = (vertices.max(axis=0) + vertices.min(axis=0)) / 2
                 radius = np.ptp(vertices, axis=0).max() / 2
@@ -1308,6 +1601,8 @@ class RegistrationManager(QMainWindow):
                 self.axes.set_axis_off()
                 if had_head:
                     self.axes.view_init(*camera)
+                else:
+                    self.axes.view_init(*PRESET_VIEWS["Left-front"])
                 self._set_interaction_mode(self.interaction_mode)
             except Exception as exc:
                 self._load_failed(f"Could not draw the head model: {exc}")
@@ -1316,6 +1611,10 @@ class RegistrationManager(QMainWindow):
             self._base_display_levels = scene.display_levels
             self._base_interaction_surfaces = scene.interaction_surfaces
             self._base_landmarks = scene.landmarks
+            self._parcels = scene.parcels
+            self._larger_parcels = (
+                _grouped_parcels(scene.parcels) if scene.parcels is not None else None
+            )
             self.setWindowTitle(f"Registration Manager - {model_key}")
         self.displayed_head_size = size_key
         self._apply_display_scale()
@@ -2623,6 +2922,7 @@ class RegistrationManager(QMainWindow):
 
     def _begin_interaction(self, event) -> None:
         if event.inaxes is self.axes and event.button == 1 and self.interaction_mode != "off":
+            self.parcel_info.hide()
             self._dragging = True
             self._set_display_detail(self._interaction_surfaces)
 
@@ -2632,10 +2932,267 @@ class RegistrationManager(QMainWindow):
             self._set_display_detail(self._display_surfaces)
 
     def _set_display_detail(self, surfaces) -> None:
-        for collection, (vertices, faces) in zip(self._surface_collections, surfaces):
-            collection.set_mesh(vertices, faces)
+        parcels = self._brain_face_parcels(surfaces)
+        for i, (collection, (vertices, faces)) in enumerate(zip(self._surface_collections, surfaces)):
+            colors = None
+            if i == 0 and parcels is not None and len(parcels) == len(faces):
+                colors = np.tile(to_rgba(collection._base_color)[:3], (len(faces), 1))
+                labeled = parcels >= 0
+                colors[labeled] = self._active_parcels.colors[parcels[labeled]]
+            collection.set_mesh(vertices, faces, colors)
+            collection.face_parcels = parcels if i == 0 else None
         if surfaces:
             self.canvas.draw_idle()
+
+    @property
+    def parcels_visible(self) -> bool:
+        """True when the displayed brain is colored by its parcels."""
+        return self._parcels is not None and self.parcels_action.isChecked()
+
+    @property
+    def _active_parcels(self) -> ParcelDisplay | None:
+        return self._parcels if self.show_subregion_parcels else self._larger_parcels
+
+    def _brain_face_parcels(self, surfaces) -> np.ndarray | None:
+        """Parcel index of each brain face of ``surfaces`` while parcels are shown."""
+        if not self.parcels_visible:
+            return None
+        if surfaces is self._interaction_surfaces:
+            return self._active_parcels.interaction_faces
+        return self._active_parcels.level_faces.get(self.display_resolution)
+
+    def _set_parcels_visible(self, visible: bool) -> None:
+        if not visible:
+            self.parcel_info.hide()
+        self._set_display_detail(
+            self._interaction_surfaces if self._dragging else self._display_surfaces
+        )
+        if self._parcels is not None:
+            self.statusBar().showMessage(
+                f"Showing {len(self._active_parcels.names)} brain parcels; hover over the brain for information."
+                if visible else "Brain parcels hidden."
+            )
+
+    def _update_depth_map_action(self) -> None:
+        available = any(entry.scene.parcels is not None for entry in self.head_models.values())
+        self.depth_map_action.setEnabled(available)
+        self.depth_map_action.setToolTip(
+            "Show distances from 10-20 scalp points and registered channels to brain parcels."
+            if available else "Load a head model with a brain parcellation."
+        )
+
+    def _depth_map_head(self, model_key: str) -> DepthMapHead:
+        """Build the original-size brain parcel and 10-20 geometry for a model."""
+        entry = self.head_models[model_key]
+        model = entry.model
+        labels = _vertex_parcels(model)
+        if labels is None:
+            parcel_points = np.empty((0, 3))
+            parcel_labels = np.empty(0, dtype=str)
+            parcel_names = ()
+        else:
+            valid = np.array([bool(label) and not label.startswith("Background") for label in labels])
+            vertices = _homogeneous(
+                np.asarray(model.brain.mesh.vertices), _model_matrix(model, "t_ijk2ras")
+            )
+            parcel_points = vertices[valid]
+            parcel_labels = labels[valid]
+            parcel_names = tuple(sorted(set(parcel_labels)))
+        positions = self._head_positions(model)
+        available = list(positions.items())
+        if len(available) < 3:
+            raise ValueError(f"{model_key} does not have enough 10-20 scalp positions.")
+        scalp_labels, scalp_points = zip(*available)
+        return DepthMapHead(
+            key=model_key,
+            labels=parcel_names,
+            parcel_points=np.asarray(parcel_points, dtype=float),
+            parcel_labels=np.asarray(parcel_labels, dtype=str),
+            parcel_colors=dict(getattr(model, "parcel_colors", {}) or {}),
+            scalp_labels=tuple(scalp_labels),
+            scalp_points=np.asarray(scalp_points, dtype=float),
+            frame=topographic_frame(positions),
+        )
+
+    def _depth_map_scan(self, index: int) -> DepthMapScan:
+        """Get a registered scan's optodes in its original head-model RAS."""
+        state = self.scan_registration[index]
+        if not state.registered:
+            raise ValueError(f"Scan {index} is not registered.")
+        rec = self.dataset.dataset[index]
+        model_key = state.head_model_key
+        if model_key not in self.head_models:
+            raise ValueError(f"Scan {index} references an unloaded head model.")
+
+        if state.probe_to_subject is not None:
+            geo = self.registered_geo3d(index, "head")
+            coordinates = np.asarray(geo.pint.dequantify().values, dtype=float)
+            labels = tuple(str(label) for label in geo.label.values)
+            kinds = tuple(_point_kinds(geo))
+            mask = np.isin(kinds, ("SOURCE", "DETECTOR"))
+            optode_labels = tuple(label for label, keep in zip(labels, mask) if keep)
+            optode_kinds = tuple(kind for kind, keep in zip(kinds, mask) if keep)
+            points = coordinates[mask]
+        else:
+            optode_labels, optode_kinds, _ = _probe_optodes(rec)
+            points, _, _ = _probe_geometry(rec, state.optode_positions)
+            _, size = self._scan_size(index)
+            sized_model = self.model_for_size(state.head_size_key)
+            points = _homogeneous(
+                points, _model_matrix(sized_model, "t_ijk2ras")
+            )
+            points = _homogeneous(points, np.linalg.inv(size.matrix))
+
+        pairs = ()
+        timeseries = next(iter(rec.timeseries.values()), None)
+        if timeseries is not None and {"source", "detector"} <= set(timeseries.coords):
+            pairs = tuple(dict.fromkeys(
+                (str(source), str(detector))
+                for source, detector in zip(
+                    timeseries.source.values, timeseries.detector.values
+                )
+            ))
+        return DepthMapScan(
+            label=self._scan_labels()[index],
+            head_key=model_key,
+            optode_labels=tuple(optode_labels),
+            optode_kinds=tuple(optode_kinds),
+            optode_points=np.asarray(points, dtype=float),
+            pairs=pairs,
+        )
+
+    def _show_depth_map(self) -> None:
+        """Open a 10-20 depth map for the displayed parcellated head model."""
+        if self._depth_map_dialog is not None and self._depth_map_dialog.isVisible():
+            self._depth_map_dialog.raise_()
+            self._depth_map_dialog.activateWindow()
+            return
+        reference = self.displayed_head_model
+        if reference not in self.head_models or self.head_models[reference].scene.parcels is None:
+            reference = next(
+                (key for key, entry in self.head_models.items() if entry.scene.parcels is not None),
+                None,
+            )
+        if reference is None:
+            QMessageBox.information(
+                self, "Show Depth Map", "Load a head model with a brain parcellation first."
+            )
+            return
+        heads = {}
+        failures = []
+        for key in self.head_models:
+            try:
+                heads[key] = self._depth_map_head(key)
+            except (ValueError, KeyError) as exc:
+                failures.append(f"{key}: {exc}")
+        if reference not in heads or not heads[reference].labels:
+            QMessageBox.information(
+                self, "Show Depth Map", f"No brain parcels are available for {reference}."
+            )
+            return
+        scans = []
+        for index, state in enumerate(self.scan_registration):
+            if not state.registered:
+                continue
+            try:
+                scans.append(self._depth_map_scan(index))
+            except (ValueError, KeyError, AttributeError) as exc:
+                label = self._scan_labels()[index]
+                failures.append(f"{label}: {exc}")
+                scans.append(DepthMapScan(
+                    label=label,
+                    head_key=state.head_model_key or "",
+                    optode_labels=(),
+                    optode_kinds=(),
+                    optode_points=np.empty((0, 3)),
+                    pairs=(),
+                ))
+        try:
+            self._depth_map_dialog = DepthMapDialog(heads, scans, reference, parent=self)
+        except (ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Show Depth Map", str(exc))
+            return
+        self._depth_map_dialog.show()
+        if failures:
+            self.statusBar().showMessage(
+                "Depth map opened; some head models or registered scans could not be included: "
+                + "; ".join(failures[:3])
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Depth map opened for {reference}; {len(scans)} registered scan(s) available."
+            )
+
+    def parcel_at(self, x: float, y: float) -> str | None:
+        """Name of the parcel drawn at canvas pixel (x, y), if parcels are shown."""
+        if not self.parcels_visible or not self._surface_collections:
+            return None
+        brain = self._surface_collections[0]
+        parcels = getattr(brain, "face_parcels", None)
+        face = brain.face_at(x, y)
+        if parcels is None or face < 0 or face >= len(parcels) or parcels[face] < 0:
+            return None
+        return str(self._active_parcels.names[parcels[face]])
+
+    def _make_brain_parcellation_menu(self) -> QMenu:
+        menu = QMenu(self.canvas)
+        add_parcellation_actions(
+            menu, self.show_subregion_parcels, self._set_surface_parcellation_level
+        )
+        return menu
+
+    def _brain_context_menu(self, position) -> None:
+        if not self.parcels_visible:
+            return
+        menu = self._make_brain_parcellation_menu()
+        menu.exec(self.canvas.mapToGlobal(position))
+        menu.deleteLater()
+
+    def _set_surface_parcellation_level(self, subregions: bool) -> None:
+        self.show_subregion_parcels = subregions
+        self.parcel_info.hide()
+        self._set_parcels_visible(self.parcels_action.isChecked())
+
+    def _position_parcel_info(self) -> None:
+        width = min(420, max(1, self.canvas.width() - 24))
+        height = min(250, max(1, self.canvas.height() // 3))
+        self.parcel_info.setGeometry(12, max(0, self.canvas.height() - height - 12), width, height)
+
+    def eventFilter(self, watched, event):
+        if watched is self.canvas and event.type() == QEvent.Type.Resize:
+            self._position_parcel_info()
+        if watched in (self.parcel_info, self.parcel_info.viewport()):
+            if event.type() == QEvent.Type.Enter:
+                self._parcel_info_hide_timer.stop()
+            elif event.type() == QEvent.Type.Leave:
+                self._parcel_info_hide_timer.start()
+        return super().eventFilter(watched, event)
+
+    def _hide_parcel_info(self) -> None:
+        if not self.parcel_info.underMouse():
+            self.parcel_info.hide()
+
+    def _hover_parcel(self, event) -> None:
+        if not self.parcels_visible:
+            return
+        if self.parcel_info.isVisible() and self.parcel_info.underMouse():
+            return
+        name = None
+        if event.inaxes is self.axes and not self._dragging:
+            name = self.parcel_at(event.x, event.y)
+        if name is None:
+            # Allow the pointer to cross the blank canvas to the scrollable panel.
+            if not self._parcel_info_hide_timer.isActive():
+                self._parcel_info_hide_timer.start()
+        else:
+            self._parcel_info_hide_timer.stop()
+            text = parcel_information(name, self._parcels.names, self.show_subregion_parcels)
+            if self.parcel_info.property("information") != text:
+                self.parcel_info.setHtml(text)
+                self.parcel_info.setProperty("information", text)
+            self._position_parcel_info()
+            self.parcel_info.show()
+            self.parcel_info.raise_()
 
     def _load_failed(self, message: str) -> None:
         if self._close_pending or self._closed:

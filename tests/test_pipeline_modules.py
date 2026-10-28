@@ -279,14 +279,12 @@ def test_motion_correct_pca_combines_recording_quality_masks(monkeypatch):
     def fake_id_motion(*args, **kwargs):
         return detected_mask
 
-    def fake_motion_correct(data, tInc, nSV):
-        captured.update(tInc=tInc, nSV=nSV)
+    def fake_motion_correct(data, t_inc, n_sv):
+        captured.update(tInc=t_inc, nSV=n_sv)
         return data, None, None
 
     monkeypatch.setattr(mc.quality, "id_motion", fake_id_motion)
-    monkeypatch.setattr(
-        mc.motion_correct, "motion_correct_PCA", fake_motion_correct
-    )
+    monkeypatch.setattr(mc, "motion_correct_pca", fake_motion_correct)
     module = mc.MotionCorrectPCA()
     module.inputName = "amp"
     module.outputName = "amp"

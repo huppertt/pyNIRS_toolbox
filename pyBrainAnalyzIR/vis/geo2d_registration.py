@@ -68,7 +68,14 @@ FAR_ATTRACTOR_MM = 80.0
 
 
 def _template_path() -> str | None:
-    """MNE's colin27 10-05 electrode template (not imported, only read)."""
+    """MNE's colin27 10-05 electrode template (not imported, only read).
+
+    A copy is bundled (BSD-3, see data/MNE_LICENSE.txt) because the MNE
+    release pinned by Cedalion (1.9) does not ship it.
+    """
+    bundled = os.path.join(os.path.dirname(__file__), "data", "colin27_1005.elc")
+    if os.path.exists(bundled):
+        return bundled
     spec = importlib.util.find_spec("mne")
     if spec is None or not spec.submodule_search_locations:
         return None
@@ -81,7 +88,7 @@ def _template_path() -> str | None:
 def template_1005() -> dict:
     """Standard 10-05 positions on the colin27 template ({label: xyz mm}).
 
-    Empty when MNE (which ships the template) is not installed; then only
+    Empty only if neither the bundled copy nor MNE's is found; then only
     the positions built on the head model itself are available.
     """
     path = _template_path()

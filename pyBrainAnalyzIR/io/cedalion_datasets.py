@@ -3,7 +3,10 @@
 """
 
 import cedalion.dataclasses as cdc
-from cedalion.datasets import DATASETS
+try:
+    from cedalion.data import DATASETS
+except ImportError:  # Cedalion < 26.5
+    from cedalion.datasets import DATASETS
 import cedalion.io
 import os.path  # noqa: F401
 import pickle  # noqa: F401

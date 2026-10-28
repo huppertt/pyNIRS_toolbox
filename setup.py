@@ -9,6 +9,7 @@ setup(
     package_data={
         'pyBrainAnalyzIR.media': ['data/*.npz'],
         'pyBrainAnalyzIR.testing': ['matlab/*.m'],
+        'pyBrainAnalyzIR.vis': ['data/*.elc', 'data/*.txt'],
     },
     include_package_data=True,
     install_requires=[],

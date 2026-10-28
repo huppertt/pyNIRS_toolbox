@@ -9,3 +9,5 @@ matplotlib
 statsmodels
 joblib
 tqdm
+# Cedalion pins MNE 1.9; the 10-5 template missing from it is bundled in pyBrainAnalyzIR/vis/data.
+mne==1.9.*
