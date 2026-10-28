@@ -17,7 +17,7 @@ from cedalion.dataclasses.geometry import PointType
 
 import cedalion  # noqa: F401  (namespace + accessor registration)
 import cedalion.dataclasses as cdc
-from cedalion.typing import LabeledPointCloud  # noqa: F401  (documented type)
+from cedalion.typing import LabeledPoints  # noqa: F401  (documented type)
 from pyBrainAnalyzIR.dataclasses.roi import GeoROI
 from pyBrainAnalyzIR.math.glm.ar_irls import ArIrlsResult
 
@@ -150,8 +150,8 @@ class Statistics:
     covariance: xr.DataArray = field(default_factory=xr.DataArray)
     # coloring_matrix: xr.DataArray = field(default_factory=xr.DataArray)
     # masks: OrderedDict[str, xr.DataArray] = field(default_factory=OrderedDict)
-    geo3d: LabeledPointCloud = field(default_factory=cdc.build_labeled_points)
-    geo2d: LabeledPointCloud = field(default_factory=cdc.build_labeled_points)
+    geo3d: LabeledPoints = field(default_factory=cdc.build_labeled_points)
+    geo2d: LabeledPoints = field(default_factory=cdc.build_labeled_points)
     head_model: Optional[Any] = None
     geoROI: Optional[GeoROI] = None
     meta_data: OrderedDict[str, Any] = field(default_factory=OrderedDict)
@@ -684,3 +684,4 @@ class Statistics:
                 ax[idxc, idxt].set_axis_off()
                 ax[idxc, idxt].set_title(condname + " : " + type)
                 plt.colorbar(sm, ax=ax[idxc, idxt], label=vartype + " (" + thresh + ")", shrink=0.5)
+        return None

@@ -335,12 +335,12 @@ def plot_roi_statistics(
                 names, selected["Beta"], yerr=selected["StdErr"],
                 color=colors, capsize=4,
             )
-            for bar, (_, estimate) in zip(bars, selected.iterrows()):
+            for bar_patch, (_, estimate) in zip(bars, selected.iterrows()):
                 beta, error = estimate["Beta"], estimate["StdErr"]
                 if estimate["significance"] < threshold and np.isfinite(beta) and np.isfinite(error):
                     positive = beta >= 0
                     axis.annotate(
-                        "*", (bar.get_x() + bar.get_width() / 2,
+                        "*", (bar_patch.get_x() + bar_patch.get_width() / 2,
                               beta + error if positive else beta - error),
                         xytext=(0, 3 if positive else -3), textcoords="offset points",
                         ha="center", va="bottom" if positive else "top", fontsize=14,

@@ -1,6 +1,7 @@
 import cedalion
 import cedalion.models
 import cedalion.dataclasses as cdc
+from cedalion.nirs import cw as nirs_cw
 import numpy as np
 import xarray as xr
 from scipy.linalg import toeplitz
@@ -235,7 +236,7 @@ def Data(noise=None, stim=None, snr=0.5,
     ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: :func:`simdataset` and notebook simulation workflows.
     Direct dependencies: :func:`ARnoise`, ``simEvents.rand_stim_design``,
-    ``cedalion.nirs.int2od``, ``prep.mbll``, ``cedalion.models.glm.fit``,
+    ``cedalion.nirs.cw.int2od``, ``prep.mbll``, ``cedalion.models.glm.fit``,
     ``cedalion.models.glm.predict``,
     ``prep.conc2od``, and ``prep.opticaldensity_intensity``.
     Tests: ``tests/test_simulation_random_seed.py``,
@@ -261,7 +262,7 @@ def Data(noise=None, stim=None, snr=0.5,
     rec = copy.deepcopy(noise)
     rec.stim = stim
     # job = prep.intensity_opticaldensity()
-    rec['od'], baseline = cedalion.nirs.int2od(rec['amp'], return_baseline=True)
+    rec['od'], baseline = nirs_cw.int2od(rec['amp'], return_baseline=True)
 
     job = prep.mbll()
     rec = job.run(rec)

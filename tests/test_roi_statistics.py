@@ -7,11 +7,11 @@ import pytest
 import xarray as xr
 
 pytest.importorskip("cedalion")
-from pyBrainAnalyzIR.dataclasses.dataset import DataSet
-from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
-from pyBrainAnalyzIR.pipelines.modules.glm import GLM
-from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
-from pyBrainAnalyzIR.sigproc.roi import roi_average
+from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.glm import GLM  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage  # noqa: E402
+from pyBrainAnalyzIR.sigproc.roi import roi_average  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 
@@ -277,7 +277,10 @@ def test_roi_then_glm_resolves_previous_output(analysis_recording, alias, datase
     # Keep an unrelated newer key to catch reliance on dictionary insertion order.
     rec["pooled"] = rec["conc"].copy()
     rec["unrelated"] = rec["conc"].copy()
-    tables = {name: rows for name, rows in table.groupby("name", sort=False)}
+    tables = {
+        name: rows.drop(columns="name")
+        for name, rows in table.groupby("name", sort=False)
+    }
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "pooled"
     roi.options.update(weighted=False, overwrite=True)
@@ -301,7 +304,7 @@ def test_pipeline_manager_roi_then_glm_uses_roi_input(analysis_recording, qt_app
     from pyBrainAnalyzIR.vis.pipeline_manager import PipelineManagerDialog
 
     rec, table = analysis_recording
-    tables = {name: rows for name, rows in table.groupby("name", sort=False)}
+    tables = dict(table.groupby("name", sort=False))
     roi = ROIAverage(roi_tables=tables)
     roi.inputName, roi.outputName = "conc", "selected_regions"
     model = GLM()

@@ -10,7 +10,9 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from pyBrainAnalyzIR.testing.matlab_comparison import (
+pytest.importorskip("cedalion")
+
+from pyBrainAnalyzIR.testing.matlab_comparison import (  # noqa: E402
     ROCCurve,
     find_matlab_executable,
     _matlab_canonical_basis,
@@ -21,7 +23,7 @@ from pyBrainAnalyzIR.testing.matlab_comparison import (
     _satterthwaite_type_one_curves,
     run_matlab_python_roc_comparison,
 )
-from pyBrainAnalyzIR.math.glm.solve import _satterthwaite_dof
+from pyBrainAnalyzIR.math.glm.solve import _satterthwaite_dof  # noqa: E402
 
 
 @pytest.mark.requires_matlab

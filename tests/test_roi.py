@@ -7,15 +7,15 @@ import pytest
 import xarray as xr
 
 pytest.importorskip("cedalion")
-from pyBrainAnalyzIR.dataclasses.dataset import DataSet
-from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, quality_masks
-from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
-from pyBrainAnalyzIR.pipelines.modules.filters import bandpass_filter
-from pyBrainAnalyzIR.pipelines.modules.motion_correction import TDDR
-from pyBrainAnalyzIR.pipelines.modules.glm import GLM
-from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
-from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects
-from pyBrainAnalyzIR.sigproc.roi import roi_average
+from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
+from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi, quality_masks  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.filters import bandpass_filter  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.motion_correction import TDDR  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.glm import GLM  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects  # noqa: E402
+from pyBrainAnalyzIR.sigproc.roi import roi_average  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 
@@ -70,7 +70,6 @@ def test_roi_average_supports_signed_membership_weights(simulated_recording):
     roi_average(rec, table, weighted=False)
     expected = (data.pint.magnitude[:, 0, :] - data.pint.magnitude[:, 1, :]) / 2
     np.testing.assert_allclose(rec["amp_roi"].pint.magnitude[:, 0, :], expected)
-
 
 
 def test_roi_masks_exclude_bad_channels_and_do_not_touch_channel_masks(
@@ -288,8 +287,12 @@ def test_roi_statistics_beta_errors_stars_and_fixed_color_keys(
     ):
         selected = table[(table.Condition == condition) & (table.Type == signal_type)]
         selected = selected.set_index("Channel").loc[["Left", "Right"]]
-        np.testing.assert_allclose([bar.get_height() for bar in axis.patches], selected.Beta)
-        assert [to_rgb(bar.get_facecolor()) for bar in axis.patches] == [to_rgb("red"), to_rgb("blue")]
+        np.testing.assert_allclose(
+            [bar_patch.get_height() for bar_patch in axis.patches], selected.Beta
+        )
+        assert [to_rgb(bar_patch.get_facecolor()) for bar_patch in axis.patches] == [
+            to_rgb("red"), to_rgb("blue")
+        ]
         segments = axis.containers[0].lines[2][0].get_segments()
         np.testing.assert_allclose([segment[:, 1] for segment in segments], np.column_stack(
             [selected.Beta - selected.StdErr, selected.Beta + selected.StdErr]
@@ -338,7 +341,6 @@ def test_roi_pipeline_definition_json_roundtrip(roi_table):
 @pytest.mark.parametrize("output_name", [None, "my_regions"])
 def test_named_roi_module_tables_selection_and_data_names_roundtrip(simulated_recording, output_name):
     pytest.importorskip("PySide6")
-    from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
     from pyBrainAnalyzIR.vis.pipeline_manager import pipeline_from_json, pipeline_to_json
 
     rec, _ = simulated_recording

@@ -133,7 +133,7 @@ def plot_roi_connectivity(
         axis = fig.add_subplot(matrix_grid[panel_index // ncols, panel_index % ncols])
         selected["significance"] = table.loc[selected.index, "significance"]
 
-        def matrix(column):
+        def matrix(column, selected=selected):
             return selected.pivot(
                 index=["geo_from", "Channel_from"], columns=["geo_to", "Channel_to"],
                 values=column,

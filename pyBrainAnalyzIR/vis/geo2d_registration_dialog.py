@@ -137,6 +137,7 @@ class Geo2DRegistrationDialog(QDialog):
         self.symmetry_pairs, self.symmetry_axis = [], None
         self._result_points: list[ProbePoint] = []
         self._arrow = None
+        self._arrow_tail = None
         self._lasso = None
         self._frame = topographic_frame(self.head_positions)
 

@@ -419,7 +419,7 @@ def fit_warp(points2d, anchors, attractors, center, radius, origin=None, mirror=
 
     if prior is not None:
         starts = [prior.params]
-    elif not len(anchor_xy):
+    elif anchor_xy.size == 0:
         raise ValueError("needs at least one anchor")
     elif len(anchor_xy) >= 2:
         starts = [np.concatenate([_rotvec(_kabsch(local(anchor_xy, np.eye(2)), anchor_dir)),
@@ -476,7 +476,7 @@ def relax_distances(positions, points2d, center, vertices, tree, pinned=None,
         return positions
     distance2d = np.linalg.norm(points2d[:, None] - points2d[None], axis=2)
     rows, cols = np.nonzero(np.triu((distance2d > 0) & (distance2d < limit), 1))
-    if not len(rows):
+    if rows.size == 0:
         return positions
     target = distance2d[rows, cols]
     pinned = pinned or {}
@@ -654,8 +654,12 @@ def midsagittal_plane(head_positions: dict, scalp_vertices=None, tree=None):
     """
     head = {canonical_label(k): np.asarray(v, dtype=float) for k, v in head_positions.items()}
     midline = np.array([v for k, v in head.items() if k.endswith("z")])
-    right = next(((head[r] - head[l]) for l, r in (("LPA", "RPA"), ("T7", "T8"))
-                  if l in head and r in head), np.array([1.0, 0, 0]))
+    right = next(
+        (head[right_label] - head[left_label]
+         for left_label, right_label in (("LPA", "RPA"), ("T7", "T8"))
+         if left_label in head and right_label in head),
+        np.array([1.0, 0, 0]),
+    )
     if len(midline) >= 3:
         point = midline.mean(axis=0)
         normal = np.linalg.svd(midline - point)[2][-1]
@@ -969,7 +973,7 @@ def _part_constraints(rows, points2d, anchors, attractors):
     part_attractors = []
     for tail, tip, label in attractors:
         nearest = np.min(np.linalg.norm(points2d[rows] - tail, axis=1))
-        if not len(others) or nearest <= np.linalg.norm(others - tail, axis=1).min():
+        if others.size == 0 or nearest <= np.linalg.norm(others - tail, axis=1).min():
             part_attractors.append((tail, tip, label, 1.0))
     outside = [(row, label) for row, label in anchors.items() if row not in rowset]
     if outside:
@@ -1075,7 +1079,7 @@ def estimate_mm_per_unit(labels, coords, pairs) -> float:
         distances = gaps.min(axis=1)
     distances = np.asarray(distances, dtype=float)
     distances = distances[np.isfinite(distances) & (distances > 0)]
-    if not len(distances):
+    if distances.size == 0:
         return 1.0
     median = float(np.median(distances))
     if PLAUSIBLE_CHANNEL_MM[0] <= median <= PLAUSIBLE_CHANNEL_MM[1]:

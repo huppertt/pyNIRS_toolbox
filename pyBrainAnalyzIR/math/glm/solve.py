@@ -50,7 +50,13 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
         if noise_model == "ols":
             return statsmodels.api.OLS(y, x).fit()
         if noise_model == "rls":
-            return statsmodels.api.RecursiveLS(y, x).fit()
+            return statsmodels.api.RecursiveLS(
+                y,
+                x,
+                initialization="known",
+                initial_state=np.zeros(x.shape[1]),
+                initial_state_cov=np.eye(x.shape[1]) * 1e6,
+            ).fit()
         if noise_model == "wls":
             return statsmodels.api.WLS(y, x).fit()
         if noise_model == "ar_irls":

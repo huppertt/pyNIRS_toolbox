@@ -129,14 +129,18 @@ def test_roi_statistics_embedded_panels_filters_and_fixed_keys(roi_dataset, key)
         _canvas_click(window._stats_canvas, button.ax)
         assert to_rgb(button.ax.get_facecolor()) == to_rgb(button.color)
     assert len(fig.axes[1].patches) == 2
-    np.testing.assert_allclose([bar.get_height() for bar in fig.axes[1].patches], [4, 0.1])
+    np.testing.assert_allclose(
+        [bar_patch.get_height() for bar_patch in fig.axes[1].patches], [4, 0.1]
+    )
     assert window._stats_model.rowCount() == 4
     assert plt.fignum_exists(external.number)
     window._stats_condition_filter = {"B"}
     window._apply_stats_filter()
     assert len(fig.axes) == 4
     assert fig.axes[1].get_title() == "B: HbO"
-    np.testing.assert_allclose([bar.get_height() for bar in fig.axes[1].patches], [-4, 0.2])
+    np.testing.assert_allclose(
+        [bar_patch.get_height() for bar_patch in fig.axes[1].patches], [-4, 0.2]
+    )
     assert window._stats_proxy.rowCount() == 2
     window._filter_q_spin.setValue(0.05)
     assert "q<0.05" in fig._suptitle.get_text()

@@ -13,7 +13,7 @@ import matplotlib.colors as mcolors
 
 
 import cedalion  # noqa: F401  (namespace + accessor registration)
-from cedalion.typing import LabeledPointCloud  # noqa: F401  (documented type)
+from cedalion.typing import LabeledPoints  # noqa: F401  (documented type)
 from pyBrainAnalyzIR.utils.geo_transforms import geo_rotation
 from pyBrainAnalyzIR.dataclasses.roi import GeoROI
 
@@ -53,9 +53,9 @@ class Connectivity:
             ``Type_to``, ``Type_from``, ``geo_to``, ``geo_from`` (``Subject_to``/``Subject_from``
             for hyperscanning), ``dfe`` (degrees of freedom) and ``ZstdErr`` (standard error of
             the Fisher-Z transformed coefficient).
-        geo3d (LabeledPointCloud): A labeled point cloud representing the 3D geometry of
+        geo3d (LabeledPoints): A labeled point cloud representing the 3D geometry of
             the recording.
-        geo2d (LabeledPointCloud): A labeled point cloud representing the 2D geometry of
+        geo2d (LabeledPoints): A labeled point cloud representing the 2D geometry of
             the recording.
         geoROI: Named ROI definitions per probe/participant. Empty for channel
             results. Copies and condition contrasts preserve these definitions.
@@ -67,8 +67,8 @@ class Connectivity:
 
     coef: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    geo3d: OrderedDict[str, LabeledPointCloud] = field(default_factory=OrderedDict)
-    geo2d: OrderedDict[str, LabeledPointCloud] = field(default_factory=OrderedDict)
+    geo3d: OrderedDict[str, LabeledPoints] = field(default_factory=OrderedDict)
+    geo2d: OrderedDict[str, LabeledPoints] = field(default_factory=OrderedDict)
     geoROI: OrderedDict[str, GeoROI] = field(default_factory=OrderedDict)
     geo2d_rotation_data: OrderedDict[str, geo_rotation] = field(default_factory=OrderedDict)
     geo3d_rotation_data: OrderedDict[str, geo_rotation] = field(default_factory=OrderedDict)
@@ -126,14 +126,14 @@ class Connectivity:
         """
         return copy.deepcopy(self) if deep else copy.copy(self)
 
-    def geo_rotated2D(self, name: str) -> LabeledPointCloud:
+    def geo_rotated2D(self, name: str) -> LabeledPoints:
         """Return the rotation data for a given geometry name.
 
         Args:
             name (str): The name of the geometry.
 
         Returns:
-            LabeledPointCloud: The rotated 2D geometry.
+            LabeledPoints: The rotated 2D geometry.
 
         """
         if name not in self.geo2d or name not in self.geo2d_rotation_data:
@@ -144,13 +144,13 @@ class Connectivity:
 
         return rotator.transform(geo)
 
-    def geo_rotated3D(self, name: str) -> LabeledPointCloud:
+    def geo_rotated3D(self, name: str) -> LabeledPoints:
         """Return the rotation data for a given geometry name.
 
         Args:
             name (str): The name of the geometry.
         Returns:
-            LabeledPointCloud: The rotated 3D geometry.
+            LabeledPoints: The rotated 3D geometry.
         """
         if name not in self.geo3d or name not in self.geo3d_rotation_data:
             raise ValueError(f"Geometry '{name}' not found in geo3d.")

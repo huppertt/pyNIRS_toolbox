@@ -10,10 +10,10 @@ from statsmodels.stats.multitest import multipletests
 
 pytest.importorskip("cedalion")
 
-from pyBrainAnalyzIR.dataclasses.dataset import DataSet
-from pyBrainAnalyzIR.math.connectivity import compute_connectivity, compute_hyperscanning
-from pyBrainAnalyzIR.pipelines.modules.connectivity import resting_state_connectivity, hyperscanning
-from pyBrainAnalyzIR.sigproc.roi import roi_average
+from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
+from pyBrainAnalyzIR.math.connectivity import compute_connectivity, compute_hyperscanning  # noqa: E402
+from pyBrainAnalyzIR.pipelines.modules.connectivity import resting_state_connectivity, hyperscanning  # noqa: E402
+from pyBrainAnalyzIR.sigproc.roi import roi_average  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

@@ -71,8 +71,10 @@ def test_register_probe_2d_recovers_probe_and_pins_anchors(sphere_head):
     # A directional attractor can replace one anchor.
     two = {GRID.index("FC3"): "FC3", GRID.index("CP4"): "CP4"}
     xy = _layout(head, GRID)
-    tail, tip = xy[GRID.index("C1")], xy[GRID.index("C1")] + (xy[GRID.index("Cz")]
-                                                             - xy[GRID.index("C1")]) * 0.3
+    tail = xy[GRID.index("C1")]
+    tip = xy[GRID.index("C1")] + (
+        xy[GRID.index("Cz")] - xy[GRID.index("C1")]
+    ) * 0.3
     guided = g2.register_probe_2d(xy, two, [(tail, tip, "C2")], head, vertices)
     assert np.linalg.norm(guided.positions - truth, axis=1).max() < 10
 
@@ -171,10 +173,12 @@ def test_symmetrize_on_head_averages_close_pairs_only(sphere_head):
     np.testing.assert_allclose(np.linalg.norm(out, axis=1), 90, atol=0.5)
 
 
-def _geo2d_recording(head, labels=GRID[:6], units="mm", landmarks=("Cz",)):
+def _geo2d_recording(head, labels=None, units="mm", landmarks=("Cz",)):
     import cedalion.dataclasses as cdc
     import xarray as xr
 
+    if labels is None:
+        labels = GRID[:6]
     sources, detectors = labels[::2], labels[1::2]
     names = [f"S{i + 1}" for i in range(len(sources))] + [f"D{i + 1}" for i in range(len(detectors))]
     xy = _layout(head, list(sources) + list(detectors) + list(landmarks))
@@ -344,6 +348,7 @@ def test_project_to_scalp_hits_faces_exactly_and_independent_of_resolution():
     directions = rng.normal(size=(200, 3))
     directions[:, 2] = np.abs(directions[:, 2])
     results = {}
+    coarse_vertex = None
     for subdivisions in (2, 4):
         mesh = trimesh.creation.icosphere(subdivisions=subdivisions, radius=90)
         scalp = g2.ScalpSurface(mesh.vertices, mesh.faces)
@@ -360,6 +365,7 @@ def test_project_to_scalp_hits_faces_exactly_and_independent_of_resolution():
         vertex_snap = g2.project_to_scalp(directions, center, mesh.vertices)
         if subdivisions == 2:
             coarse_vertex = vertex_snap
+    assert coarse_vertex is not None
     face_change = np.linalg.norm(results[2] - results[4], axis=1)
     vertex_change = np.linalg.norm(coarse_vertex - results[4], axis=1)
     assert np.median(face_change) < 0.25 * np.median(vertex_change)
@@ -379,6 +385,9 @@ def test_project_to_scalp_falls_back_to_vertices_on_miss():
 def test_symmetric_standard_positions_are_exact_mirrors_on_an_ellipsoid():
     import trimesh
     from pyBrainAnalyzIR.vis import standard_positions as sp
+
+    if not g2.template_1005():
+        pytest.skip("the 10-5 template (MNE) is not available")
 
     mesh = trimesh.creation.icosphere(subdivisions=5, radius=1.0)
     vertices = np.asarray(mesh.vertices) * [75.0, 95.0, 85.0] + [1.0, -2.0, 3.0]
