@@ -4,12 +4,14 @@ from typing import Any, Optional
 
 import copy
 import re
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
+from matplotlib.transforms import Affine2D
 
 
 import cedalion  # noqa: F401  (namespace + accessor registration)
@@ -159,6 +161,55 @@ class Connectivity:
         geo = self.geo3d[name].copy()
 
         return rotator.transform(geo)
+
+    def probe_layouts(self, plot_on_scalp: bool = True):
+        """Placed 2D probe points of every geometry, for drawing on one axes.
+
+        Returns ``(layouts, on_scalp)``; ``layouts`` maps geometry names to
+        ``(points, outline)``. The 2D layout (``plot_on_scalp`` False) is
+        ``geo_rotated2D``. The 10-20 view projects each geo3d onto the scalp
+        (unit circle) and places the heads like the 2D probes (hyperscanning
+        participants face each other around a circle); ``outline`` is then
+        the 3x3 matrix placing that head's outline. Without head landmarks
+        in every geo3d, all geometries use the 2D layout.
+        """
+        from pyBrainAnalyzIR.vis.plot_nirs_inline import _legacy_probe_geometry, probe_layout
+
+        names = list(dict.fromkeys(self.geo2d) | dict.fromkeys(self.geo3d))
+        if plot_on_scalp and names:
+            projected = {}
+            for name in names:
+                proxy = SimpleNamespace(geo2d=self.geo2d.get(name), geo3d=self.geo3d.get(name))
+                points, on_scalp = probe_layout(proxy, True)
+                if not on_scalp:
+                    break
+                projected[name] = points
+            else:
+                radius = 0.0 if len(names) < 2 else 1.25 / np.sin(np.pi / len(names))
+                layouts = {}
+                for name, points in projected.items():
+                    rotator = self.geo2d_rotation_data.get(name, geo_rotation())
+                    matrix = np.asarray(rotator.rotation2D, float) @ np.diag(
+                        np.asarray(rotator.flip2D, float))
+                    offset = np.asarray(rotator.translation2D, float)
+                    norm = np.linalg.norm(offset)
+                    offset = offset / norm * radius if norm > 0 else np.zeros(2)
+                    placed = geo_rotation(translation2D=offset, rotation2D=matrix).transform(points)
+                    outline = np.eye(3)
+                    outline[:2, :2], outline[:2, 2] = matrix, offset
+                    layouts[name] = (placed, outline)
+                return layouts, True
+        layouts = {}
+        for name in names:
+            if name in self.geo2d_rotation_data and len(self.geo2d.get(name, ())) > 0:
+                layouts[name] = (self.geo_rotated2D(name), None)
+            else:
+                proxy = SimpleNamespace(geo2d=self.geo2d.get(name, ()), geo3d=self.geo3d.get(name))
+                points = _legacy_probe_geometry(proxy)
+                if points is not None and points.shape[-1] == 3:
+                    points = points[:, :2]
+                layouts[name] = (points, None)
+        return layouts, False
 
     # ------------------------------------------------------------------
     # conditions
@@ -458,8 +509,13 @@ class Connectivity:
             thres=0.05,
             vrange=None,
             show_cross_types=False,
-            condnames=None):
-        """Draw the significant connections on the 2D probe layout.
+            condnames=None,
+            plot_on_scalp=True):
+        """Draw the significant connections on the probe (10-20 view or 2D layout).
+
+        ``plot_on_scalp`` draws each probe as a 10-20 view on a head outline
+        (default; hyperscanning heads face each other); False draws the 2D
+        probe layouts. Without geo3d head landmarks the 2D layout is used.
 
         ROI results instead show labeled adjacency matrices, with significance
         stars, alongside membership-colored probes and disabled ROI color keys.
@@ -482,7 +538,7 @@ class Connectivity:
             from pyBrainAnalyzIR.vis.plot_roi_connectivity import plot_roi_connectivity
             return plot_roi_connectivity(
                 self, fdr_correct_for_all, type, threshold_type, thres,
-                vrange, show_cross_types, condnames,
+                vrange, show_cross_types, condnames, plot_on_scalp=plot_on_scalp,
             )
         coef = self.table()
 
@@ -555,16 +611,22 @@ class Connectivity:
         def channel_ends(geo2d, chan):
             source = chan[:chan.find("D")]
             detector = chan[chan.find("D"):]
-            return (geo2d[geo2d.label == source].to_numpy(),
-                    geo2d[geo2d.label == detector].to_numpy(), source, detector)
+            labels = np.asarray([str(label) for label in geo2d.label.values])
+            values = np.asarray(geo2d.pint.dequantify().values if hasattr(geo2d, "pint")
+                                else geo2d.values, dtype=float)
+            return (values[labels == source], values[labels == detector], source, detector)
 
+        from pyBrainAnalyzIR.vis.plot_nirs_inline import _draw_scalp_outline
+
+        layouts, on_scalp = self.probe_layouts(plot_on_scalp)
+        label_style = ({"fontsize": 9, "weight": "semibold"} if on_scalp else {"fontsize": 12})
         for axIdx, (cond, typeto, typefrom, lst) in enumerate(panels):
             a = ax[axIdx]
             thr = coef['_thr'].to_numpy()
             for idx in lst[thr[lst] < thres]:
-                srcpos_to, detpos_to, _, _ = channel_ends(self.geo_rotated2D(coef.geo_to[idx]),
+                srcpos_to, detpos_to, _, _ = channel_ends(layouts[coef.geo_to[idx]][0],
                                                           coef.Channel_to[idx])
-                srcpos_from, detpos_from, _, _ = channel_ends(self.geo_rotated2D(coef.geo_from[idx]),
+                srcpos_from, detpos_from, _, _ = channel_ends(layouts[coef.geo_from[idx]][0],
                                                               coef.Channel_from[idx])
                 pos_to = (srcpos_to + detpos_to) / 2
                 pos_from = (srcpos_from + detpos_from) / 2
@@ -573,20 +635,29 @@ class Connectivity:
                 ll.set_color(cmap(norm(coef.Coeff[idx])))
 
             optodes = []
+            outlined = set()
             for geo_col, chan_col in (('geo_to', 'Channel_to'), ('geo_from', 'Channel_from')):
                 for name in np.unique(self.coef[geo_col]):
-                    geo2d = self.geo_rotated2D(name)
-                    optodes.append(geo2d.to_numpy())
+                    geo2d, outline = layouts[name]
+                    if on_scalp and name not in outlined:
+                        outlined.add(name)
+                        _draw_scalp_outline(a, Affine2D(outline), set_limits=False)
+                        ring = np.c_[1.15 * np.cos(np.linspace(0, 2 * np.pi, 16)),
+                                     1.15 * np.sin(np.linspace(0, 2 * np.pi, 16)), np.ones(16)]
+                        optodes.append((ring @ outline.T)[:, :2])
                     uchan = np.unique(self.coef[self.coef[geo_col] == name][chan_col])
                     for chan in uchan:
                         srcpos, detpos, source, detector = channel_ends(geo2d, chan)
+                        optodes.append(np.vstack([srcpos, detpos]))
                         a.plot([srcpos[0, 0], detpos[0, 0]], [srcpos[0, 1], detpos[0, 1]],
                                color=[0.8, 0.8, 0.8])
-                        a.text(srcpos[0, 0], srcpos[0, 1], source, fontsize=12, ha='center', va='center')
-                        a.text(detpos[0, 0], detpos[0, 1], detector, fontsize=12, ha='center', va='center')
+                        a.text(srcpos[0, 0], srcpos[0, 1], source, ha='center', va='center',
+                               color='#e41a1c' if on_scalp else 'k', **label_style)
+                        a.text(detpos[0, 0], detpos[0, 1], detector, ha='center', va='center',
+                               color='#377eb8' if on_scalp else 'k', **label_style)
             optodes = np.vstack(optodes)
 
-            s = (optodes.max() - optodes.min()) / 10
+            s = 0.02 if on_scalp else (optodes.max() - optodes.min()) / 10
             a.set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
             a.set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
             a.set_aspect('equal')

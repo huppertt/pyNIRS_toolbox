@@ -28,6 +28,13 @@ class DataSet:
     demographics tables, and ``pyBrainAnalyzIR.io.bids`` for BIDS export.
     Tests: ``tests/test_dataset.py``, ``tests/test_analysis_pipeline.py``,
     and ``tests/test_data_masking_manager.py``.
+
+    Head models: ``head_models`` is one registry shared by every recording
+    (head-model name -> ``{"model", "is_atlas", "default_size", "sizes"}``),
+    filled by NIRSviewIR's "Probe-Head Model Registration". Each registered
+    recording then has Cedalion's ``head_model`` field set to its head and
+    ``aux_obj["probe_registration"]`` naming its entry in ``head_models``
+    (see ``RegistrationManager.store_registration``).
     """
     description: str = field(default_factory=str)
     statistics: OrderedDict[str, pyBrainAnalyzIR.dataclasses.statistics.Statistics] = field(default_factory=OrderedDict)
@@ -45,6 +52,7 @@ class DataSet:
         self.description = "Data Set"
         self.dataset = []
         self.statistics = OrderedDict()
+        self.head_models = {}
         if (data is not None):
             self.import_data(data)
 

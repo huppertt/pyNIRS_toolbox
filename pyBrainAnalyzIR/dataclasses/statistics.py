@@ -12,7 +12,6 @@ from statsmodels.stats.multitest import multipletests
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
-from cedalion.dataclasses.geometry import PointType
 
 
 import cedalion  # noqa: F401  (namespace + accessor registration)
@@ -567,8 +566,13 @@ class Statistics:
                                   dims=['indices']
                                   )
 
-    def draw(self, vartype='tstat', vrange=None, thresh='p<0.05', condnames=None, types=None, fdr_correct_full=True):
+    def draw(self, vartype='tstat', vrange=None, thresh='p<0.05', condnames=None, types=None,
+             fdr_correct_full=True, plot_on_scalp=True):
         """Visualize channel statistics or ROI beta estimates with standard errors.
+
+        ``plot_on_scalp`` draws the probe as a 10-20 view (default; falls back
+        to the 2D layout without geo3d head landmarks); False draws the 2D
+        probe layout (``geo2d``).
 
         ROI models show one membership-colored physical probe, disabled ROI
         color-key buttons, and beta +/- one SE panels for each condition/type.
@@ -579,8 +583,8 @@ class Statistics:
         ``examples/08_GroupAnalysis.ipynb`` and ``examples/15_ROI_Analysis.ipynb``.
         Direct callers: notebook users.
         Direct dependencies: ``matplotlib``, the statistics stored on this object,
-        ``statsmodels.stats.multitest.multipletests``, and
-        ``cedalion.dataclasses.geometry.PointType`` and
+        ``statsmodels.stats.multitest.multipletests``,
+        ``vis.plot_nirs_inline.draw_probe`` for the probe and
         ``vis.plot_nirs_inline.plot_roi_statistics`` for ROI models.
         Tests: ``tests/test_roi.py``.
         """
@@ -598,10 +602,11 @@ class Statistics:
         if self.geoROI is not None:
             from pyBrainAnalyzIR.vis.plot_nirs_inline import plot_roi_statistics
             return plot_roi_statistics(
-                self, condnames, types_draw, thresh, vrange, fdr_correct_full
+                self, condnames, types_draw, thresh, vrange, fdr_correct_full,
+                plot_on_scalp=plot_on_scalp,
             )
 
-        geo2d = self.geo3d
+        from pyBrainAnalyzIR.vis.plot_nirs_inline import draw_probe
 
         dof = self.dof
         stdErr = np.sqrt(np.diag(self.covariance))
@@ -652,36 +657,20 @@ class Statistics:
                 stat_mask = (p_values_local < float(thresh[thresh.find('<') + 1:]))
 
             for idxt, type in enumerate(types):
-                mllines = []
                 local_vals = vals_local[vals_local.type == type]
                 local_stat_mask = stat_mask[vals_local.type == type]
-
-                for idx_chan, chan in enumerate(local_vals.channels):
-                    sdstr = to_string(chan)
-                    source = sdstr[:sdstr.find("D")]
-                    detector = sdstr[sdstr.find("D"):]
-
-                    srcpos = geo2d[geo2d.label == source].to_numpy()
-                    detpos = geo2d[geo2d.label == detector].to_numpy()
-                    ll, = ax[idxc, idxt].plot([srcpos[0, 0], detpos[0, 0]], [srcpos[0, 1], detpos[0, 1]], 'k')
-                    ax[idxc, idxt].text(srcpos[0, 0], srcpos[0, 1], source, fontsize=12, ha='center', va='center')
-                    ax[idxc, idxt].text(detpos[0, 0], detpos[0, 1], detector, fontsize=12, ha='center', va='center')
-
+                channels = xr.DataArray(
+                    np.zeros(local_vals.sizes["indices"]), dims="channel",
+                    coords={"channel": [to_string(chan) for chan in local_vals.channels]},
+                )
+                mllines = draw_probe(self, channels, ax[idxc, idxt], plot_on_scalp=plot_on_scalp)
+                for idx_chan, ll in enumerate(mllines):
                     ll.set_color(cmap(norm(local_vals[idx_chan])))
-
                     if (local_stat_mask[idx_chan]):
                         ll.set_linewidth(3)
                     else:
                         ll.set_linewidth(1)
                         ll.set_dashes([1, 2])
-
-                    mllines.append(ll)
-
-                optodes = geo2d[(geo2d.type == PointType.DETECTOR) | (geo2d.type == PointType.SOURCE)].to_numpy()
-                s = (optodes.max() - optodes.min()) / 10
-                ax[idxc, idxt].set_ylim(optodes[:, 1].min() - s, optodes[:, 1].max() + s)
-                ax[idxc, idxt].set_xlim(optodes[:, 0].min() - s, optodes[:, 0].max() + s)
-                ax[idxc, idxt].set_axis_off()
                 ax[idxc, idxt].set_title(condname + " : " + type)
                 plt.colorbar(sm, ax=ax[idxc, idxt], label=vartype + " (" + thresh + ")", shrink=0.5)
         return None

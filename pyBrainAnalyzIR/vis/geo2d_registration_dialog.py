@@ -10,7 +10,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyArrowPatch, Polygon
 from matplotlib.path import Path
 from matplotlib.widgets import LassoSelector
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -68,6 +68,10 @@ DIRECTION_COLOR = "#ff7f0e"
 ASSIGNED_COLOR = "#ff7f0e"
 GROUP_COLORS = ("#000000", "#e377c2", "#17becf", "#bcbd22", "#8c564b", "#7f7f7f")
 HIT_PIXELS = 9
+ARROW_POLL_MS = 30
+"""Cursor polling interval while a direction arrow is aimed (see ``start_direction``)."""
+PREVIOUS_COLOR = "0.55"
+"""Color of the previous registration (the existing geo3d) on the 10-20 view."""
 OUTLINE_RING = (
     "Fpz Fp2 AF8 F8 FT8 T8 TP8 P8 PO8 O2 Oz O1 PO7 P7 TP7 T7 FT7 F7 AF7 Fp1 Fpz"
 ).split()
@@ -111,10 +115,16 @@ class Geo2DRegistrationDialog(QDialog):
     ``ScalpSurface`` (vertices and faces) or bare vertices. After
     ``accept``, ``result`` holds the ``Geo2DRegistration`` and
     ``optode_positions()`` the registered sources and detectors.
+
+    ``previous_probe`` (``(label, kind, RAS mm)`` triples, e.g. the scan's
+    current geo3d registered on this head) is drawn on the 10-20 view next
+    to the new registration. With ``confirm_overwrite`` (reregistering a scan
+    that already has a geo3d), Accept asks before the existing geo3d is
+    overwritten; "Continue Editing" keeps the dialog open.
     """
 
     def __init__(self, recording, head_positions: dict, scalp_vertices, parent=None,
-                 title: str | None = None):
+                 title: str | None = None, previous_probe=None, confirm_overwrite: bool = False):
         super().__init__(parent)
         self.setWindowTitle(title or "Register to Geo2D: probe landmarks")
         self.resize(1250, 820)
@@ -138,12 +148,43 @@ class Geo2DRegistrationDialog(QDialog):
         self._result_points: list[ProbePoint] = []
         self._arrow = None
         self._arrow_tail = None
+        self._arrow_tip = None
+        self._arrow_timer = QTimer(self)
+        self._arrow_timer.setInterval(ARROW_POLL_MS)
+        self._arrow_timer.timeout.connect(self._follow_cursor)
         self._lasso = None
         self._frame = topographic_frame(self.head_positions)
+        self.previous_probe = [
+            (str(label), str(kind).upper(), np.asarray(xyz, dtype=float))
+            for label, kind, xyz in (previous_probe or [])
+        ]
+        self.confirm_overwrite = bool(confirm_overwrite)
 
         self._build_ui(estimate_mm_per_unit(labels, coords, pairs))
         self._populate_table()
         self._redraw()
+
+    def accept(self) -> None:
+        """Accept; when reregistering, first confirm overwriting the existing geo3d."""
+        if self.confirm_overwrite and not self.confirm_overwrite_geo3d():
+            return
+        super().accept()
+
+    def confirm_overwrite_geo3d(self) -> bool:
+        """Ask whether to overwrite the existing 3D probe; False continues editing."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Overwrite 3D probe")
+        box.setText("This scan already has a 3D probe (geo3d).")
+        box.setInformativeText(
+            "Accepting replaces its existing geo3d with this registration of the 2D probe. "
+            "The change is kept in the registration window and saved to the data only "
+            "when the registration window is accepted."
+        )
+        overwrite = box.addButton("Overwrite geo3d", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Continue Editing", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is overwrite
 
     # UI ----------------------------------------------------------------
     def _build_ui(self, mm_per_unit: float) -> None:
@@ -638,18 +679,49 @@ class Geo2DRegistrationDialog(QDialog):
             for label, point in zip(assigned, marks):
                 axes.annotate(label, point, xytext=(3, -9), textcoords="offset points",
                               fontsize=7, fontweight="bold", color=ASSIGNED_COLOR)
+        if self.previous_probe:
+            self._draw_previous(axes)
         if self.result is not None:
             self._draw_registered(axes)
-        axes.set_aspect("equal", adjustable="datalim")
+        if self.previous_probe:
+            axes.legend(loc="lower right", fontsize=7, frameon=False)
+        axes.set_aspect("equal", adjustable="box")
         axes.set_xlim(-1.25 * radius, 1.25 * radius)
         axes.set_ylim(-1.2 * radius, 1.2 * radius)
         axes.axis("off")
         title = "Head and standard positions (nose up)"
+        if self.previous_probe:
+            title = "Previous registration (existing geo3d)"
         if self.result is not None:
             title = ("Registered probe" if self.result_current
                      else "Registered probe (out of date: compute again)")
+            if self.previous_probe:
+                title = "Previous and current registration" + (
+                    "" if self.result_current else " (out of date: compute again)")
         axes.set_title(title, fontsize=8)
         self.head_canvas.draw_idle()
+
+    def _draw_previous(self, axes) -> None:
+        """The existing geo3d probe: hollow grey optodes and dashed channels."""
+        optodes = [(label, kind, xyz) for label, kind, xyz in self.previous_probe
+                   if kind in ("SOURCE", "DETECTOR")]
+        if not optodes:
+            return
+        positions = self._project([xyz for _, _, xyz in optodes])
+        lookup = {label: xy for (label, _, _), xy in zip(optodes, positions)}
+        for source, detector in self.channel_pairs:
+            if source in lookup and detector in lookup:
+                a, b = lookup[source], lookup[detector]
+                axes.plot([a[0], b[0]], [a[1], b[1]], color=PREVIOUS_COLOR, lw=1, ls="--",
+                          zorder=3)
+        for kind in ("SOURCE", "DETECTOR"):
+            xy = np.array([lookup[label] for label, k, _ in optodes if k == kind]).reshape(-1, 2)
+            if len(xy):
+                axes.scatter(*xy.T, s=26, facecolors="none", marker="o",
+                             edgecolors=KIND_STYLE[KIND_NAMES[kind]]["color"], linewidths=1.0,
+                             alpha=0.8, zorder=4)
+        axes.plot([], [], color=PREVIOUS_COLOR, ls="--", marker="o", mfc="none",
+                  label="Previous registration (geo3d)")
 
     def _draw_registered(self, axes) -> None:
         alpha = 1.0 if self.result_current else 0.3
@@ -663,6 +735,9 @@ class Geo2DRegistrationDialog(QDialog):
             style = KIND_STYLE[point.kind]
             axes.scatter(*xy, s=22, c=style["color"], marker=style["marker"],
                          edgecolors="black", linewidths=0.4, alpha=alpha, zorder=5)
+        if self.previous_probe:
+            axes.plot([], [], color="0.35", marker="o", mfc="0.35", alpha=alpha,
+                      label="Current registration")
 
     # Mouse -----------------------------------------------------------------
     def point_at(self, x: float, y: float) -> int | None:
@@ -690,8 +765,38 @@ class Geo2DRegistrationDialog(QDialog):
     def _canvas_moved(self, event) -> None:
         if self._arrow is None or event.inaxes is not self.probe_axes or event.xdata is None:
             return
-        self._arrow.set_positions(self._arrow_tail, (event.xdata, event.ydata))
-        self.probe_canvas.draw_idle()
+        self.aim_arrow((event.xdata, event.ydata))
+
+    def aim_arrow(self, tip) -> None:
+        """Point the arrow being placed at data position ``tip``."""
+        if self._arrow is None:
+            return
+        tip = tuple(float(v) for v in tip)
+        if self._arrow_tip != tip:
+            self._arrow_tip = tip
+            self._arrow.set_positions(self._arrow_tail, tip)
+            self.probe_canvas.draw_idle()
+
+    def _follow_cursor(self) -> None:
+        """Aim the arrow at the mouse cursor (polled).
+
+        Polling the cursor keeps the arrow following the mouse when Qt does
+        not deliver hover (motion) events, e.g. on macOS while the Python
+        process is not the active application or right after the context
+        menu that started the arrow closes.
+        """
+        if self._arrow is None:
+            self._arrow_timer.stop()
+            return
+        canvas = self.probe_canvas
+        pos = canvas.mapFromGlobal(QCursor.pos())
+        if not canvas.rect().contains(QPoint(pos.x(), pos.y())):
+            return
+        ratio = canvas.device_pixel_ratio
+        display = (pos.x() * ratio, canvas.figure.bbox.height - pos.y() * ratio)
+        if not self.probe_axes.bbox.contains(*display):
+            return
+        self.aim_arrow(self.probe_axes.transData.inverted().transform(display))
 
     def _canvas_released(self, event) -> None:
         if self._arrow is None or event.button != 1 or event.xdata is None:
@@ -706,11 +811,13 @@ class Geo2DRegistrationDialog(QDialog):
         """Start a direction arrow at ``tail``; it follows the mouse until a click sets it."""
         self.cancel_interaction()
         self._arrow_tail = tuple(np.asarray(tail, dtype=float))
+        self._arrow_tip = self._arrow_tail
         self._arrow = FancyArrowPatch(self._arrow_tail, self._arrow_tail, arrowstyle="-|>",
                                       mutation_scale=14, linestyle=":", lw=1.5,
                                       color=DIRECTION_COLOR)
         self.probe_axes.add_patch(self._arrow)
         self.probe_canvas.setFocus()
+        self._arrow_timer.start()
         self.status_label.setText("Move the mouse to aim the arrow and click to set it "
                                   "(Esc cancels).")
         self.probe_canvas.draw_idle()
@@ -719,6 +826,7 @@ class Geo2DRegistrationDialog(QDialog):
         if self._arrow is None:
             return None
         tail = np.asarray(self._arrow_tail)
+        self._arrow_timer.stop()
         self._arrow.remove()
         self._arrow = None
         if np.linalg.norm(np.asarray(tip, dtype=float) - tail) <= 0:
@@ -744,6 +852,7 @@ class Geo2DRegistrationDialog(QDialog):
             self._redraw()
 
     def cancel_interaction(self) -> None:
+        self._arrow_timer.stop()
         if self._arrow is not None:
             self._arrow.remove()
             self._arrow = None

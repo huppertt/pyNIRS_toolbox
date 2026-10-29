@@ -24,6 +24,7 @@ import copy
 import pickle
 from collections import OrderedDict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -35,7 +36,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QActionGroup, QCursor, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -72,7 +73,7 @@ from pyBrainAnalyzIR.dataclasses.connectivity import Connectivity
 from pyBrainAnalyzIR.vis.plot_nirs_inline import (
     draw_probe, linecolors, to_string, _ROI_COLORS, _roi_probe_data,
     _roi_channel_contributions, _color_roi_channels, _roi_label_buttons,
-    plot_roi_statistics,
+    plot_roi_statistics, probe_views_available,
 )
 from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi
 from pyBrainAnalyzIR.vis.pipeline_manager import (
@@ -304,6 +305,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._pipeline_dirty = True   # False once the pipeline ran on the current data
         self._current_stats_df = None       # last drawn statistics DataFrame (for export)
         self._current_stats_obj = None      # the Statistics object currently displayed
+        self._registration_window = None    # open Probe-Head Model Registration window
         self._stats_condition_filter: Optional[set] = None  # None = all
         self._stats_type_filter: Optional[set] = None        # None = all
         self.data_changed = False
@@ -335,6 +337,9 @@ class NIRSviewIRWindow(QMainWindow):
         )
 
         registration_menu = menu_bar.addMenu("Registration")
+        registration_menu.addAction("Probe-Head Model Registration").triggered.connect(
+            self._probe_head_model_registration
+        )
         registration_menu.addAction("Define Region-of-Interest").triggered.connect(
             self._define_rois
         )
@@ -558,6 +563,7 @@ class NIRSviewIRWindow(QMainWindow):
         self.file_tree.itemSelectionChanged.connect(self._on_file_selection_changed)
         self.type_selector.currentTextChanged.connect(self._on_type_changed)
         self.canvas.mpl_connect("button_press_event", self._on_click)
+        self._stats_canvas.mpl_connect("button_press_event", self._on_stats_click)
         self._run_pipeline_action.triggered.connect(self._run_pipeline)
 
         if len(self.dataset.dataset) > 0:
@@ -905,6 +911,42 @@ class NIRSviewIRWindow(QMainWindow):
             QMessageBox.critical(self, "Run Pipeline", f"Pipeline failed:\n{exc}")
             self._set_status("Pipeline run failed.")
 
+    def _probe_head_model_registration(self) -> None:
+        """Open the registration manager on the loaded data; OK stores the result in it."""
+        window = self._registration_window
+        if window is not None and window.isVisible():
+            window.raise_()
+            window.activateWindow()
+            return
+        self._ensure_dataset()
+        try:
+            from pyBrainAnalyzIR.vis.registration_manager import edit_dataset_registration
+
+            self._registration_window = edit_dataset_registration(
+                self.dataset, parent=self, on_accept=self._registration_accepted
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Probe-Head Model Registration",
+                f"Could not open the registration manager:\n{exc}",
+            )
+            return
+        self._registration_window.rejected.connect(
+            lambda: self._set_status("Probe-head model registration cancelled.")
+        )
+
+    def _registration_accepted(self) -> None:
+        self._mark_dataset_changed()
+        recordings = getattr(self.dataset, "dataset", [])
+        registered = sum(
+            bool((getattr(rec, "aux_obj", None) or {}).get("probe_registration", {}).get("registered"))
+            for rec in recordings
+        )
+        self._set_status(
+            f"Stored {len(getattr(self.dataset, 'head_models', {}))} head model(s) and "
+            f"{registered} of {len(recordings)} probe registration(s) with the data."
+        )
+
     def _define_rois(self) -> None:
         if not getattr(self.dataset, "dataset", []):
             QMessageBox.information(
@@ -1228,22 +1270,23 @@ class NIRSviewIRWindow(QMainWindow):
             self._draw(key)
             self._update_summary(self._current_row(), key)
 
+    # Right-clicks within this many pixels of a channel line toggle the channel.
+    CHANNEL_CLICK_TOLERANCE_PX = 8.0
+
     def _on_click(self, event) -> None:
         if self._right_stack.currentIndex() != 0:
             return
-        if self._roi_geometry is not None:
+        if event.inaxes is not self.ax_probe:
             return
-        if event.inaxes is not self.ax_probe or not self.mllines:
+        if self._roi_geometry is not None or not self.mllines:
+            if event.button == 3:
+                self._show_probe_view_menu()
             return
-        distances = []
-        for line in self.mllines:
-            xdata, ydata = line.get_data()
-            linelength = ((xdata[0] - xdata[-1]) ** 2 + (ydata[0] - ydata[-1]) ** 2) ** 0.5
-            lineseg1 = ((xdata[0] - event.xdata) ** 2 + (ydata[0] - event.ydata) ** 2) ** 0.5
-            lineseg2 = ((xdata[-1] - event.xdata) ** 2 + (ydata[-1] - event.ydata) ** 2) ** 0.5
-            distances.append(abs(linelength - lineseg1 - lineseg2))
-
+        distances = self._channel_pixel_distances(event)
         clicked = int(np.argmin(distances))
+        if event.button == 3 and distances[clicked] > self.CHANNEL_CLICK_TOLERANCE_PX:
+            self._show_probe_view_menu()
+            return
         if event.button == 3:   # right click adds to (or removes from) the selection
             if clicked in self.selected_channels:
                 if len(self.selected_channels) > 1:
@@ -1255,6 +1298,81 @@ class NIRSviewIRWindow(QMainWindow):
 
         self._update_timecourse()
         self.canvas.draw_idle()
+
+    def _channel_pixel_distances(self, event) -> np.ndarray:
+        """Screen distance (pixels) from a mouse event to each channel line segment."""
+        click = np.array([event.x, event.y], dtype=float)
+        distances = []
+        for line in self.mllines:
+            xdata, ydata = line.get_data()
+            ends = line.get_transform().transform(
+                np.column_stack([np.asarray(xdata, float)[[0, -1]], np.asarray(ydata, float)[[0, -1]]])
+            )
+            segment = ends[1] - ends[0]
+            length2 = float(segment @ segment)
+            frac = 0.0 if length2 == 0 else float(np.clip((click - ends[0]) @ segment / length2, 0, 1))
+            distances.append(float(np.linalg.norm(click - (ends[0] + frac * segment))))
+        return np.asarray(distances)
+
+    # -------------------------------------------------------- probe view menu
+
+    def _probe_view_objects(self) -> list:
+        """Objects (with geo2d/geo3d) whose probes the current view draws."""
+        if self._right_stack.currentIndex() == 0:
+            return [self.rec] if self.rec is not None else []
+        stats = self._current_stats_obj
+        if isinstance(stats, Connectivity):
+            names = list(dict.fromkeys(stats.geo2d) | dict.fromkeys(stats.geo3d))
+            return [SimpleNamespace(geo2d=stats.geo2d.get(name), geo3d=stats.geo3d.get(name))
+                    for name in names]
+        return [stats] if stats is not None else []
+
+    def _probe_views_available(self) -> bool:
+        """True when the shown probe(s) can be drawn both as a 10-20 view and in 2D."""
+        objects = self._probe_view_objects()
+        return bool(objects) and all(probe_views_available(obj) for obj in objects)
+
+    def _build_probe_view_menu(self) -> QMenu:
+        menu = QMenu(self)
+        available = self._probe_views_available()
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for text, on_scalp in (("10-20 View", True), ("2D Probe View", False)):
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(self.plot_on_scalp == on_scalp)
+            action.setEnabled(available)
+            action.setData(on_scalp)
+            group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, value=on_scalp: self._set_probe_view(value)
+            )
+        if not available:
+            menu.addSeparator()
+            note = menu.addAction("Requires both a 2D probe and a 3D probe with head landmarks")
+            note.setEnabled(False)
+        return menu
+
+    def _show_probe_view_menu(self) -> None:
+        """Context menu toggling the probe drawing between the 10-20 view and the 2D probe."""
+        self._build_probe_view_menu().exec(QCursor.pos())
+
+    def _on_stats_click(self, event) -> None:
+        if event.button == 3 and self._current_stats_obj is not None:
+            self._show_probe_view_menu()
+
+    def _set_probe_view(self, plot_on_scalp: bool) -> None:
+        """Draw probes as the 10-20 view (True) or the 2D probe layout and redraw."""
+        plot_on_scalp = bool(plot_on_scalp)
+        if plot_on_scalp == self.plot_on_scalp:
+            return
+        self.plot_on_scalp = plot_on_scalp
+        if self._right_stack.currentIndex() == 0:
+            if self.rec is not None and self.type_selector.currentText():
+                self._draw(self.type_selector.currentText())
+        else:
+            self._redraw_stats_figure()
+        self._set_status("Probe view: " + ("10-20" if plot_on_scalp else "2D probe") + ".")
 
     # ---------------------------------------------------------------- drawing
 
@@ -1521,6 +1639,7 @@ class NIRSviewIRWindow(QMainWindow):
                     (plot_data.coef.Type_to != plot_data.coef.Type_from).any()
                 ),
                 condnames=conditions,
+                plot_on_scalp=self.plot_on_scalp,
             )
             self._embed_result_figure(fig if fig is not None else plt.gcf())
         except Exception as exc:
@@ -1605,6 +1724,7 @@ class NIRSviewIRWindow(QMainWindow):
                 condnames=condnames,
                 types=types_arg,
                 fdr_correct_full=fdr_full,
+                plot_on_scalp=self.plot_on_scalp,
             )
             self._embed_result_figure(plt.gcf())
         except Exception as exc:

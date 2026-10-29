@@ -1,4 +1,5 @@
 """Registration of 2D (geo2d) probes to standard head positions and its dialog."""
+import importlib
 from types import SimpleNamespace
 
 import numpy as np
@@ -409,3 +410,64 @@ def test_symmetric_standard_positions_are_exact_mirrors_on_an_ellipsoid():
     hits, _ = g2.ray_surface_hits(np.array([1.0, -2, 3]), np.array(list(positions.values())) - [1, -2, 3],
                                   vertices, mesh.faces)
     assert np.nanmax(np.linalg.norm(hits - np.array(list(positions.values())), axis=1)) < 1.0
+
+
+@pytest.mark.requires_qt
+def test_dialog_arrow_follows_the_polled_cursor(dialog, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    dialog_module = importlib.import_module("pyBrainAnalyzIR.vis.geo2d_registration_dialog")
+    dialog.resize(1000, 700)
+    dialog.show()
+    dialog.probe_canvas.draw()
+    dialog.start_direction((0.0, 0.0))
+    assert dialog._arrow is not None and dialog._arrow_timer.isActive()
+
+    canvas, axes = dialog.probe_canvas, dialog.probe_axes
+    ratio = canvas.device_pixel_ratio
+    for target in ((10.0, 5.0), (-8.0, 12.0)):
+        x, y = axes.transData.transform(target)
+        local = QPoint(round(x / ratio), round((canvas.figure.bbox.height - y) / ratio))
+        monkeypatch.setattr(dialog_module.QCursor, "pos",
+                            staticmethod(lambda p=canvas.mapToGlobal(local): p))
+        dialog._follow_cursor()
+        tip = np.asarray(dialog._arrow_tip, dtype=float)
+        assert np.allclose(tip, target, atol=1.0)
+    dialog.finish_direction(tuple(dialog._arrow_tip))
+    assert not dialog._arrow_timer.isActive() and dialog._arrow is None
+
+
+@pytest.mark.requires_qt
+@pytest.mark.parametrize("overwrite", [True, False])
+def test_dialog_accept_confirms_overwriting_geo3d(qt_app, sphere_head, monkeypatch, overwrite):
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from pyBrainAnalyzIR.vis.geo2d_registration_dialog import Geo2DRegistrationDialog
+
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: QMessageBox.Ok)
+    head, vertices = sphere_head
+    rec, truth = _geo2d_recording(head)
+    previous = [(name, "SOURCE" if name.startswith("S") else "DETECTOR", xyz + 5)
+                for name, xyz in truth.items()]
+    window = Geo2DRegistrationDialog(rec, head, vertices, previous_probe=previous,
+                                     confirm_overwrite=True)
+    asked = []
+    monkeypatch.setattr(window, "confirm_overwrite_geo3d",
+                        lambda: asked.append(True) or overwrite)
+    try:
+        legend = window.head_axes.get_legend()
+        assert legend is not None
+        assert "Previous registration (geo3d)" in [t.get_text() for t in legend.get_texts()]
+        for name, label in (("S1", "FC3"), ("S3", "FC4"), ("D2", "Cz")):
+            window.set_label([p.name for p in window.points].index(name), label)
+        assert window.compute_registration()
+        texts = [t.get_text() for t in window.head_axes.get_legend().get_texts()]
+        assert "Current registration" in texts and "Previous registration (geo3d)" in texts
+        window.show()
+        window.accept()
+        assert asked == [True]
+        accepted = QDialog.result(window) == QDialog.DialogCode.Accepted.value
+        assert accepted == overwrite
+        assert window.isVisible() != overwrite  # "Continue Editing" keeps it open
+    finally:
+        window.close()

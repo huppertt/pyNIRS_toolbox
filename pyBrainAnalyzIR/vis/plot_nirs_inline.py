@@ -99,16 +99,54 @@ def _scalp_probe_geometry(rec):
         return None
 
 
-def _draw_scalp_outline(ax) -> None:
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.add_patch(patches.Circle((0, 0), 1.0, ec="k", fc="None"))
-    ax.add_patch(patches.Ellipse((1.05, 0), 0.1, 0.3, ec="k", fc="None"))
-    ax.add_patch(patches.Ellipse((-1.05, 0), 0.1, 0.3, ec="k", fc="None"))
+def has_2d_layout(obj) -> bool:
+    """True when ``obj`` (recording, Statistics, ...) has a non-empty geo2d probe."""
+    geo2d = getattr(obj, "geo2d", None)
+    return geo2d is not None and len(geo2d) > 0
+
+
+def has_scalp_view(obj) -> bool:
+    """True when ``obj``'s geo3d can be drawn as a 10-20 (scalp-projected) view."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return _scalp_probe_geometry(obj) is not None
+
+
+def probe_views_available(obj) -> bool:
+    """True when the probe can be drawn both as a 10-20 view and as its 2D layout."""
+    return has_2d_layout(obj) and has_scalp_view(obj)
+
+
+def probe_layout(obj, plot_on_scalp: bool = True):
+    """(2D probe points, drawn on the scalp?) for the requested probe view.
+
+    ``plot_on_scalp`` asks for the 10-20 view (geo3d projected onto the
+    scalp, unit-circle coordinates); without head landmarks it falls back to
+    the 2D layout. The 2D layout is ``geo2d``, else the x/y of ``geo3d``.
+    """
+    points = _scalp_probe_geometry(obj) if plot_on_scalp else None
+    if points is not None:
+        return points, True
+    return _legacy_probe_geometry(obj), False
+
+
+def _draw_scalp_outline(ax, transform=None, set_limits: bool = True) -> None:
+    """Head outline (unit circle, nose and ears); ``transform`` places it in data coordinates."""
+    ax.set_aspect("equal", adjustable="box")
+    artist_transform = ax.transData if transform is None else transform + ax.transData
+    for patch in (
+        patches.Circle((0, 0), 1.0, ec="k", fc="None"),
+        patches.Ellipse((1.05, 0), 0.1, 0.3, ec="k", fc="None"),
+        patches.Ellipse((-1.05, 0), 0.1, 0.3, ec="k", fc="None"),
+    ):
+        patch.set_transform(artist_transform)
+        ax.add_patch(patch)
     angles = np.array([np.pi / 2 + 0.05, np.pi / 2, np.pi / 2 - 0.05])
     radius = np.array([1.0, 1.1, 1.0])
-    ax.plot(radius * np.cos(angles), radius * np.sin(angles), "k-")
-    ax.set_xlim(-1.15, 1.15)
-    ax.set_ylim(-1.15, 1.15)
+    ax.plot(radius * np.cos(angles), radius * np.sin(angles), "k-", transform=artist_transform)
+    if set_limits:
+        ax.set_xlim(-1.15, 1.15)
+        ax.set_ylim(-1.15, 1.15)
     ax.set_axis_off()
 
 
@@ -123,6 +161,11 @@ def _draw_optode_labels(ax, geo2d, sources: set[str], detectors: set[str]) -> No
 def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
     """Draw the physical probe and return its channel line handles.
 
+    ``plot_on_scalp`` draws the 10-20 view (default); False draws the 2D probe
+    layout (``geo2d``). The 10-20 view falls back to the 2D layout when the
+    geo3d lacks the Nz/LPA/RPA landmarks. ``rec`` may be a recording or any
+    object with ``geo2d``/``geo3d`` (e.g. Statistics).
+
     ROI inputs draw their underlying physical channels, not one line per ROI.
 
     Direct callers: :func:`plot`.
@@ -132,10 +175,7 @@ def draw_probe(rec, data, ax, plot_on_scalp: bool = True):
     """
     if data.attrs.get("roi_definition") is not None:
         data = _roi_probe_data(rec, data)
-    geo2d = _scalp_probe_geometry(rec) if plot_on_scalp else None
-    if geo2d is None:
-        plot_on_scalp = False
-        geo2d = _legacy_probe_geometry(rec)
+    geo2d, plot_on_scalp = probe_layout(rec, plot_on_scalp)
     mllines = []
     used_sources: set[str] = set()
     used_detectors: set[str] = set()

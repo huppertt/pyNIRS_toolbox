@@ -160,7 +160,7 @@ def test_menus_and_async_mesh_rendering(qt_app, monkeypatch):
     monkeypatch.setattr(registration, "load_atlas_head_model", lambda atlas: model)
     window = registration.RegistrationManager()
     assert [a.text() for a in window.menuBar().actions()] == [
-        "Load Head Model", "fNIRS Registration", "Regions-of-Interest", "Forward Models",
+        "Load Head Model", "Load Data", "Regions-of-Interest", "Forward Models",
     ]
     subject = window.load_menu.actions()[1].menu()
     assert [a.text() for a in subject.actions()] == [
@@ -745,7 +745,8 @@ def test_load_snirf_menu_appends_unregistered_scans_to_dataset(qt_app, monkeypat
     monkeypatch.setattr(snirf, "read_snirf", lambda path: files[Path(path).name])
     window = registration.RegistrationManager()
     assert window.load_snirf_action.isVisible()
-    assert window.load_snirf_action in window.registration_menu.actions()
+    assert window.load_snirf_action in window.load_data_menu.actions()
+    assert window.load_data_menu.menuAction().isVisible()
     assert window.scans_group.title() == "Loaded NIRS scans"
     assert window.scan_tree.isHidden() and not window.scans_placeholder.isHidden()
 
@@ -1413,6 +1414,96 @@ def test_register_to_geo2d_accept_stores_new_geo3d_on_recording(qt_app, monkeypa
     window.close()
 
 
+def test_load_data_menu_only_shown_without_passed_data(qt_app):
+    rec, _ = _probe_scan(np.eye(3), np.zeros(3), np.ones(3))
+    shown = registration.RegistrationManager()
+    hidden = registration.RegistrationManager(data=[rec])
+    forced = registration.RegistrationManager(data=[rec], allow_file_loading=True)
+    try:
+        assert shown.allow_file_loading and shown.load_data_menu.menuAction().isVisible()
+        assert not hidden.allow_file_loading
+        assert not hidden.load_data_menu.menuAction().isVisible()
+        assert not hidden.load_snirf_action.isVisible()
+        assert forced.load_data_menu.menuAction().isVisible()
+    finally:
+        for window in (shown, hidden, forced):
+            window.close()
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_reregister_based_on_geo2d_overwrites_geo3d(qt_app, monkeypatch, accept):
+    from PySide6.QtWidgets import QDialog
+
+    dialog_module = importlib.import_module("pyBrainAnalyzIR.vis.geo2d_registration_dialog")
+    window, rec, _, _ = _geo2d_window(monkeypatch)
+    index = 1
+    leaf = _tree_leaves(window)[index]
+    assignments = iter([
+        (("S1", "FC3"), ("S3", "FC4"), ("D2", "Cz")),
+        (("S1", "F3"), ("S3", "F4"), ("D2", "Cz")),
+    ])
+    seen = []
+
+    def run_dialog(dialog):
+        seen.append(dialog)
+        names = [p.name for p in dialog.points]
+        for name, label in next(assignments):
+            dialog.set_label(names.index(name), label)
+        assert dialog.compute_registration()
+        return QDialog.DialogCode.Accepted if len(seen) == 1 or accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog_module.Geo2DRegistrationDialog, "exec", run_dialog)
+    monkeypatch.setattr(dialog_module.Geo2DRegistrationDialog, "deleteLater", lambda self: None)
+    texts = [a.text() for a in window._scan_context_menu(leaf).actions()]
+    assert registration.REREGISTER_GEO2D_LABEL not in texts  # no geo3d yet
+    menu = window._scan_context_menu(leaf)
+    texts = [a.text() for a in menu.actions()]
+    menu.actions()[texts.index("Register to Geo2D")].menu().actions()[0].trigger()
+    first = rec.geo3d.pint.to("mm").pint.dequantify().values.copy()
+    assert not seen[0].previous_probe and not seen[0].confirm_overwrite
+
+    menu = window._scan_context_menu(leaf)
+    texts = [a.text() for a in menu.actions()]
+    assert "Register to Geo3D" in texts
+    action = menu.actions()[texts.index(registration.REREGISTER_GEO2D_LABEL)]
+    assert action.isEnabled()
+    action.trigger()
+    dialog = seen[1]
+    assert dialog.confirm_overwrite
+    assert dialog.windowTitle().startswith(registration.REREGISTER_GEO2D_LABEL)
+    previous = window._subject_optodes_ras(index) if not accept else None
+    assert [label for label, _, _ in dialog.previous_probe] == ["S1", "S2", "S3", "D1", "D2", "D3"]
+    assert [kind for _, kind, _ in dialog.previous_probe] == ["SOURCE"] * 3 + ["DETECTOR"] * 3
+
+    after = rec.geo3d.pint.to("mm").pint.dequantify().values
+    state = window.scan_registration[index]
+    if not accept:
+        np.testing.assert_allclose(after, first)
+        np.testing.assert_allclose(window._subject_optodes_ras(index), previous)
+        assert state.geo2d["assignments"]["S1"] == "FC3"
+    else:
+        assert state.registered and state.method == registration.GEO2D_METHOD
+        assert state.geo2d["assignments"] == {"S1": "F3", "S3": "F4", "D2": "Cz"}
+        assert np.linalg.norm(after[0] - first[0]) > 10  # S1 moved from FC3 to F3
+        assert "replaced their 3D probe (geo3d)" in window.statusBar().currentMessage()
+    window.close()
+
+
+def test_previous_geo3d_probe_of_unregistered_scan_keeps_it_unregistered(qt_app, monkeypatch):
+    window, rec, _, _ = _geo2d_window(monkeypatch)
+    rec2, _ = _probe_scan(np.eye(3), np.zeros(3), np.ones(3))
+    window.add_data(rec2)
+    index = len(window.dataset.dataset) - 1
+    window.scan_registration[index].head_model_key = "Colin-27"
+    assert not window.scan_registration[index].registered
+    previous = window.previous_geo3d_probe(index)
+    assert previous and all(np.shape(xyz) == (3,) for _, _, xyz in previous)
+    state = window.scan_registration[index]
+    assert not state.registered and state.probe_to_subject is None and state.method is None
+    assert not window.probe_checkboxes[index].isChecked()
+    window.close()
+
+
 def test_make_registration_symmetric_averages_close_mirror_pairs(qt_app, monkeypatch):
     from PySide6.QtWidgets import QDialog
 
@@ -1696,3 +1787,74 @@ def test_display_faces_take_the_label_covering_most_of_the_face():
     np.testing.assert_array_equal(grouped.level_faces["High"], [0])
     np.testing.assert_array_equal(grouped.interaction_faces, [1])
     np.testing.assert_allclose(grouped.colors[0], grouped.colors[1])
+
+
+def test_dataset_registration_ok_stores_and_reopen_restores_without_reloading(qt_app, monkeypatch):
+    import copy
+
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+    from pyBrainAnalyzIR.pipelines.modules.utilities import remove_prior_analysis
+
+    model = _landmark_model()
+    monkeypatch.setattr(registration, "load_atlas_head_model", lambda atlas: model)
+    monkeypatch.setattr(registration, "measure_head_size", lambda m: None)
+    scale = np.array([1.05, 1.05, 1.05])
+    scan, optodes_head = _probe_scan(_rotation_z(-30), np.array([4.0, 6, -2]), scale)
+    other, _ = _probe_scan(np.eye(3), np.zeros(3), np.ones(3), subject="P2")
+    dataset = DataSet([scan, other])
+    original_geo3d = scan.geo3d
+
+    window = registration.edit_dataset_registration(dataset)
+    assert window.dataset is not dataset and window.button_box is not None
+    window.load_atlas("Colin-27")
+    assert not window.button_box.button(registration.QDialogButtonBox.StandardButton.Ok).isEnabled()
+    _wait_for_load(window)
+    assert window.button_box.button(registration.QDialogButtonBox.StandardButton.Ok).isEnabled()
+    fit = window.register_scan(0)
+    window.reject()  # Cancel stores nothing
+    assert not dataset.head_models and not hasattr(scan, "head_model")
+
+    window = registration.edit_dataset_registration(dataset)
+    window.load_atlas("Colin-27")
+    _wait_for_load(window)
+    fit = window.register_scan(0)
+    window.accept()
+    assert window.result_accepted and not window.isVisible()
+    assert list(dataset.head_models) == ["Colin-27"]
+    assert dataset.head_models["Colin-27"]["model"] is model
+    assert scan.head_model is model and other.head_model is model  # shared, not copied
+    assert scan.geo3d is original_geo3d  # the digitized probe is kept
+    stored = scan.aux_obj[registration.REGISTRATION_KEY]
+    assert stored["head_model"] == "Colin-27" and stored["registered"]
+    assert set(stored["transforms"]) == {"probe_to_subject", "probe_to_head", "head_to_subject"}
+    registered = stored["geo3d"].sel(label=["S1", "S2", "D1"]).pint.dequantify().values
+    np.testing.assert_allclose(registered, optodes_head, atol=0.1)
+    assert not other.aux_obj[registration.REGISTRATION_KEY]["registered"]
+
+    # Deep copies keep one shared head model; remove_prior_analysis keeps registrations.
+    copied = copy.deepcopy(dataset)
+    assert copied.dataset[0].head_model is copied.head_models["Colin-27"]["model"]
+    for rec in dataset.dataset:
+        rec.masks = {}
+    remove_prior_analysis()._runlocal(dataset)
+    assert registration.REGISTRATION_KEY in scan.aux_obj
+
+    # Reopening restores the head model and registrations; the atlas is not reloaded.
+    monkeypatch.setattr(registration, "DEFAULT_HEAD_MODEL", "Colin-27")
+    monkeypatch.setattr(registration, "_scene_from_model", lambda m: pytest.fail("scene rebuilt"))
+    monkeypatch.setattr(registration.RegistrationManager, "load_atlas",
+                        lambda self, atlas: pytest.fail("atlas reloaded"))
+    window = registration.edit_dataset_registration(dataset)
+    assert list(window.head_models) == ["Colin-27"]
+    assert [window.is_registered(i) for i in range(2)] == [True, False]
+    restored = window.scan_registration[0]
+    np.testing.assert_allclose(restored.probe_to_subject, stored["probe_to_subject"])
+    np.testing.assert_allclose(restored.fit.scale, fit.scale)
+    assert window.probe_checkboxes[0].isEnabled() and window.probe_checkboxes[0].isChecked()
+    np.testing.assert_allclose(
+        window.registered_geo3d(0).pint.dequantify().values,
+        stored["geo3d"].pint.dequantify().values,
+    )
+    window.close()  # closing the window is a Cancel
+    assert window.result_accepted is False
+    assert scan.aux_obj[registration.REGISTRATION_KEY] is stored

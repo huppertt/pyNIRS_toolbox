@@ -1,6 +1,8 @@
 """Stand-alone atlas head-model viewer for future probe registration."""
 from __future__ import annotations
 
+import copy
+import dataclasses
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -13,7 +15,8 @@ from PySide6.QtCore import QEvent, QItemSelectionModel, QThread, QTimer, Signal,
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
-    QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel,
     QMainWindow, QMenu, QMessageBox, QPushButton, QStyle, QToolButton, QTreeWidget,
     QTextBrowser, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -75,6 +78,8 @@ NO_HEAD_MODEL = "(none)"
 # Loaded automatically when the window opens; new scans use it by default.
 DEFAULT_HEAD_MODEL = "Colin-27"
 _USE_DEFAULT = object()
+#: ``Recording.aux_obj`` key of a recording's stored probe registration.
+REGISTRATION_KEY = "probe_registration"
 ARC_MAX_GAP_MM = 5.0
 PRESET_VIEWS = {
     "Left-rear": (45, -135),
@@ -683,6 +688,24 @@ def _load_atlas_scene(atlas: str):
     return _scene_from_model(load_atlas_head_model(atlas))
 
 
+#: Display scenes of recently loaded head models, keyed by ``id(model)``, so
+#: reopening the manager on stored head models skips rebuilding their meshes.
+_SCENE_CACHE: dict[int, tuple] = {}
+_SCENE_CACHE_SIZE = 4
+
+
+def _remember_scene(model, scene) -> None:
+    _SCENE_CACHE.pop(id(model), None)
+    _SCENE_CACHE[id(model)] = (model, scene)
+    while len(_SCENE_CACHE) > _SCENE_CACHE_SIZE:
+        del _SCENE_CACHE[next(iter(_SCENE_CACHE))]
+
+
+def _cached_scene(model):
+    cached = _SCENE_CACHE.get(id(model))
+    return cached[1] if cached is not None and cached[0] is model else None
+
+
 def _model_center_ras(model) -> np.ndarray:
     """Center of the scalp's bounding box in RAS (mm)."""
     vertices = _homogeneous(
@@ -749,6 +772,7 @@ REGISTRATION_METHODS = {
 }
 GEO2D_METHOD = "geo2d_landmarks"
 GEO2D_METHOD_LABEL = "Register based on probe landmarks"
+REREGISTER_GEO2D_LABEL = "Reregister based on geo2D"
 # Head landmarks added to the geo3d made by "Register to Geo2D", so the scan
 # can later be registered again from its geo3d.
 GEO2D_HEAD_LANDMARKS = ("Nz", "Iz", "LPA", "RPA", "Cz")
@@ -1124,6 +1148,21 @@ def _as_dataset(data):
     return DataSet(list(data) if isinstance(data, (list, tuple)) else data)
 
 
+def stored_head_models(data) -> dict:
+    """Head-model registry stored in a DataSet by ``RegistrationManager.store_registration``."""
+    return getattr(data, "head_models", None) or {}
+
+
+def _working_copy(dataset):
+    """A DataSet of shallow recording copies, so edits to their geo3d can be discarded."""
+    from pyBrainAnalyzIR.dataclasses.dataset import DataSet
+
+    working = DataSet()
+    working.dataset = [copy.copy(rec) for rec in getattr(dataset, "dataset", [])]
+    working.head_models = stored_head_models(dataset)
+    return working
+
+
 def _probe_optodes(recording):
     """Optode labels and kinds of the probe (geo3d, else geo2d) and their mask.
 
@@ -1232,13 +1271,21 @@ class RegistrationManager(QMainWindow):
 
     scans_changed = Signal()
 
+    accepted = Signal()
+
+    rejected = Signal()
+
     def __init__(
-        self, parent=None, data=None, allow_file_loading: bool = True,
-        head_model=_USE_DEFAULT,
+        self, parent=None, data=None, allow_file_loading: bool | None = None,
+        head_model=_USE_DEFAULT, dialog_buttons: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle("Registration Manager")
-        self.allow_file_loading = bool(allow_file_loading)
+        # The Load Data menu is only offered when no data is passed in.
+        self.allow_file_loading = (data is None if allow_file_loading is None
+                                   else bool(allow_file_loading))
+        self.dialog_buttons = bool(dialog_buttons)
+        self.result_accepted: bool | None = None
         self.dataset = _as_dataset(None)
         self.scan_registration: list[ScanRegistration] = []
         self._probe_artists = []
@@ -1420,7 +1467,7 @@ class RegistrationManager(QMainWindow):
         self.registered_checkboxes: list[QCheckBox] = []
         self.head_model_combos: list[QComboBox] = []
         self.scans_placeholder = QLabel(
-            "No NIRS scans loaded. Use fNIRS Registration > Load SNIRF file."
+            "No NIRS scans loaded. Use Load Data > Load SNIRF file."
             if self.allow_file_loading else "No NIRS scans provided.",
             self.scans_group,
         )
@@ -1430,6 +1477,15 @@ class RegistrationManager(QMainWindow):
         self.scan_tree.hide()
         panel_layout.addWidget(self.registration_group, stretch=1)
         panel_layout.addWidget(self.scans_group, stretch=1)
+        self.button_box = None
+        if self.dialog_buttons:
+            self.button_box = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+                self.control_panel,
+            )
+            self.button_box.accepted.connect(self.accept)
+            self.button_box.rejected.connect(self.reject)
+            panel_layout.addWidget(self.button_box)
         layout.addWidget(self.control_panel, stretch=1)
         self.setCentralWidget(central)
         self._set_interaction_mode("rotate")
@@ -1450,10 +1506,11 @@ class RegistrationManager(QMainWindow):
             action = subject_menu.addAction(f"Load From {source}")
             action.setEnabled(False)
             action.setToolTip("Not implemented yet.")
-        self.registration_menu = menu_bar.addMenu("fNIRS Registration")
-        self.load_snirf_action = self.registration_menu.addAction("Load SNIRF file...")
+        self.load_data_menu = menu_bar.addMenu("Load Data")
+        self.load_snirf_action = self.load_data_menu.addAction("Load SNIRF file...")
         self.load_snirf_action.triggered.connect(self._choose_snirf_files)
         self.load_snirf_action.setVisible(self.allow_file_loading)
+        self.load_data_menu.menuAction().setVisible(self.allow_file_loading)
         self.roi_menu = menu_bar.addMenu("Regions-of-Interest")
         self.roi_menu.setToolTipsVisible(True)
         self.parcels_action = self.roi_menu.addAction("Show Parcellations")
@@ -1469,12 +1526,15 @@ class RegistrationManager(QMainWindow):
         self.statusBar().showMessage(
             "Load head models under Load Head Model. Choose a drag mode in View controls."
         )
+        stored = stored_head_models(data)
         if head_model is _USE_DEFAULT:
-            head_model = DEFAULT_HEAD_MODEL
+            head_model = None if stored else DEFAULT_HEAD_MODEL
         if head_model:
             self.load_atlas(head_model)
         if data is not None:
             self.add_data(data)
+            if stored:
+                self.restore_registration(data)
 
     def load_atlas(self, atlas: str) -> None:
         """Load an atlas head model and add it to ``head_models``.
@@ -1494,6 +1554,7 @@ class RegistrationManager(QMainWindow):
             return
         self.load_menu.setEnabled(False)
         self.head_size_group.setEnabled(False)
+        self._set_ok_enabled(False)
         self.statusBar().showMessage(
             f"Loading {atlas}: retrieving atlas data and preparing display meshes..."
         )
@@ -1517,7 +1578,8 @@ class RegistrationManager(QMainWindow):
         Scans without a head model are assigned this one.
         """
         if scene is None:
-            scene = _scene_from_model(model)
+            scene = _cached_scene(model) or _scene_from_model(model)
+        _remember_scene(model, scene)
         center = (
             scene.head_size.center if scene.head_size is not None else _model_center_ras(model)
         )
@@ -2123,6 +2185,21 @@ class RegistrationManager(QMainWindow):
                 "2D probe to the scan's head." if has_head
                 else "Load the scans' head model first."
             )
+        both = [i for i in probes_3d if has_2d_probe(self.dataset.dataset[i])]
+        if both:
+            has_head = any(
+                self.scan_registration[i].head_model_key in self.head_models for i in both
+            )
+            action = menu.addAction(REREGISTER_GEO2D_LABEL)
+            action.triggered.connect(
+                lambda checked=False, rows=both: self._register_geo2d_from_menu(rows, reregister=True)
+            )
+            action.setEnabled(has_head)
+            action.setToolTip(
+                "Register the 2D probe (geo2d) again, as in Register to Geo2D, with the "
+                "existing 3D probe drawn for comparison. Accepting overwrites the geo3d."
+                if has_head else "Load the scans' head model first."
+            )
         if not probes_3d and not probes_2d:
             action = menu.addAction("No 3D (geo3d) or 2D (geo2d) probe in the selection")
             action.setEnabled(False)
@@ -2440,35 +2517,47 @@ class RegistrationManager(QMainWindow):
         self._head_position_cache[id(model)] = (model, positions)
         return positions
 
-    def _register_geo2d_from_menu(self, indices) -> None:
+    def _register_geo2d_from_menu(self, indices, reregister: bool = False) -> None:
         """Open the Register to Geo2D dialog for scans with only a 2D probe.
 
         Scans with the same 2D layout share one dialog; it registers on the
         head of the first of them and accepting registers every scan of the
-        group on its own head.
+        group on its own head. With ``reregister`` ("Reregister based on
+        geo2D") the scans have both probes: the dialog also draws the
+        existing geo3d (``previous_geo3d_probe``), and accepting it, after
+        confirmation, overwrites the scans' geo3d. As for every edit in this
+        window, the data passed in by NIRSviewIR only changes when the
+        registration window itself is accepted.
         """
         from pyBrainAnalyzIR.vis.geo2d_registration_dialog import Geo2DRegistrationDialog
 
         labels = self._scan_labels()
         failures, done = {}, []
         layouts = {}
+        previous = {}
         for index in indices:
             rec = self.dataset.dataset[index]
-            if has_3d_probe(rec) or not has_2d_probe(rec):
+            if not has_2d_probe(rec) or has_3d_probe(rec) != reregister:
                 continue
             if self.scan_registration[index].head_model_key not in self.head_models:
                 failures[index] = "its head model is not loaded"
                 continue
             names, kinds, coords, _ = probe_2d_layout(rec)
             key = (tuple(names), tuple(kinds), np.round(coords, 6).tobytes())
+            if reregister:
+                previous[index] = self.previous_geo3d_probe(index)
+                key += (self.scan_registration[index].head_size_key, np.round(
+                    [xyz for _, _, xyz in previous[index]], 3).tobytes())
             layouts.setdefault(key, []).append(index)
+        name = REREGISTER_GEO2D_LABEL if reregister else "Register to Geo2D"
         for group in layouts.values():
             model = self._scan_head(group[0])[2]
             try:
                 dialog = Geo2DRegistrationDialog(
                     self.dataset.dataset[group[0]], self._head_positions(model),
                     self._scalp_ras(model), parent=self,
-                    title="Register to Geo2D: " + ", ".join(labels[i] for i in group),
+                    title=f"{name}: " + ", ".join(labels[i] for i in group),
+                    previous_probe=previous.get(group[0]), confirm_overwrite=reregister,
                 )
             except ValueError as exc:
                 failures.update(dict.fromkeys(group, str(exc)))
@@ -2477,7 +2566,7 @@ class RegistrationManager(QMainWindow):
             if accepted:
                 for index in group:
                     try:
-                        self.apply_geo2d_registration(index, dialog)
+                        self.apply_geo2d_registration(index, dialog, overwrite=reregister)
                         done.append(index)
                     except Exception as exc:
                         failures[index] = str(exc)
@@ -2488,19 +2577,44 @@ class RegistrationManager(QMainWindow):
             errors = [self.scan_registration[i].geo2d["fit_rms"] for i in done]
             spread = f"{min(errors):.1f}" + (
                 f"-{max(errors):.1f}" if max(errors) - min(errors) >= 0.05 else "")
+            stored = ("replaced their 3D probe (geo3d)" if reregister
+                      else "stored their new 3D probe (geo3d)")
             self.statusBar().showMessage(
-                f"Register to Geo2D: registered {len(done)} scan(s) and stored their new 3D "
-                f"probe (geo3d); layout fit RMS {spread} mm."
+                f"{name}: registered {len(done)} scan(s) and {stored}; "
+                f"layout fit RMS {spread} mm."
             )
         if failures:
             QMessageBox.warning(
-                self, "Register to Geo2D",
+                self, name,
                 "Some scans could not be registered:\n\n" + "\n".join(
                     f"{labels[i]}: {message}" for i, message in failures.items()
                 ),
             )
 
-    def apply_geo2d_registration(self, index: int, dialog) -> None:
+    def previous_geo3d_probe(self, index: int) -> list[tuple[str, str, np.ndarray]]:
+        """Scan ``index``'s existing geo3d optodes on its head: ``(label, kind, RAS mm)``.
+
+        Registered scans use their registration. Otherwise the geo3d is
+        registered by its landmarks ("Resize Probe to Head Model") without
+        keeping that registration; without enough landmarks the list is empty.
+        """
+        state = self.scan_registration[index]
+        labels, kinds, _ = _probe_optodes(self.dataset.dataset[index])
+        if state.registered:
+            positions = self._subject_optodes_ras(index)
+        else:
+            saved = dataclasses.replace(state)
+            try:
+                self.register_scan(index, "resize_probe")
+                positions = self._subject_optodes_ras(index)
+            except Exception:
+                return []
+            finally:
+                vars(state).update(vars(saved))
+                self._update_probe_checkbox(index)
+        return list(zip(labels, kinds, np.asarray(positions, dtype=float)))
+
+    def apply_geo2d_registration(self, index: int, dialog, overwrite: bool = False) -> None:
         """Register scan ``index`` with a Geo2D dialog's assignments and store its geo3d.
 
         The probe is registered on the scan's head (head model at its head
@@ -2508,10 +2622,11 @@ class RegistrationManager(QMainWindow):
         The registered sources, detectors and geo2d landmarks, plus the head's
         fiducials, become the recording's new ``geo3d``: head RAS coordinates
         at the scan's head size, in the geo2d's length units (mm if it has
-        none). Only recordings without a 3D probe are supported.
+        none). A recording's existing 3D probe is only replaced with
+        ``overwrite`` ("Reregister based on geo2D").
         """
         rec = self.dataset.dataset[index]
-        if has_3d_probe(rec):
+        if has_3d_probe(rec) and not overwrite:
             raise ValueError("the scan already has a 3D (geo3d) probe")
         model_key, _, model = self._scan_head(index)
         positions = self._head_positions(model)
@@ -3206,8 +3321,171 @@ class RegistrationManager(QMainWindow):
             return
         self.load_menu.setEnabled(True)
         self.head_size_group.setEnabled(bool(self.head_size))
+        self._set_ok_enabled(True)
+
+    # ------------------------------------------------------------ storage
+
+    def store_registration(self, dataset=None) -> None:
+        """Store head models and registrations in ``dataset`` (default ``self.dataset``).
+
+        ``dataset`` holds the same recordings as ``self.dataset``, in the same
+        order (or is ``self.dataset``). Every loaded head model goes into one
+        registry shared by all recordings, ``dataset.head_models`` (name ->
+        ``{"model", "is_atlas", "default_size", "sizes"}``, ``sizes`` mapping
+        head-size keys to their ``scale`` and ``center``). Each recording gets
+        Cedalion's ``head_model`` field set to its head (the head model at its
+        head size; recordings sharing a head share the object) and
+        ``aux_obj[REGISTRATION_KEY]``: its head model and head-size keys, its
+        registration state, ``geo3d`` (the registered probe on its head, mm,
+        or None) and ``transforms`` (Cedalion AffineTransforms, see
+        ``registration_transforms``). A geo3d made by "Register to Geo2D" is
+        copied to the recording.
+        """
+        dataset = self.dataset if dataset is None else dataset
+        recordings = list(dataset.dataset)
+        if len(recordings) != len(self.scan_registration):
+            raise ValueError(
+                f"dataset has {len(recordings)} recording(s) but the registration "
+                f"manager has {len(self.scan_registration)} scan(s)"
+            )
+        dataset.head_models = {
+            name: {
+                "model": entry.model,
+                "is_atlas": entry.is_atlas,
+                "default_size": entry.default_size,
+                "sizes": {
+                    key: {"scale": size.scale.copy(), "center": size.center.copy()}
+                    for key, size in self.head_sizes.items() if size.head_model == name
+                },
+            }
+            for name, entry in self.head_models.items()
+        }
+        for index, (rec, work) in enumerate(zip(recordings, self.dataset.dataset)):
+            if work is not rec and hasattr(work, "geo3d"):
+                rec.geo3d = work.geo3d
+            aux = getattr(rec, "aux_obj", None)
+            if aux is None:
+                aux = {}
+                rec.aux_obj = aux
+            state = self.scan_registration[index]
+            if state.head_model_key not in self.head_models:
+                aux.pop(REGISTRATION_KEY, None)
+                rec.head_model = None
+                continue
+            _, size = self._scan_size(index)
+            rec.head_model = self.subject_head_model(index)
+            geo3d, transforms = self._stored_registration_geometry(index)
+            aux[REGISTRATION_KEY] = {
+                "head_model": state.head_model_key,
+                "head_size": state.head_size_key,
+                "head_scale": size.scale.copy(),
+                "head_center": size.center.copy(),
+                "source": state.source,
+                "registered": state.registered,
+                "show_probe": state.show_probe,
+                "method": state.method,
+                "probe_to_subject": None if state.probe_to_subject is None
+                else np.array(state.probe_to_subject, dtype=float),
+                "optode_positions": copy.deepcopy(state.optode_positions),
+                "fit": None if state.fit is None else dataclasses.asdict(state.fit),
+                "geo2d": copy.deepcopy(state.geo2d),
+                "symmetry": copy.deepcopy(state.symmetry),
+                "geo3d": geo3d,
+                "transforms": transforms,
+            }
+
+    def _stored_registration_geometry(self, index: int):
+        """(registered geo3d on the scan's head, AffineTransforms) of scan ``index``."""
+        state = self.scan_registration[index]
+        if not state.registered:
+            return None, {}
+        if state.probe_to_subject is not None:
+            return self.registered_geo3d(index, "subject"), self.registration_transforms(index)
+        import cedalion.dataclasses as cdc
+
+        rec = self.dataset.dataset[index]
+        labels, kinds, _ = _probe_optodes(rec)
+        positions = self._subject_optodes_ras(index)
+        return cdc.build_labeled_points(
+            positions, crs="subject", units="mm", labels=[str(label) for label in labels],
+            types=[{"SOURCE": cdc.PointType.SOURCE}.get(str(kind), cdc.PointType.DETECTOR)
+                   for kind in kinds],
+        ), {}
+
+    def restore_registration(self, dataset=None) -> int:
+        """Restore head models and registrations stored by ``store_registration``.
+
+        Head models in ``dataset.head_models`` are added (models already
+        loaded under the same name are kept), with their head sizes; the
+        recordings' stored registrations replace the scans' states.
+        ``dataset`` holds ``self.dataset``'s recordings in the same order
+        (default ``self.dataset``). Returns the number of restored scans.
+        """
+        dataset = self.dataset if dataset is None else dataset
+        for name, entry in stored_head_models(dataset).items():
+            if name not in self.head_models:
+                self.add_head_model(name, entry["model"], is_atlas=entry.get("is_atlas", True))
+                self.head_models[name].default_size = entry.get("default_size") or name
+            for key, size in entry.get("sizes", {}).items():
+                self.head_sizes[key] = HeadSize(name, size["scale"], size["center"])
+        restored = 0
+        for index, rec in enumerate(list(dataset.dataset)[:len(self.scan_registration)]):
+            info = (getattr(rec, "aux_obj", None) or {}).get(REGISTRATION_KEY)
+            if not info or info.get("head_model") not in self.head_models:
+                continue
+            state = self.scan_registration[index]
+            state.head_model_key = info["head_model"]
+            state.head_size_key = info.get("head_size")
+            if state.head_size_key not in self.head_sizes:
+                state.head_size_key = self.head_models[state.head_model_key].default_size
+            state.source = info.get("source", state.source)
+            state.registered = bool(info.get("registered"))
+            state.show_probe = bool(info.get("show_probe")) and state.registered
+            state.method = info.get("method")
+            transform = info.get("probe_to_subject")
+            state.probe_to_subject = None if transform is None else np.array(transform, dtype=float)
+            state.optode_positions = copy.deepcopy(info.get("optode_positions"))
+            fit = info.get("fit")
+            state.fit = None if fit is None else ProbeFit(**fit)
+            state.geo2d = copy.deepcopy(info.get("geo2d"))
+            state.symmetry = copy.deepcopy(info.get("symmetry"))
+            restored += 1
+        self._populate_scan_tree()
+        self._refresh_head_model_combos()
+        if self.displayed_head_model is not None:
+            self._draw_probes()
+            self.canvas.draw_idle()
+        self.scans_changed.emit()
+        self.statusBar().showMessage(
+            f"Restored {len(stored_head_models(dataset))} stored head model(s) and "
+            f"{sum(state.registered for state in self.scan_registration)} registered scan(s)."
+        )
+        return restored
+
+    def accept(self) -> None:
+        """OK: emit ``accepted`` (the caller stores the registration), then close."""
+        self._finish(True)
+
+    def reject(self) -> None:
+        """Cancel: emit ``rejected`` and close without storing anything."""
+        self._finish(False)
+
+    def _set_ok_enabled(self, enabled: bool) -> None:
+        """OK waits for head models still loading, so their scans are stored too."""
+        if self.button_box is not None:
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(enabled)
+
+    def _finish(self, accepted: bool) -> None:
+        if self.result_accepted is not None:
+            return
+        self.result_accepted = accepted
+        (self.accepted if accepted else self.rejected).emit()
+        self.close()
 
     def closeEvent(self, event) -> None:
+        if self.dialog_buttons and self.result_accepted is None:
+            self.result_accepted = False
+            self.rejected.emit()
         if self._loader is not None and self._loader.isRunning():
             # Native mesh operations cannot be safely terminated. Keep the
             # owner alive, but hide immediately and close when the worker exits.
@@ -3236,13 +3514,35 @@ def _active_ipython():
     return get_ipython()
 
 
+def _lock_parent_controls(parent) -> list:
+    """Disable ``parent``'s enabled child widgets (not child windows); return them."""
+    if parent is None:
+        return []
+    locked = [
+        child for child in parent.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        if not child.isWindow() and child.isEnabled()
+    ]
+    for child in locked:
+        child.setEnabled(False)
+    return locked
+
+
+def _unlock_controls(locked) -> None:
+    for child in locked:
+        try:
+            child.setEnabled(True)
+        except RuntimeError:  # already deleted with its window
+            pass
+    locked.clear()
+
+
 def _release_window(window: RegistrationManager) -> None:
     if window in _OPEN_WINDOWS:
         _OPEN_WINDOWS.remove(window)
 
 
 def registration_manager(
-    parent=None, data=None, allow_file_loading: bool = True, head_model=_USE_DEFAULT,
+    parent=None, data=None, allow_file_loading: bool | None = None, head_model=_USE_DEFAULT,
 ) -> RegistrationManager:
     """Open the registration manager; return its window for notebook use.
 
@@ -3250,9 +3550,9 @@ def registration_manager(
         parent: Optional Qt parent widget.
         data: Optional DataSet, recording, or list of recordings to show under
             "Loaded NIRS scans". A DataSet is shared, not copied.
-        allow_file_loading: Show "fNIRS Registration > Load SNIRF file..."
-            (default True for scripts and notebooks). NIRSviewIR passes False
-            and supplies its data directly.
+        allow_file_loading: Show the "Load Data" menu ("Load SNIRF file...").
+            Default: only when no ``data`` is passed (so NIRSviewIR, which
+            supplies its data directly, does not show it).
         head_model: Atlas loaded when the window opens (default
             ``DEFAULT_HEAD_MODEL``, Colin-27); None loads nothing.
 
@@ -3280,6 +3580,42 @@ def registration_manager(
     window.show()
     if owns_app and shell is None:
         app.exec()
+    return window
+
+
+def edit_dataset_registration(dataset, parent=None, on_accept=None) -> RegistrationManager:
+    """Open the registration manager with OK/Cancel to edit ``dataset``'s registration.
+
+    The window works on shallow copies of the recordings and on the head
+    models and registrations already stored in ``dataset`` (so reopening keeps
+    them instead of loading the default atlas again). OK stores the result in
+    ``dataset`` (``RegistrationManager.store_registration``) and then calls
+    ``on_accept()``; Cancel or closing the window leaves ``dataset`` unchanged.
+    While it is open, ``parent``'s own controls (menus, central widget) are
+    disabled.
+    NIRSviewIR's "Registration > Probe-Head Model Registration" uses this.
+    """
+    window = RegistrationManager(
+        parent, data=_working_copy(dataset), allow_file_loading=False, dialog_buttons=True,
+    )
+    window.setWindowFlag(Qt.WindowType.Window, True)
+    # Lock the parent's own controls instead of making this window modal: on
+    # macOS a window-modal window runs as a modal session, and the dialogs it
+    # opens with exec() (e.g. Register to Geo2D) would then get no mouse-move
+    # events or timers, so their live (rubber-band) drawing would not follow
+    # the mouse.
+    locked = _lock_parent_controls(parent)
+    _OPEN_WINDOWS.append(window)
+    window.closed.connect(lambda: _release_window(window))
+    window.closed.connect(lambda: _unlock_controls(locked))
+
+    def store():
+        window.store_registration(dataset)
+        if on_accept is not None:
+            on_accept()
+
+    window.accepted.connect(store)
+    window.show()
     return window
 
 

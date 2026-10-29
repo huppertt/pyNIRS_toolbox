@@ -14,7 +14,7 @@ from pyBrainAnalyzIR.vis.plot_nirs_inline import (
 
 def plot_roi_connectivity(
     connectivity, fdr_correct_for_all, value_type, threshold_type, threshold,
-    vrange, show_cross_types, condnames,
+    vrange, show_cross_types, condnames, plot_on_scalp=True,
 ):
     """Draw labeled ROI matrices with significance stars and fixed probe keys.
 
@@ -27,6 +27,7 @@ def plot_roi_connectivity(
     Dotted grid lines outline matrix cells. Missing edges stay blank.
     All coefficients are colored, not just significant
     ones; stars use the selected p/q threshold and never mark self-connections.
+    ``plot_on_scalp`` selects the 10-20 (default) or 2D probe view.
     """
     columns = {"r": "Coeff", "z": "Z", "t": "Tstat"}
     if value_type.lower() not in columns:
@@ -121,7 +122,7 @@ def plot_roi_connectivity(
         proxy = SimpleNamespace(geo2d=connectivity.geo2d[name], geo3d=connectivity.geo3d[name])
         axis = fig.add_subplot(probe_grid[row, 0])
         data = _roi_physical_channels(geometry)
-        lines = draw_probe(proxy, data, axis)
+        lines = draw_probe(proxy, data, axis, plot_on_scalp=plot_on_scalp)
         names = geometry.region_names
         colors = [_ROI_COLORS[index % len(_ROI_COLORS)] for index in range(len(names))]
         weights = _roi_channel_contributions(geometry, names, data)

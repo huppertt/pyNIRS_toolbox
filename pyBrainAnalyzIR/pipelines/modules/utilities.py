@@ -33,7 +33,7 @@ class remove_prior_analysis(cedalion_module):
         self.description = (
             "Keep amp and raw auxiliary time series; clear derived time series, "
             "masks, auxiliary objects (including ROI definitions), and group statistics. "
-            "Preserve stimuli, demographics and probe geometry."
+            "Preserve stimuli, demographics, probe geometry and probe registrations."
         )
         self.previous_job = previous_job
 
@@ -47,7 +47,10 @@ class remove_prior_analysis(cedalion_module):
                 if key != "amp":
                     del rec.timeseries[key]
             rec.masks.clear()
+            registration = rec.aux_obj.get("probe_registration")
             rec.aux_obj.clear()
+            if registration is not None:
+                rec.aux_obj["probe_registration"] = registration
         if is_dataset:
             data.statistics.clear()
         return data

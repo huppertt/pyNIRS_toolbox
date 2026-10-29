@@ -12,6 +12,7 @@ import xarray as xr
 pytest.importorskip("PySide6.QtWidgets")
 pytest.importorskip("cedalion")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QDialog, QMenuBar, QMessageBox  # noqa: E402
 
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
@@ -179,6 +180,102 @@ def test_roi_gui_honors_probe_projection(roi_dataset, plot_on_scalp):
     window.close()
 
 
+def _add_head_landmarks(rec):
+    from cedalion import units
+    from cedalion.dataclasses.geometry import PointType
+
+    landmarks = xr.DataArray(
+        [[0, 100, 0], [-100, 0, 0], [100, 0, 0]], dims=("label", "pos"),
+        coords={"label": ["Nz", "LPA", "RPA"],
+                "type": ("label", [PointType.LANDMARK] * 3)},
+    ).pint.quantify(units.mm)
+    rec.geo3d = xr.concat([rec.geo3d.pint.to(units.mm), landmarks], dim="label")
+
+
+def _right_click(canvas, axes, point, coords="axes"):
+    from matplotlib.backend_bases import MouseEvent
+
+    canvas.draw()
+    transform = axes.transAxes if coords == "axes" else axes.transData
+    x, y = transform.transform(point)
+    for name in ("button_press_event", "button_release_event"):
+        canvas.callbacks.process(name, MouseEvent(name, canvas, x, y, button=3))
+
+
+def _capture_probe_menus(monkeypatch):
+    menus = []
+    monkeypatch.setattr(
+        nirsview.NIRSviewIRWindow, "_show_probe_view_menu",
+        lambda self: menus.append(self._build_probe_view_menu()),
+    )
+    return menus
+
+
+def _menu_action(menu, text):
+    return next(action for action in menu.actions() if action.text() == text)
+
+
+def test_probe_view_menu_toggles_timecourse_and_statistics_views(roi_dataset, monkeypatch):
+    from matplotlib.patches import Circle
+    from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+
+    rec = roi_dataset.dataset[0]
+    _add_head_landmarks(rec)
+    stats = rec["stats_roi"].copy()
+    stats.geoROI = None
+    stats.geo3d = rec.geo3d
+    stats.betas = stats.betas.assign_coords(
+        channels=("indices", rec["amp"].channel.values[:2].tolist() * 2)
+    )
+    rec["stats_channels"] = stats
+    menus = _capture_probe_menus(monkeypatch)
+    window = nirsview.NIRSviewIRWindow(roi_dataset)
+    window.type_selector.setCurrentText("amp")
+    assert window._probe_views_available()
+    assert any(isinstance(patch, Circle) for patch in window.ax_probe.patches)
+
+    # Right-click on a channel line still toggles that channel; no menu.
+    midpoints = np.array([np.mean(np.asarray(line.get_data(), float)[:, [0, -1]], axis=1)
+                          for line in window.mllines])
+    separation = np.linalg.norm(midpoints[:, None] - midpoints[None], axis=-1)
+    np.fill_diagonal(separation, np.inf)
+    target = int(np.argmax(separation.min(axis=1)[1:])) + 1
+    _right_click(window.canvas, window.ax_probe, midpoints[target], coords="data")
+    assert window.selected_channels == [0, target] and not menus
+
+    # Right-click on empty probe space opens the menu; choosing 2D redraws without the head.
+    _right_click(window.canvas, window.ax_probe, (0.01, 0.99))
+    assert len(menus) == 1
+    assert _menu_action(menus[0], "10-20 View").isChecked()
+    assert _menu_action(menus[0], "2D Probe View").isEnabled()
+    _menu_action(menus[0], "2D Probe View").trigger()
+    assert window.plot_on_scalp is False
+    assert not any(isinstance(patch, Circle) for patch in window.ax_probe.patches)
+
+    calls = []
+    original = Statistics.draw
+    monkeypatch.setattr(Statistics, "draw", lambda self, *args, **kwargs: (
+        calls.append(kwargs["plot_on_scalp"]), original(self, *args, **kwargs))[1])
+    window.type_selector.setCurrentText("stats_channels")
+    assert calls[-1] is False
+    _right_click(window._stats_canvas, window._stats_figure.axes[0], (0.5, 0.5))
+    assert len(menus) == 2 and _menu_action(menus[1], "2D Probe View").isChecked()
+    _menu_action(menus[1], "10-20 View").trigger()
+    assert window.plot_on_scalp is True and calls[-1] is True
+    window.close()
+
+
+def test_probe_view_menu_is_disabled_without_head_landmarks(roi_dataset, monkeypatch):
+    menus = _capture_probe_menus(monkeypatch)
+    window = nirsview.NIRSviewIRWindow(roi_dataset)
+    window.type_selector.setCurrentText("amp_roi")
+    _right_click(window.canvas, window.ax_probe, (0.01, 0.99))
+    assert len(menus) == 1
+    assert not window._probe_views_available()
+    assert not any(action.isEnabled() for action in menus[0].actions() if not action.isSeparator())
+    window.close()
+
+
 def test_switching_roi_and_channel_statistics_restores_display_control(roi_dataset):
     import matplotlib.pyplot as plt
 
@@ -308,11 +405,66 @@ def test_registration_menu_opens_roi_manager_and_stores_tables(monkeypatch):
     ]
     registration_menu = menu_bar.actions()[2].menu()
     assert [action.text() for action in registration_menu.actions()] == [
-        "Define Region-of-Interest",
+        "Probe-Head Model Registration", "Define Region-of-Interest",
     ]
     window._define_rois()
     assert calls == [(dataset, {}, window)]
     pd.testing.assert_frame_equal(window.roi_tables["ROI 1"], table)
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_probe_head_model_registration_stores_result_only_on_ok(monkeypatch, accept):
+    registration = importlib.import_module("pyBrainAnalyzIR.vis.registration_manager")
+    monkeypatch.setattr(registration, "DEFAULT_HEAD_MODEL", "Colin-27")
+    loaded = []
+
+    def load_atlas(manager, atlas):
+        loaded.append(atlas)
+        manager.add_head_model(atlas, "model", scene=_fake_scene())
+
+    monkeypatch.setattr(registration.RegistrationManager, "load_atlas", load_atlas)
+    monkeypatch.setattr(registration.RegistrationManager, "_show_head", lambda *a: None)
+    monkeypatch.setattr(nirsview.QMessageBox, "critical", lambda *a: pytest.fail(a[-1]))
+    dataset = DataSet([Recording()])
+    window = nirsview.NIRSviewIRWindow(dataset)
+    menu_bar = window.findChild(QMenuBar)
+    registration_menu = menu_bar.actions()[2].menu()
+    registration_menu.actions()[0].trigger()
+    manager = window._registration_window
+    assert manager.dataset is not dataset
+    assert manager.dataset.dataset[0] is not dataset.dataset[0]
+    assert manager.button_box is not None and not manager.load_snirf_action.isVisible()
+    assert loaded == ["Colin-27"]
+    # Not modal (nested modal sessions stop live mouse tracking on macOS);
+    # NIRSviewIR's own controls are locked instead while it is open.
+    assert manager.windowModality() == Qt.WindowModality.NonModal
+    assert manager.isEnabled()
+    assert not menu_bar.isEnabled() and not window.centralWidget().isEnabled()
+
+    (manager.accept if accept else manager.reject)()
+    assert menu_bar.isEnabled() and window.centralWidget().isEnabled()
+    rec = dataset.dataset[0]
+    if not accept:
+        assert not dataset.head_models and not hasattr(rec, "head_model")
+        assert "cancelled" in window.statusBar().currentMessage()
+        return
+    assert window.data_changed
+    assert list(dataset.head_models) == ["Colin-27"] and rec.head_model == "model"
+    assert rec.aux_obj["probe_registration"]["head_model"] == "Colin-27"
+    assert "Stored 1 head model(s) and 0 of 1" in window.statusBar().currentMessage()
+
+    # Reopening keeps the stored head model instead of loading the atlas again.
+    registration_menu.actions()[0].trigger()
+    assert loaded == ["Colin-27"]
+    assert list(window._registration_window.head_models) == ["Colin-27"]
+    window._registration_window.reject()
+
+
+def _fake_scene():
+    registration = importlib.import_module("pyBrainAnalyzIR.vis.registration_manager")
+    from types import SimpleNamespace
+
+    return registration._AtlasScene("model", {}, (), head_size=SimpleNamespace(center=np.zeros(3)))
 
 
 def test_pipeline_manager_receives_defined_roi_tables(monkeypatch):

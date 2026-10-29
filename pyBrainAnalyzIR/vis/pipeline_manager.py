@@ -693,7 +693,8 @@ class PipelineManagerDialog(QDialog):
         self.remove_previous_checkbox.setChecked(self._initial_reset)
         recordings = self._input_recordings()
         has_analysis = any(
-            set(rec.timeseries) - {"amp"} or getattr(rec, "aux_obj", {})
+            set(rec.timeseries) - {"amp"}
+            or set(getattr(rec, "aux_obj", {})) - {"probe_registration"}
             or getattr(rec, "masks", {})
             for rec in recordings
         ) or bool(getattr(self.data, "statistics", {}))
