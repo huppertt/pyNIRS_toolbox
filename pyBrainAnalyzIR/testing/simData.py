@@ -3,6 +3,8 @@ import cedalion.models
 import cedalion.dataclasses as cdc
 from cedalion.nirs import cw as nirs_cw
 import numpy as np
+import pandas as pd
+import patsy
 import xarray as xr
 from scipy.linalg import toeplitz
 import scipy.signal
@@ -22,6 +24,7 @@ from pyBrainAnalyzIR.math.innovations import innovations
 from scipy.spatial.distance import cdist
 
 import copy
+import functools
 
 units = cedalion.units
 
@@ -138,13 +141,105 @@ def defaultProbe2D(warped=False, shortsep=False):
     return geo2d, measList
 
 
+REGISTERED3D_HEAD_LANDMARKS = ("Nz", "Iz", "LPA", "RPA", "Cz")
+"""Head landmarks stored with the registered 3D probe (enables the 10-20 views)."""
+
+
+@functools.lru_cache(maxsize=1)
+def _template_scalp():
+    """Smooth scalp mesh (RAS mm) through the colin27 10-05 positions.
+
+    The radius about the fitted head center is interpolated over directions,
+    so no head model has to be downloaded.
+    """
+    from scipy.interpolate import RBFInterpolator
+    from scipy.spatial import ConvexHull
+    from pyBrainAnalyzIR.vis import geo2d_registration as g2
+
+    template = g2.template_1005()
+    if not template:
+        raise RuntimeError("the colin27 10-05 template positions are not available")
+    points = np.array(list(template.values()), dtype=float)
+    center, _ = g2.fit_sphere(points)
+    offsets = points - center
+    radius = np.linalg.norm(offsets, axis=1)
+    surface = RBFInterpolator(offsets / radius[:, None], radius,
+                              kernel="thin_plate_spline", smoothing=0.1)
+    n = 8000
+    i = np.arange(n) + 0.5
+    polar = np.arccos(1 - 2 * i / n)
+    azimuth = np.pi * (1 + 5 ** 0.5) * i
+    directions = np.column_stack([np.cos(azimuth) * np.sin(polar),
+                                  np.sin(azimuth) * np.sin(polar), np.cos(polar)])
+    faces = ConvexHull(directions).simplices
+    return g2.ScalpSurface(center + directions * surface(directions)[:, None], faces)
+
+
+@functools.lru_cache(maxsize=8)
+def _register_probe_on_forehead(labels, kinds, positions):
+    from pyBrainAnalyzIR.vis import geo2d_registration as g2
+
+    positions = np.asarray(positions, dtype=float)
+    detectors = positions[np.asarray(kinds) == "DETECTOR"]
+    if not len(detectors):
+        raise ValueError("the probe has no detectors to place on the forehead")
+    row_y = detectors[:, 1].min()
+    row = detectors[np.isclose(detectors[:, 1], row_y)]
+    anchor = np.array([positions[:, 0].mean(), row_y - 10.0])
+    left = np.array([row[:, 0].min(), row_y])
+    right = np.array([row[:, 0].max(), row_y])
+    attractors = [(anchor, anchor + [0.0, 10.0], "Cz"),
+                  (left, left - [10.0, 0.0], "T7"),
+                  (right, right + [10.0, 0.0], "T8")]
+    template = g2.template_1005()
+    result = g2.register_probe_2d(np.vstack([positions, anchor]), {len(positions): "Fpz"},
+                                  attractors, template, _template_scalp(),
+                                  probe_rows=np.arange(len(positions)))
+    head = [(name, "LANDMARK", template[name]) for name in REGISTERED3D_HEAD_LANDMARKS]
+    points = [(label, kind, xyz) for label, kind, xyz
+              in zip(labels, kinds, result.positions[:len(positions)])] + head
+    return tuple(points)
+
+
+def registeredProbe3D(geo2D=None):
+    """Register a 2D probe (default :func:`defaultProbe2D`) on the forehead of a template head.
+
+    The probe is placed on the colin27 10-05 template (RAS mm) as in the
+    nirs-toolbox ``registerprobe1020``: an anchor 1 cm below the middle of
+    the (lowest) detector row is placed on Fpz, an attractor points up from
+    it toward Cz, and attractors extending the detector row to the left and
+    right point toward T7 and T8. The returned geo3d holds the sources,
+    detectors and the head landmarks ``REGISTERED3D_HEAD_LANDMARKS``.
+
+    Direct callers: :func:`ARnoise` and :func:`Data` (``registered3D=True``).
+    Direct dependencies: ``pyBrainAnalyzIR.vis.geo2d_registration.register_probe_2d``.
+    Tests: ``tests/test_simulation_random_seed.py``.
+    """
+    if geo2D is None:
+        geo2D, _ = defaultProbe2D()
+    if geo2D.pint.units is not None:
+        geo2D = geo2D.pint.to("mm").pint.dequantify()
+    kinds = tuple(cdc.PointType(t).name for t in geo2D.type.values)
+    keep = [i for i, kind in enumerate(kinds) if kind in ("SOURCE", "DETECTOR")]
+    labels = tuple(str(geo2D.label.values[i]) for i in keep)
+    positions = tuple(map(tuple, np.asarray(geo2D.values, dtype=float)[keep, :2]))
+    points = _register_probe_on_forehead(labels, tuple(kinds[i] for i in keep), positions)
+    return cdc.build_labeled_points(
+        np.array([xyz for _, _, xyz in points], dtype=float), crs="ras", units="mm",
+        labels=[name for name, _, _ in points],
+        types=[cdc.PointType[kind] for _, kind, _ in points])
+
+
 def ARnoise(geo2D=None, measList=None,
             t=np.round([(j + 1) * .1 for j in range(0, 3000)], 3), P=10, sigma=0.33,
-            random_seed=None):
+            random_seed=None, registered3D=False):
     """Generate raw-intensity fNIRS data with spatial and autoregressive noise.
 
     The defaults create a 2D probe and a 300-second, 10 Hz recording.
     ``random_seed`` can be an integer or a shared NumPy generator.
+    With ``registered3D`` the geo3d is the probe registered on the forehead
+    of a template head (:func:`registeredProbe3D`) instead of the flat
+    2D layout.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb`` and
     ``examples/13_Demonstrating_Data_Properties.ipynb``.
@@ -186,7 +281,10 @@ def ARnoise(geo2D=None, measList=None,
     data = 100 * np.exp(-e * 0.005)
     data = np.reshape(data, (nsamples, len(measList['channel']), len(measList['wavelength'])))
 
-    return _build_recording(data, t.data, geo2D, measList)
+    rec = _build_recording(data, t.data, geo2D, measList)
+    if registered3D:
+        rec.geo3d = registeredProbe3D(geo2D)
+    return rec
 
 
 def _build_recording(data, t, geo2D, measList, geo3D_layout=None):
@@ -224,12 +322,26 @@ def _build_recording(data, t, geo2D, measList, geo3D_layout=None):
 
 def Data(noise=None, stim=None, snr=0.5,
          channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
-         modifiers=None, random_seed=None):
+         modifiers=None, random_seed=None, amplitudes=None, registered3D=False):
     """Add simulated task responses to a recording and return the response truth.
 
     When omitted, ``noise`` and ``stim`` are generated automatically. The
     returned truth array marks which channel/chromophore combinations received
-    a response.
+    a response. With ``registered3D`` the recording's geo3d is its probe
+    registered on the forehead of a template head (:func:`registeredProbe3D`),
+    so the probe can also be drawn in the 10-20 view.
+    Response SNR is scaled using AR-whitened noise with BIC order selection
+    up to 40 lags, allowing for the simulated noise's moving-average component.
+    The limit is reduced for short recordings to leave residual degrees of freedom.
+
+    By default only condition ``'A'`` gets a response, of amplitude ``snr``
+    (relative to the channel's whitened noise) on the ``channels`` marked in
+    the ``(channel, chromo)`` mask (half of them, chosen at random, if
+    omitted). ``amplitudes`` instead gives the response of each condition:
+    ``{trial_type: array}`` with one multiplier of that amplitude per channel
+    (shape ``(n_channels,)`` or ``(n_channels, 2)`` for HbO/HbR; HbR responses
+    are negative). Then ``channels`` is ignored and the truth marks the
+    channels responding to any condition.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``,
     ``examples/08_GroupAnalysis.ipynb``, and
@@ -252,7 +364,9 @@ def Data(noise=None, stim=None, snr=0.5,
     # this should be the same as calling on the function definition
     rng = get_rng(random_seed)
     if noise is None:
-        noise = pyBrainAnalyzIR.testing.simData.ARnoise(random_seed=rng)
+        noise = pyBrainAnalyzIR.testing.simData.ARnoise(random_seed=rng, registered3D=registered3D)
+    elif registered3D:
+        noise.geo3d = registeredProbe3D(noise.geo2d)
     if stim is None:
         stim = pyBrainAnalyzIR.testing.simEvents.rand_stim_design(random_seed=rng)
 
@@ -277,7 +391,15 @@ def Data(noise=None, stim=None, snr=0.5,
     )
 
     # If no channels were defined as "truth", then randomly select 1/2 the data to add
-    if (channels is None):
+    if amplitudes is not None:
+        amplitudes = {
+            str(cond): np.broadcast_to(
+                np.asarray(amp, dtype=float).reshape(len(data.channel), -1),
+                (len(data.channel), 2))
+            for cond, amp in amplitudes.items()
+        }
+        channels = (np.sum([np.abs(a) for a in amplitudes.values()], axis=0) > 0) * 1
+    elif (channels is None):
         numchannels = len(data.channel)
         # Generate a random permutation
         perm = rng.permutation(np.arange(numchannels))
@@ -287,22 +409,33 @@ def Data(noise=None, stim=None, snr=0.5,
         channels[half, 1] = channels[half, 0]
 
     # Compute the autoregressivly whitened innovations to use in the calculation of SNR
-    inn = cedalion.math.ar_model.ar_filter(data, pmax=10)
+    pmax = min(40, (data.sizes["time"] - 2) // 2)
+    inn = cedalion.math.ar_model.ar_filter(data, pmax=pmax)
 
     # beta amplitudes to use per channel based on provided SNR
     b = snr * np.std(inn.to_numpy(), axis=0)
 
     # Let's just do this to get the structure of beta.  (TODO- this is me being lazy)
-    results = glm.fit(data, design_matrix)
+    results = glm.fit(data, design_matrix, max_jobs=1)  # the parallel fit always shows a progress bar
     betas = results.sm.params
-    for i in range(0, b.shape[0]):
-        betas[i, 0, betas.regressor == 'HRF A'] = b[i, 0]   # TODO- this assumes the default probe
-        betas[i, 1, betas.regressor == 'HRF A'] = -b[i, 1]
-    betas[:, :, betas.regressor == 'Drift 0'] = 0
+    if amplitudes is not None:
+        betas[:] = 0
+        regressors = [str(r) for r in betas.regressor.values]
+        for cond, amp in amplitudes.items():
+            if f'HRF {cond}' not in regressors:
+                raise ValueError(f"condition {cond!r} is not in the stimulus design")
+            k = regressors.index(f'HRF {cond}')
+            betas[:, 0, k] = b[:, 0] * amp[:, 0]
+            betas[:, 1, k] = -b[:, 1] * amp[:, 1]
+    else:
+        for i in range(0, b.shape[0]):
+            betas[i, 0, betas.regressor == 'HRF A'] = b[i, 0]   # TODO- this assumes the default probe
+            betas[i, 1, betas.regressor == 'HRF A'] = -b[i, 1]
+        betas[:, :, betas.regressor == 'Drift 0'] = 0
 
-    # Zero out the beta's for the negative channels
-    betas[channels[:, 0] == 0, 0, :] = 0
-    betas[channels[:, 1] == 0, 1, :] = 0
+        # Zero out the beta's for the negative channels
+        betas[channels[:, 0] == 0, 0, :] = 0
+        betas[channels[:, 1] == 0, 1, :] = 0
 
     # Add the HRF responses to the conc timecourse
 
@@ -420,33 +553,189 @@ def simMotionArtifact(
     return data
 
 
+def simdemographics(num_files, continuous=None, categorical=None, random_seed=None):
+    """Random demographics for :func:`simdataset`, one row per file.
+
+    ``continuous`` maps names to ``(low, high)`` ranges drawn uniformly, e.g.
+    ``{'age': (20, 60)}``; ``categorical`` maps names to their levels, which
+    are assigned in (as nearly as possible) equal numbers in random order,
+    e.g. ``{'group': ['control', 'patient']}``.
+    """
+    rng = get_rng(random_seed)
+    table = {}
+    for name, (low, high) in (continuous or {}).items():
+        table[name] = rng.uniform(low, high, num_files)
+    for name, levels in (categorical or {}).items():
+        levels = list(levels)
+        table[name] = rng.permutation(np.resize(np.asarray(levels, dtype=object), num_files))
+    return pd.DataFrame(table, index=pd.RangeIndex(num_files))
+
+
+def _formula_rhs(formula):
+    return str(formula).split('~', 1)[1] if '~' in str(formula) else str(formula)
+
+
+def _simulation_design(formula, demographics, conditions):
+    """Fixed-effects design of a simulated group: one row per (file, condition).
+
+    The columns are named as in the ``MixedEffects`` group model (e.g.
+    ``'Condition[HRF A]'``, ``'Condition[HRF A]:age'``). Numeric demographics
+    are z-scored, so a covariate's effect is per standard deviation and the
+    condition terms are the response at the mean covariate, as in the
+    group model (which mean-centers numeric demographics).
+    """
+    rows = []
+    for idx, row in demographics.iterrows():
+        for cond in conditions:
+            rows.append({'fileIdx': idx, 'Condition': f'HRF {cond}', **row.to_dict()})
+    table = pd.DataFrame(rows)
+    for name in demographics.columns:
+        if pd.api.types.is_numeric_dtype(demographics[name]):
+            values = demographics[name].astype(float)
+            spread = values.std(ddof=0)
+            table[name] = (table[name].astype(float) - values.mean()) / (spread if spread > 0 else 1.0)
+    try:
+        design = patsy.dmatrix(_formula_rhs(formula), table, return_type='dataframe')
+    except patsy.PatsyError as exc:
+        raise ValueError(
+            f"cannot build the simulation design for {formula!r} (demographics: "
+            f"{list(demographics.columns)}): {exc}") from exc
+    return table, design
+
+
+def _term_effects(columns, effects, n_channels, rng):
+    """Per-channel (HbO, HbR) amplitude multipliers of each fixed-effect term.
+
+    ``effects[term]`` is either a scalar, the amplitude on a random half of
+    the channels (0 for no effect), or an array of per-channel multipliers
+    (``(n_channels,)`` or ``(n_channels, 2)``). Terms not listed get 1 on a
+    random half of the channels.
+    """
+    effects = dict(effects or {})
+    unknown = sorted(set(effects) - set(columns))
+    if unknown:
+        raise ValueError(f"effects for unknown terms {unknown}; the simulation formula "
+                         f"has the terms {list(columns)}")
+    out = {}
+    for term in columns:
+        value = np.asarray(effects.get(term, 1.0), dtype=float)
+        if value.ndim == 0:
+            active = np.zeros(n_channels)
+            active[rng.permutation(n_channels)[:int(np.round(n_channels / 2))]] = 1
+            out[term] = np.repeat((float(value) * active)[:, None], 2, axis=1)
+        else:
+            out[term] = np.broadcast_to(value.reshape(n_channels, -1), (n_channels, 2)).copy()
+    return out
+
+
 def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
                channels=None, basis=glm.Gamma(tau=0 * units.s, sigma=3 * units.s, T=3 * units.s),
-               modifiers=None, random_seed=None):
+               modifiers=None, random_seed=None, formula=None, demographics=None,
+               effects=None, ncond=1, random_effect_sd=0.0, registered3D=False):
     """Create multiple simulated recordings in one :class:`DataSet`.
 
     Reusing the same ``random_seed`` reproduces the dataset while advancing the
     generator between files so their simulated contents differ.
+    ``registered3D`` is passed to :func:`Data` (probe registered in 3D on the
+    forehead of a template head).
+
+    Without ``formula`` (and with one condition, no random effects) every file
+    gets the same response, to condition ``'A'`` on the same channels, and the
+    truth is the ``(channel, chromo)`` array of :func:`Data`.
+
+    With ``formula`` the response of each file follows a group-level
+    fixed-effects model, written like the ``MixedEffects`` ``FE_formula``
+    (e.g. ``'Beta ~ 0 + Condition + Condition:age'``):
+
+    * ``demographics`` (DataFrame or dict, one row per file; see
+      :func:`simdemographics`) holds the variables used by the formula and is
+      stored in the files' demographics. Numeric variables are z-scored in
+      the simulation, so their effect is per standard deviation.
+    * ``effects`` sets the amplitude of each term (see the term names in the
+      returned truth): a scalar applies to a random half of the channels
+      (0 = no effect anywhere), an array gives per-channel values.
+      Unlisted terms get amplitude 1 on a random half of the channels.
+      Amplitudes are in units of ``snr``.
+    * ``ncond`` conditions (``'A'``, ``'B'``, ...) are simulated with random
+      event designs, unless ``stim`` is given.
+    * ``random_effect_sd`` adds subject-specific random effects: normal
+      deviations (in units of ``snr``) of every channel's response to each
+      condition.
+
+    The truth is then a table with one row per ``Channel``, ``Type``
+    (``'HbO'``/``'HbR'``) and model term (``Condition``, named as in the group
+    statistics), with ``Truth`` (the term is non-zero) and its ``Effect``.
+    :class:`pyBrainAnalyzIR.testing.channelROC.ChannelROC` scores either form.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``,
-    ``examples/03_ROC_Analysis.ipynb``, and
+    ``examples/03_ROC_Analysis.ipynb``, ``examples/08_GroupAnalysis.ipynb`` and
     ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook simulation and quality-mask workflows.
     Direct dependencies: :func:`Data` and ``pyBrainAnalyzIR.dataclasses.dataset.DataSet``.
-    Tests: ``tests/test_pipeline_modules.py`` and
-    ``tests/test_simulation_random_seed.py``.
+    Tests: ``tests/test_pipeline_modules.py``,
+    ``tests/test_simulation_random_seed.py`` and ``tests/test_roc_group.py``.
     """
     rng = get_rng(random_seed)
     dset = dataset.DataSet()
     dset.description = 'Simulated data'
+    if demographics is not None:
+        demographics = pd.DataFrame(demographics).reset_index(drop=True)
+        if len(demographics) != num_files:
+            raise ValueError(f"demographics has {len(demographics)} rows for {num_files} files")
 
-    for _ in range(0, num_files):
-        data, truth = Data(noise=noise, stim=stim, snr=snr,
-                           channels=channels, basis=basis, modifiers=modifiers,
-                           random_seed=rng)
-        channels = truth * 1
+    if formula is None and ncond == 1 and not random_effect_sd and effects is None:
+        for _ in range(0, num_files):
+            data, truth = Data(noise=noise, stim=stim, snr=snr,
+                               channels=channels, basis=basis, modifiers=modifiers,
+                               random_seed=rng, registered3D=registered3D)
+            channels = truth * 1
+            dset.import_data(data)
+        if demographics is not None:
+            dset.add_demographics_by_index(demographics)
+        return dset, truth
+
+    if formula is None:
+        formula = 'Beta ~ 0 + Condition'
+    if demographics is None:
+        demographics = pd.DataFrame(index=pd.RangeIndex(num_files))
+    conditions = [chr(65 + i) for i in range(ncond)]
+    if stim is not None:
+        conditions = sorted(map(str, pd.unique(stim['trial_type'])))
+    channel_names = (noise['amp'].channel.values if noise is not None
+                     else defaultProbe2D()[1]['channel'].values)
+    n_channels = len(channel_names)
+
+    table, design = _simulation_design(formula, demographics, conditions)
+    term_effects = _term_effects(design.columns, effects, n_channels, rng)
+    effect_matrix = np.stack([term_effects[term] for term in design.columns])  # term, channel, chromo
+
+    for idx in range(num_files):
+        amplitudes = {}
+        for cond in conditions:
+            row = ((table['fileIdx'] == idx) & (table['Condition'] == f'HRF {cond}')).to_numpy()
+            amp = np.tensordot(design.to_numpy()[row][0], effect_matrix, axes=1)
+            if random_effect_sd:
+                amp = amp + random_effect_sd * rng.standard_normal(amp.shape)
+            amplitudes[cond] = amp
+        file_stim = (copy.deepcopy(stim) if stim is not None
+                     else pyBrainAnalyzIR.testing.simEvents.rand_stim_design(
+                         ncond=len(conditions), random_seed=rng))
+        data, _ = Data(noise=None if noise is None else copy.deepcopy(noise), stim=file_stim,
+                       snr=snr, basis=basis, modifiers=modifiers, random_seed=rng,
+                       amplitudes=amplitudes, registered3D=registered3D)
         dset.import_data(data)
+    if len(demographics.columns):
+        dset.add_demographics_by_index(demographics)
 
+    truth = pd.DataFrame([
+        {'Channel': str(ch), 'Type': chromo, 'Condition': term,
+         'Truth': bool(term_effects[term][i, j] != 0),
+         'Effect': float(term_effects[term][i, j])}
+        for term in design.columns
+        for j, chromo in enumerate(('HbO', 'HbR'))
+        for i, ch in enumerate(channel_names)
+    ])
+    truth.attrs['formula'] = str(formula)
     return dset, truth
 
 

@@ -294,6 +294,8 @@ def roi_average_statistics(stats, roi_table, roi_name="default", weighted=True):
     if not np.isfinite(pooled_covariance[np.ix_(finite_output, finite_output)]).all():
         warnings.warn("Nonfinite covariance propagated into ROI statistics.", UserWarning, stacklevel=2)
     output = stats.copy()
+    # Channel fits are not ROI fits, especially with estimate-specific pooling weights.
+    output.fit_data = None
     output.description = "ROI pooled statistics: " + stats.description
     output.betas = xr.DataArray(
         pooled_beta, dims="indices",

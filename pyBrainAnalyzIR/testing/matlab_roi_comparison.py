@@ -42,7 +42,8 @@ def run_matlab_python_roi_glm_comparison(
     (default) the GLM is OLS and ROI pooling uses fixed table weights, so both
     processing orders have the same linear interpretation. With
     ``noise_model="ar_irls"`` MATLAB runs ``nirs.math.ar_irls`` and Python runs
-    its AR-IRLS fit (``ar_order`` maximum AR order in both); ROI time courses
+    its AR-IRLS fit (``ar_order`` maximum AR order in both), explicitly selecting
+    the legacy OLS AR coefficient estimator for MATLAB parity. ROI time courses
     use inverse temporal-variance weights and fitted statistics use
     inverse-coefficient-variance weights (``nirs.util.roiAverage`` with
     ``weighted=true`` in MATLAB). The two processing orders are not expected to
@@ -174,6 +175,7 @@ def _run_comparison(
         ),
         "noise_model": "AR-IRLS" if noise_model == "ar_irls" else "OLS",
         "ar_order": ar_order if noise_model == "ar_irls" else None,
+        "ar_estimator": "ols" if noise_model == "ar_irls" else None,
         "matlab_vs_python": comparisons,
     }
     pd.DataFrame(per_example).to_csv(work_dir / "roi_glm_per_example_errors.csv", index=False)
@@ -259,7 +261,8 @@ def _fit_statistics(
     )
     for column in range(signal.shape[1]):
         results.values[column, 0] = _channel_fit(
-            signal[:, column], design, noise_model="ar_irls", ar_order=ar_order
+            signal[:, column], design, noise_model="ar_irls", ar_order=ar_order,
+            ar_estimator="ols",
         )
     stats = Statistics(results)
     stats.betas = stats.betas.assign_coords(

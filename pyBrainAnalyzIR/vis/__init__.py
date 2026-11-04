@@ -14,6 +14,8 @@ _EXPORT_MODULES = {
     "roi_manager": "roi_manager",
     "RegistrationManager": "registration_manager",
     "registration_manager": "registration_manager",
+    "StatisticsViewer": "statistics_viewer",
+    "view_statistics": "statistics_viewer",
 }
 
 __all__ = list(_EXPORT_MODULES)

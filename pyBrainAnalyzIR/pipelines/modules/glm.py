@@ -106,6 +106,12 @@ class GLM(cedalion_module):
                                       help='Maximum order of the autoregressive noise '
                                            "model. Only used when noise_model='ar_irls'. "
                                            'A common choice is 4x the sample rate.'),
+            'ar_estimator': StringOption(
+                'robust', allowed=['robust', 'ols'],
+                description='AR coefficient estimator',
+                help="For AR-IRLS, 'robust' refits the BIC-selected AR regression "
+                     "using bisquare IRLS. 'ols' retains the original MATLAB-compatible "
+                     'least-squares AR step. BIC order selection remains OLS-based.'),
             'max_jobs': NumericOption(1, minimum=1, integer_only=True,
                                       description='Number of parallel jobs',
                                       help='Number of channels fit in parallel. Increase '
@@ -136,6 +142,7 @@ class GLM(cedalion_module):
         self.outputName = 'stats'
         self.description = "Fit a General Linear Model (GLM) to fNIRS data"
         self.previous_job = previous_job
+        self.progress_callback = None
 
     def _cite(self):
         if (self.options['noise_model'] == 'ols'):
@@ -191,9 +198,12 @@ class GLM(cedalion_module):
             result = glm.fit(ts_long,
                              design_matrix=design_matrix,
                              noise_model=self.options['noise_model'],
+                             ar_order=self.options['ar_order'],
+                             ar_estimator=self.options['ar_estimator'],
                              max_jobs=self.options['max_jobs'],
                              verbose=self.options['verbose'],
-                             quality_mask=quality_mask)
+                             quality_mask=quality_mask,
+                             progress_callback=getattr(self, "progress_callback", None))
 
             stats = pyBrainAnalyzIR.dataclasses.statistics.Statistics(result)
             if {"source", "detector"}.issubset(ts_long.coords):

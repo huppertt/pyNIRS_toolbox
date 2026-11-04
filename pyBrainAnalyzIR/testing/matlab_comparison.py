@@ -96,6 +96,8 @@ def run_matlab_python_roc_comparison(
     MATLAB Beer-Lambert PPF and Python MBLL DPF are both set to 6, with no
     partial-volume correction. Both pipelines resample to 4 Hz and use
     AR-IRLS with order 16 and MATLAB's Canonical double-gamma HRF basis.
+    Python explicitly uses ``ar_estimator="ols"`` for MATLAB parity, rather
+    than its new robust AR coefficient default.
 
     If ``output_dir`` is given, a unique run folder is created beneath it with
     the generated inputs, per-estimate CSV, summary JSON, ROC CSV, and plot.
@@ -214,6 +216,7 @@ def _compare_python_results(
         "Fs": 4,
         "noise_model": "ar_irls",
         "ar_order": 16,
+        "ar_estimator": "ols",
         "verbose": False,
     })
     model = channel_roc.ChannelROC()
@@ -565,6 +568,7 @@ def _comparison_summary(
             "sampling_frequency_hz": 4,
             "glm_noise_model": "AR-IRLS",
             "ar_order": 16,
+            "ar_estimator": "ols",
             "hrf_basis": "nirs.design.basis.Canonical in both toolboxes",
         },
         "estimate_comparison": metrics,

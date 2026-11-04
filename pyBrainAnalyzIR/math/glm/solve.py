@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,7 @@ import cedalion.xrutils as xrutils
 from cedalion.models.glm.design_matrix import DesignMatrix
 
 from .ar_irls import ar_irls_GLM
+from pyBrainAnalyzIR.dataclasses.model_fit import FirstLevelFit
 
 
 class _MissingFitResult:
@@ -34,8 +36,8 @@ class _MissingFitResult:
         return pd.DataFrame(np.nan, index=self.params.index, columns=self.params.index)
 
 
-def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
-    """Fit one channel, preserving Cedalion behavior when no observations are missing."""
+def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None, ar_estimator="robust"):
+    """Fit one channel with estimator-specific handling of missing observations."""
     y_values = np.asarray(y, dtype=float).reshape(-1)
     x_values = np.asarray(x, dtype=float)
     valid = np.isfinite(y_values) & np.isfinite(x_values).all(axis=1)
@@ -60,7 +62,7 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
         if noise_model == "wls":
             return statsmodels.api.WLS(y, x).fit()
         if noise_model == "ar_irls":
-            return _fit_ar_irls(y, x, ar_order)
+            return _fit_ar_irls(y, x, ar_order, ar_estimator=ar_estimator)
         if noise_model == "gls":
             ols_resid = np.asarray(statsmodels.api.OLS(y, x).fit().resid)
             resid_fit = statsmodels.api.OLS(
@@ -113,7 +115,7 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
         ).iterative_fit(4)
     elif noise_model == "ar_irls":
         result = _fit_ar_irls(
-            y_values, x_frame, ar_order, valid_mask=valid
+            y_values, x_frame, ar_order, valid_mask=valid, ar_estimator=ar_estimator,
         )
     else:
         raise NotImplementedError(f"Unsupported noise model: {noise_model}")
@@ -123,9 +125,9 @@ def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None):
     return result
 
 
-def _fit_ar_irls(y, x, ar_order, valid_mask=None):
+def _fit_ar_irls(y, x, ar_order, valid_mask=None, *, ar_estimator="robust"):
     """Fit AR-IRLS and retain its robust-weight Satterthwaite degrees of freedom."""
-    result = ar_irls_GLM(y, x, pmax=ar_order, valid_mask=valid_mask)
+    result = ar_irls_GLM(y, x, pmax=ar_order, valid_mask=valid_mask, ar_estimator=ar_estimator)
     result._pybrain_satterthwaite_dof = _satterthwaite_dof(
         result.model.exog,
         result.weights,
@@ -250,12 +252,16 @@ def fit(
     max_jobs: int = -1,
     verbose: bool = False,
     quality_mask: xr.DataArray | None = None,
+    ar_estimator: str = "robust",
+    progress_callback: Callable[[int, int], None] | None = None,
 ):
     """Fit channel-wise GLMs to a time series and design matrix.
 
     If ``quality_mask`` is provided, bad samples are excluded independently
-    for each channel. Without missing samples, estimator behavior matches
-    Cedalion's GLM solver.
+    for each channel. AR-IRLS uses robust AR coefficient regression by default;
+    ``ar_estimator="ols"`` selects the legacy MATLAB-compatible AR step.
+    ``progress_callback(completed, total)`` reports completed channel/signal
+    fits on the calling thread, independently of terminal progress output.
 
     Direct callers: :class:`pyBrainAnalyzIR.pipelines.modules.glm.GLM` and
     callers in ``tests/test_glm_quality_masks.py`` and ``tests/test_glm_basis.py``.
@@ -263,6 +269,8 @@ def fit(
     :func:`_channel_fit`.
     Tests: ``tests/test_glm_quality_masks.py`` and ``tests/test_glm_basis.py``.
     """
+    if ar_estimator not in ("robust", "ols"):
+        raise ValueError("ar_estimator must be 'robust' or 'ols'.")
     ts = ts.pint.dequantify()
     dim3_name = xrutils.other_dim(design_matrix.common, "time", "regressor")
 
@@ -272,6 +280,10 @@ def fit(
         coords=xrutils.coords_from_other(ts.isel(time=0), dims=("channel", dim3_name)),
     )
 
+    completed = 0
+    total = ts.sizes["channel"] * ts.sizes[dim3_name]
+    if progress_callback is not None:
+        progress_callback(completed, total)
     for dim3, group_channels, group_design_matrix in design_matrix.iter_computational_groups(ts):
         group_y = ts.sel({"channel": group_channels, dim3_name: dim3}).transpose(
             "time", "channel"
@@ -293,6 +305,7 @@ def fit(
                 noise_model,
                 ar_order,
                 channel_masks.get(channel),
+                ar_estimator,
             )
             for channel in group_y.channel.values
         ]
@@ -313,6 +326,9 @@ def fit(
 
         for channel, result in zip(group_y.channel.values, batch_results):
             reg_results.loc[channel, dim3] = result
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(completed, total)
 
     descriptions = {
         "ols": "OLS model via statsmodels.regression",
@@ -323,6 +339,9 @@ def fit(
         "wls": "Weighted LS model via statsmodels.regression",
     }
     reg_results.attrs["description"] = descriptions.get(noise_model, "")
+    reg_results.attrs["fit_data"] = FirstLevelFit.from_results(
+        ts, design_matrix, reg_results, quality_mask
+    )
     return reg_results
 
 

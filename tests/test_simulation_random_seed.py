@@ -1,6 +1,8 @@
 """Reproducibility tests for simulation random seeds."""
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -49,6 +51,44 @@ def test_ar_noise_and_data_are_reproducible():
     np.testing.assert_array_equal(truth_a.values, truth_b.values)
 
 
+@pytest.mark.parametrize("seed", [3, 4, 19, 29])
+def test_task_simulation_ar_order_search_does_not_hit_the_cap(seed, monkeypatch):
+    import cedalion.math.ar_model as ar_model
+
+    orders = []
+    original = ar_model.ar_filter
+
+    def ar_filter(data, pmax):
+        orders.append(pmax)
+        return original(data, pmax=pmax)
+
+    monkeypatch.setattr(ar_model, "ar_filter", ar_filter)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        simdata.Data(snr=5, random_seed=seed)
+    assert orders == [40]
+    assert not [w for w in caught if "pmax was reached" in str(w.message)]
+
+
+def test_task_simulation_ar_order_limit_respects_short_recordings(monkeypatch):
+    import pandas as pd
+    import cedalion.math.ar_model as ar_model
+
+    orders = []
+    original = ar_model.ar_filter
+
+    def ar_filter(data, pmax):
+        orders.append(pmax)
+        return original(data, pmax=pmax)
+
+    monkeypatch.setattr(ar_model, "ar_filter", ar_filter)
+    noise = simdata.ARnoise(t=np.arange(60) * 0.1, random_seed=19)
+    stim = pd.DataFrame({"onset": [1.], "duration": [1.], "value": [1.], "trial_type": ["A"]})
+    recording, _ = simdata.Data(noise=noise, stim=stim, random_seed=3)
+    assert orders == [29]
+    assert np.isfinite(recording["amp"]).all()
+
+
 def test_connectivity_simulations_are_reproducible():
     noise = simdata.ARnoise(t=np.arange(1, 301) * 0.1, random_seed=31)
     rec_a, truth_a = simdata.connectivity(
@@ -85,3 +125,35 @@ def test_simdataset_is_reproducible_with_distinct_recordings():
     first = dataset_a.dataset[0]
     second = dataset_a.dataset[1]
     assert not np.array_equal(first["amp"].values, second["amp"].values)
+
+
+def test_registered3d_places_the_default_probe_on_the_forehead():
+    import cedalion
+    from pyBrainAnalyzIR.vis.geo2d_registration import template_1005
+    from pyBrainAnalyzIR.vis.plot_nirs_inline import probe_views_available
+
+    plain, _ = simdata.Data(snr=5, random_seed=3)
+    rec, _ = simdata.Data(snr=5, random_seed=3, registered3D=True)
+
+    np.testing.assert_allclose(rec["amp"].values, plain["amp"].values)
+    np.testing.assert_allclose(plain.geo3d.values[:, 2], 0)
+    assert not probe_views_available(plain)
+    assert probe_views_available(rec)
+
+    points = {str(label): xyz for label, xyz in zip(rec.geo3d.label.values,
+                                                    rec.geo3d.pint.to("mm").pint.dequantify().values)}
+    assert {"Nz", "LPA", "RPA"} <= set(points)
+    head = template_1005()
+    midpoint = (points["D4"] + points["D5"]) / 2
+    # The anchor 1 cm below the D4/D5 midpoint lies on Fpz; the sources (2D "up") point toward Cz.
+    assert abs(np.linalg.norm(midpoint - head["Fpz"]) - 10) < 2
+    assert midpoint[2] > head["Fpz"][2] and abs(midpoint[0]) < 2
+    assert points["S5"][2] > midpoint[2]
+    assert points["S1"][0] < -40 and points["S9"][0] > 40
+    assert np.allclose(points["S1"][1:], points["S9"][1:], atol=3)
+
+    distances = cedalion.nirs.channel_distances(rec["amp"], rec.geo3d).pint.to("mm").pint.magnitude
+    assert np.all((distances > 25) & (distances < 36))
+
+    dset, _ = simdata.simdataset(num_files=2, snr=5, random_seed=4, registered3D=True)
+    np.testing.assert_allclose(dset.dataset[0].geo3d.values, rec.geo3d.values)

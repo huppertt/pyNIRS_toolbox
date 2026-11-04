@@ -109,49 +109,46 @@ def test_roi_timecourses_embedded_buttons_and_switching(roi_dataset):
 
 
 @pytest.mark.parametrize("key", ["stats_roi", "Group: groupstats_roi"])
-def test_roi_statistics_embedded_panels_filters_and_fixed_keys(roi_dataset, key):
+def test_roi_statistics_embed_shared_viewer_and_table(roi_dataset, key, qt_app, tmp_path):
     import matplotlib.pyplot as plt
-    from matplotlib.colors import to_rgb
+    from pyBrainAnalyzIR.vis.statistics_viewer import StatisticsViewer
 
     external = plt.figure()
     window = nirsview.NIRSviewIRWindow(roi_dataset, plot_on_scalp=False)
+    window.show()
     window.type_selector.setCurrentText(key)
-    assert window._right_stack.currentIndex() == 1
-    assert not window._filter_vartype_combo.isEnabled()
-    assert window._filter_vartype_combo.currentText() == "beta"
-    fig = window._stats_figure
-    assert fig.canvas is window._stats_canvas
-    assert len(fig.axes) == 5
-    assert not fig.axes[0].images  # Actual embedded artists, not a flattened PNG.
-    assert len(fig._roi_buttons) == 2
-    assert all(not button.active for button in fig._roi_buttons)
-    assert len(fig.axes[1].texts) == 1
-    for button in fig._roi_buttons:
-        _canvas_click(window._stats_canvas, button.ax)
-        assert to_rgb(button.ax.get_facecolor()) == to_rgb(button.color)
-    assert len(fig.axes[1].patches) == 2
-    np.testing.assert_allclose(
-        [bar_patch.get_height() for bar_patch in fig.axes[1].patches], [4, 0.1]
-    )
-    assert window._stats_model.rowCount() == 4
+    qt_app.processEvents()
+    viewer = window._statistics_viewer
+    assert isinstance(viewer, StatisticsViewer)
+    assert not viewer.isWindow()
+    assert viewer.window() is window
+    assert viewer.isVisible()
+    assert window._right_stack.currentWidget() is window._statistics_page
+    assert viewer.statistics is window._current_stats_obj
+    assert viewer.condition_combo.currentText() == "A"
+    assert viewer.results_table.rowCount() == 2
     assert plt.fignum_exists(external.number)
-    window._stats_condition_filter = {"B"}
-    window._apply_stats_filter()
-    assert len(fig.axes) == 4
-    assert fig.axes[1].get_title() == "B: HbO"
-    np.testing.assert_allclose(
-        [bar_patch.get_height() for bar_patch in fig.axes[1].patches], [-4, 0.2]
-    )
-    assert window._stats_proxy.rowCount() == 2
-    window._filter_q_spin.setValue(0.05)
-    assert "q<0.05" in fig._suptitle.get_text()
-    window._global_fdr_checkbox.setChecked(False)
-    assert all(not button.active for button in fig._roi_buttons)
-    window._filter_q_spin.setValue(0)
-    assert len(fig.axes[1].texts) == 0
+    viewer.condition_combo.setCurrentText("B")
+    frame = viewer.results_frame()
+    assert set(frame.Condition) == {"B"}
+    np.testing.assert_allclose(frame.Beta, [-4, 0.2])
+    viewer.threshold_type.setCurrentText("p-value")
+    assert frame.Significant.tolist() == [True, False]
+    viewer.threshold.setValue(0)
+    assert not viewer.results_frame().Significant.any()
+    viewer.results_tabs.setCurrentIndex(1)
+    assert viewer.legend_canvas.isHidden()
+    viewer.copy_table_to_clipboard()
+    assert "Condition" in qt_app.clipboard().text()
+    path = tmp_path / "embedded_results.xlsx"
+    viewer.save_table_to_excel(path)
+    assert set(pd.read_excel(path).Condition) == {"B"}
     window.type_selector.setCurrentText("amp_roi")
     assert window._right_stack.currentIndex() == 0
+    assert window._statistics_viewer is None
     assert len(window._roi_buttons) == 2
+    window.type_selector.setCurrentText(key)
+    assert window._statistics_layout.count() == 1
     window.close()
     plt.close(external)
 
@@ -174,9 +171,8 @@ def test_roi_gui_honors_probe_projection(roi_dataset, plot_on_scalp):
     window.type_selector.setCurrentText("amp_roi")
     assert any(isinstance(patch, Circle) for patch in window.ax_probe.patches) == plot_on_scalp
     window.type_selector.setCurrentText("stats_roi")
-    assert any(
-        isinstance(patch, Circle) for patch in window._stats_figure.axes[0].patches
-    ) == plot_on_scalp
+    assert window._statistics_viewer.plot_on_scalp == plot_on_scalp
+    assert window._statistics_viewer.map_ax.get_xlabel() == "ROI"
     window.close()
 
 
@@ -217,7 +213,7 @@ def _menu_action(menu, text):
 
 def test_probe_view_menu_toggles_timecourse_and_statistics_views(roi_dataset, monkeypatch):
     from matplotlib.patches import Circle
-    from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+    from pyBrainAnalyzIR.vis.statistics_viewer import StatisticsViewer
 
     rec = roi_dataset.dataset[0]
     _add_head_landmarks(rec)
@@ -252,16 +248,23 @@ def test_probe_view_menu_toggles_timecourse_and_statistics_views(roi_dataset, mo
     assert window.plot_on_scalp is False
     assert not any(isinstance(patch, Circle) for patch in window.ax_probe.patches)
 
-    calls = []
-    original = Statistics.draw
-    monkeypatch.setattr(Statistics, "draw", lambda self, *args, **kwargs: (
-        calls.append(kwargs["plot_on_scalp"]), original(self, *args, **kwargs))[1])
     window.type_selector.setCurrentText("stats_channels")
-    assert calls[-1] is False
-    _right_click(window._stats_canvas, window._stats_figure.axes[0], (0.5, 0.5))
+    viewer = window._statistics_viewer
+    assert viewer.plot_on_scalp is False
+    monkeypatch.setattr(
+        StatisticsViewer, "_show_probe_view_menu",
+        lambda self: menus.append(self._build_probe_view_menu()),
+    )
+    _right_click(viewer.map_canvas, viewer.map_ax, (0.01, 0.99))
     assert len(menus) == 2 and _menu_action(menus[1], "2D Probe View").isChecked()
     _menu_action(menus[1], "10-20 View").trigger()
-    assert window.plot_on_scalp is True and calls[-1] is True
+    assert window.plot_on_scalp is True and viewer.plot_on_scalp is True
+    assert any(isinstance(patch, Circle) for patch in viewer.map_ax.patches)
+    window._set_probe_view(False)
+    assert viewer.plot_on_scalp is False
+    window.type_selector.setCurrentText("amp")
+    assert window._statistics_viewer is None
+    assert not any(isinstance(patch, Circle) for patch in window.ax_probe.patches)
     window.close()
 
 
@@ -276,7 +279,7 @@ def test_probe_view_menu_is_disabled_without_head_landmarks(roi_dataset, monkeyp
     window.close()
 
 
-def test_switching_roi_and_channel_statistics_restores_display_control(roi_dataset):
+def test_switching_roi_and_channel_statistics_replaces_embedded_viewer(roi_dataset, qt_app):
     import matplotlib.pyplot as plt
 
     rec = roi_dataset.dataset[0]
@@ -289,17 +292,23 @@ def test_switching_roi_and_channel_statistics_restores_display_control(roi_datas
     external = plt.figure()
     window = nirsview.NIRSviewIRWindow(roi_dataset)
     window.type_selector.setCurrentText("stats_roi")
-    assert not window._filter_vartype_combo.isEnabled()
+    old_viewer = window._statistics_viewer
+    assert old_viewer.map_ax.get_xlabel() == "ROI"
     window.type_selector.setCurrentText("stats_channels")
-    assert window._filter_vartype_combo.isEnabled()
-    assert len(window._stats_figure.axes[0].images) == 1
-    window._filter_vartype_combo.setCurrentText("tstat")
-    assert len(window._stats_figure.axes[0].images) == 1
+    assert old_viewer.isHidden()
+    viewer = window._statistics_viewer
+    assert viewer.statistics is stats
+    assert len(viewer._channel_artists) == 2
+    assert window._statistics_layout.count() == 1
     assert plt.fignum_exists(external.number)
     window.type_selector.setCurrentText("stats_roi")
-    assert not window._filter_vartype_combo.isEnabled()
-    assert not window._stats_figure.axes[0].images
-    assert len(window._stats_figure._roi_buttons) == 2
+    assert window._statistics_viewer.statistics is rec["stats_roi"]
+    assert window._statistics_viewer.map_ax.get_xlabel() == "ROI"
+    window._new_session()
+    qt_app.processEvents()
+    assert window._statistics_viewer is None
+    assert window._statistics_layout.count() == 0
+    assert window._right_stack.currentIndex() == 0
     window.close()
     plt.close(external)
 
@@ -343,11 +352,61 @@ def test_roi_gui_with_fitted_glm_and_mixed_effects(simulated_recording):
     for key, stats in [("stats_roi", dset.dataset[0]["stats_roi"]), ("Group: groupstats", dset["groupstats"])]:
         window.type_selector.setCurrentText(key)
         assert window._current_stats_obj is stats
-        panels = len(stats.list_conditions()) * len(np.unique(stats.betas.type))
-        assert len(window._stats_figure.axes) == 1 + panels + 2
-        assert window._stats_model.rowCount() == len(stats.table())
-        assert all(not button.active for button in window._stats_figure._roi_buttons)
-        window._stats_canvas.draw()
+        viewer = window._statistics_viewer
+        assert viewer.statistics is stats
+        assert viewer.fit_data is stats.fit_data
+        assert viewer.results_table.rowCount() == len(viewer.results_frame())
+        assert "Fit unavailable" not in viewer.fit_text.text()
+        assert viewer.fit_ax.lines
+        viewer.map_canvas.draw()
+    window.close()
+
+
+def test_embedded_first_level_and_group_fits_follow_channel_and_recording(qt_app):
+    from types import SimpleNamespace
+    from tests.test_model_fit_data import make_dataset
+    from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects
+
+    dset = make_dataset()
+    model = MixedEffects()
+    model.options.update(FE_formula="Beta ~ 0 + Condition + Condition:age", robust=False)
+    group = model.run(dset)["groupstats"]
+    window = nirsview.NIRSviewIRWindow(dset)
+    window.show()
+    qt_app.processEvents()
+    first = dset.dataset[0]["stats"]
+    viewer = window._statistics_viewer
+    assert viewer.statistics is first
+    artist = next(a for a, channel in viewer._channel_artists.items() if channel == "S2D2")
+    viewer._on_pick(SimpleNamespace(artist=artist))
+    expected = first.fit_data.data.sel(channel="S2D2", chromo="HbO")
+    np.testing.assert_allclose(viewer.fit_ax.lines[0].get_ydata(), expected.observed)
+    np.testing.assert_allclose(viewer.fit_ax.lines[1].get_ydata(), expected.fitted)
+    assert "R^2" in viewer.fit_text.text()
+    assert "Wald F(" in viewer.fit_text.text()
+
+    window.type_selector.setCurrentText("Group: groupstats")
+    viewer = window._statistics_viewer
+    assert viewer.statistics is group
+    viewer.condition_combo.setCurrentText("Condition[HRF A]:age")
+    viewer.channel_combo.setCurrentText("S2D2")
+    points, curve, _ = group.fit_data.partial_effect("S2D2", "HbO", "Condition[HRF A]:age")
+    assert viewer.fit_ax.get_xlabel() == "age"
+    population = next(line for line in viewer.fit_ax.lines if line.get_label() == "Population fit")
+    np.testing.assert_allclose(population.get_ydata(), curve.Fit)
+    assert any("Final weighting" in container.get_label() for container in viewer.fit_ax.containers)
+    assert len(points) == len(dset.dataset)
+    viewer.legend_canvas.draw()
+    bounds = viewer.fit_legend.get_window_extent(viewer.legend_canvas.get_renderer())
+    assert 0 <= bounds.x0 < bounds.x1 <= viewer.legend_figure.bbox.width
+    viewer.results_tabs.setCurrentIndex(1)
+    qt_app.processEvents()
+    assert viewer.legend_canvas.isHidden()
+    assert set(viewer.results_frame().Condition) == {"Condition[HRF A]:age"}
+
+    window._select_row(1)
+    assert window._statistics_viewer.statistics is dset.dataset[1]["stats"]
+    assert window._statistics_layout.count() == 1
     window.close()
 
 
@@ -600,9 +659,10 @@ def test_nirsview_displays_roi_timecourses_and_connectivity(roi_dataset):
     assert window._right_stack.currentIndex() == 0
     assert window._roi_geometry is not None
     window.type_selector.setCurrentText("stats_roi")
-    assert window._right_stack.currentIndex() == 1
+    assert window._right_stack.currentWidget() is window._statistics_page
     assert window._current_stats_obj is rec["stats_roi"]
     window.type_selector.setCurrentText("conn")
+    assert window._statistics_viewer is None
     assert window._right_stack.currentIndex() == 1
     assert window._current_stats_obj is rec["conn"]
     assert window._stats_figure.axes
@@ -1102,6 +1162,134 @@ def test_run_pipeline_marks_data_changed_but_pipeline_clean():
     ]
     assert window.data_changed is True
     assert window._pipeline_dirty is False
+
+
+def test_status_stream_handles_partial_lines_ansi_and_progress():
+    import io
+    import threading
+
+    messages = []
+    output = io.StringIO()
+    stream = nirsview._StatusStream(output, messages.append)
+    assert stream.write("\x1b[1mGLM") == 7
+    assert not messages
+    stream.write(" Model\x1b[0m\n")
+    stream.write("\r10%")
+    stream.flush()
+    stream.write("\r20%\r100%\n")
+    stream.write("last partial")
+    stream.flush()
+    assert messages == ["GLM Model", "10%", "20%", "100%", "last partial"]
+    assert "\x1b[1mGLM Model\x1b[0m" in output.getvalue()
+    thread = threading.Thread(target=lambda: stream.write("unrelated worker\n"))
+    thread.start()
+    thread.join()
+    assert "unrelated worker" in output.getvalue()
+    assert messages[-1] == "last partial"
+    assert stream.isatty() is False
+
+
+@pytest.mark.parametrize("max_jobs", [1, 2])
+def test_gui_glm_progress_is_direct_and_paints_without_terminal_output(
+    simulated_recording, monkeypatch, qt_app, max_jobs,
+):
+    from PySide6.QtCore import QTimer
+    from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
+    from pyBrainAnalyzIR.pipelines.modules.glm import GLM
+
+    rec, _ = simulated_recording
+    prep.mbll(prep.intensity_opticaldensity()).run(rec)
+    window = nirsview.NIRSviewIRWindow(DataSet([rec]))
+    window.show()
+    qt_app.processEvents()
+    module = GLM()
+    module.options.update(noise_model="ols", verbose=False, max_jobs=max_jobs)
+    window._pipeline_modules = [module]
+    updates = []
+    events = []
+    errors = []
+    original = window._show_glm_progress
+
+    def progress(completed, total):
+        original(completed, total)
+        assert window._pipeline_progress.isVisible()
+        assert window._pipeline_progress.value() == completed
+        assert window._pipeline_progress.maximum() == total
+        assert window._status_bar.currentMessage() == f"GLM: {completed}/{total} channel/signal fits completed"
+        assert events  # Updates service queued GUI events, not just label state.
+        updates.append((completed, total))
+
+    monkeypatch.setattr(window, "_show_glm_progress", progress)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: errors.append(args[-1]))
+    QTimer.singleShot(0, lambda: events.append(True))
+    window._run_pipeline()
+    assert not errors
+    total = rec["conc"].sizes["channel"] * rec["conc"].sizes["chromo"]
+    assert updates == [(index, total) for index in range(total + 1)]
+    assert window._pipeline_progress.isHidden()
+    assert module.progress_callback is None  # The stored pipeline is not mutated.
+    assert "stats" in rec.timeseries
+    window.data_changed = False
+    window.close()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pipeline_output_reaches_status_and_restores_streams(fail, monkeypatch):
+    import sys
+    import io
+    import warnings
+    from contextlib import redirect_stdout, redirect_stderr
+
+    messages = []
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: errors.append(args[-1]))
+    window = nirsview.NIRSviewIRWindow(DataSet([Recording("raw")]))
+    window._status_bar.messageChanged.connect(messages.append)
+
+    class PipelineModule:
+        previous_job = None
+
+        def run(self, dataset):
+            assert window._pipeline_running
+            assert not window._run_pipeline_action.isEnabled()
+            print("Fitting ", end="")
+            print("GLM")
+            assert window._status_bar.currentMessage() == "Fitting GLM"
+            print("\rChannel 2/16", file=sys.stderr, end="", flush=True)
+            assert window._status_bar.currentMessage() == "Channel 2/16"
+            warnings.warn("Example pipeline warning", RuntimeWarning)
+            window._run_pipeline()  # A second run cannot start during output handling.
+            if fail:
+                raise ValueError("example failure")
+            return dataset
+
+    window._pipeline_modules = [PipelineModule()]
+    window._update_run_pipeline_enabled()
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        stdout, stderr = sys.stdout, sys.stderr
+        showwarning = warnings.showwarning
+        window._run_pipeline()
+        assert sys.stdout is stdout and sys.stderr is stderr
+        assert warnings.showwarning is showwarning
+    assert "Fitting GLM\n" in out.getvalue()
+    assert "Channel 2/16" in err.getvalue()
+    assert any("Example pipeline warning" in str(w.message) for w in caught)
+    assert "Fitting GLM" in messages and "Channel 2/16" in messages
+    assert any("Example pipeline warning" in text for text in messages)
+    assert not window._pipeline_running
+    assert window._pipeline_progress.isHidden()
+    if fail:
+        assert errors and "example failure" in errors[0]
+        assert window._status_bar.currentMessage() == "Pipeline run failed."
+        assert window._run_pipeline_action.isEnabled()
+    else:
+        assert not errors
+        assert window._status_bar.currentMessage() == "Pipeline complete."
+        assert not window._run_pipeline_action.isEnabled()
+    window.data_changed = False
+    window.close()
 
 
 def test_exit_action_closes_window(monkeypatch):

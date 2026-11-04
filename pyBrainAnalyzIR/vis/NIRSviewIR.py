@@ -22,7 +22,11 @@ import io
 import sys
 import copy
 import pickle
+import re
+import threading
+import warnings
 from collections import OrderedDict
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -35,7 +39,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex, QEventLoop
 from PySide6.QtGui import QActionGroup, QCursor, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -54,6 +58,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QStackedWidget,
     QStatusBar,
@@ -73,7 +78,7 @@ from pyBrainAnalyzIR.dataclasses.connectivity import Connectivity
 from pyBrainAnalyzIR.vis.plot_nirs_inline import (
     draw_probe, linecolors, to_string, _ROI_COLORS, _roi_probe_data,
     _roi_channel_contributions, _color_roi_channels, _roi_label_buttons,
-    plot_roi_statistics, probe_views_available,
+    probe_views_available,
 )
 from pyBrainAnalyzIR.dataclasses.roi import get_geo_roi
 from pyBrainAnalyzIR.vis.pipeline_manager import (
@@ -87,11 +92,70 @@ from pyBrainAnalyzIR.pipelines.pipeline import cedalion_module
 import pyBrainAnalyzIR.dataclasses.dataset as dataset_module
 from pyBrainAnalyzIR.io.bids import read_bids_dataset, write_bids_dataset
 from pyBrainAnalyzIR.dataclasses.statistics import Statistics
+from pyBrainAnalyzIR.vis.statistics_viewer import StatisticsViewer
 from cedalion.io.snirf import read_snirf
 from statsmodels.stats.multitest import multipletests
 
 #: Item role storing a leaf's index into `dataset.dataset`.
 RECORDING_INDEX_ROLE = Qt.UserRole + 1
+
+
+class _StatusStream:
+    """Tee pipeline text to the original stream and a GUI-thread callback."""
+
+    def __init__(self, stream, callback):
+        self._stream = stream
+        self._callback = callback
+        self._thread = threading.get_ident()
+        self._pending = ""
+        self._last = ""
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def write(self, text):
+        result = self._stream.write(text)
+        if threading.get_ident() == self._thread:
+            parts = re.split(r"[\r\n]", text)
+            for index, part in enumerate(parts):
+                self._pending = (self._pending + part)[-4096:]
+                if index < len(parts) - 1:
+                    self._publish()
+                    self._pending = ""
+        return result
+
+    def _publish(self):
+        message = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", self._pending).strip()
+        if message and message != self._last:
+            self._last = message
+            self._callback(message)
+
+    def flush(self):
+        self._stream.flush()
+        if threading.get_ident() == self._thread:
+            self._publish()
+
+
+@contextmanager
+def _pipeline_status_output(callback):
+    stdout = _StatusStream(sys.stdout, callback)
+    stderr = _StatusStream(sys.stderr, callback)
+    with warnings.catch_warnings(), redirect_stdout(stdout), redirect_stderr(stderr):
+        showwarning = warnings.showwarning
+        owner_thread = threading.get_ident()
+
+        def show_pipeline_warning(message, category, filename, lineno, file=None, line=None):
+            showwarning(message, category, filename, lineno, file=file, line=line)
+            if threading.get_ident() == owner_thread:
+                callback(f"{category.__name__}: {message}")
+
+        warnings.showwarning = show_pipeline_warning
+        try:
+            yield
+        finally:
+            stdout.flush()
+            stderr.flush()
+
 
 SUBJECT_KEYS = ("subject", "subj", "subjID", "subjectID", "ID", "name")
 
@@ -303,8 +367,10 @@ class NIRSviewIRWindow(QMainWindow):
         self._pipeline_modules: List[cedalion_module] = []  # current stored pipeline
         self.roi_tables: Dict[str, pd.DataFrame] = {}
         self._pipeline_dirty = True   # False once the pipeline ran on the current data
+        self._pipeline_running = False
         self._current_stats_df = None       # last drawn statistics DataFrame (for export)
         self._current_stats_obj = None      # the Statistics object currently displayed
+        self._statistics_viewer = None
         self._registration_window = None    # open Probe-Head Model Registration window
         self._stats_condition_filter: Optional[set] = None  # None = all
         self._stats_type_filter: Optional[set] = None        # None = all
@@ -438,7 +504,7 @@ class NIRSviewIRWindow(QMainWindow):
             )
         )
 
-        # QStackedWidget: page 0 = timeseries view, page 1 = statistics view
+        # Pages: timeseries, connectivity, shared StatisticsViewer.
         self._right_stack = QStackedWidget(right)
 
         # --- Page 0: timeseries (existing canvas) ---
@@ -448,7 +514,7 @@ class NIRSviewIRWindow(QMainWindow):
         ts_layout.addWidget(self.canvas)
         self._right_stack.addWidget(ts_page)   # index 0
 
-        # --- Page 1: statistics view ---
+        # --- Page 1: connectivity view ---
         stats_page = QWidget()
         stats_layout = QHBoxLayout(stats_page)
         stats_layout.setContentsMargins(0, 0, 0, 0)
@@ -550,6 +616,11 @@ class NIRSviewIRWindow(QMainWindow):
 
         self._right_stack.addWidget(stats_page)   # index 1
 
+        self._statistics_page = QWidget()
+        self._statistics_layout = QVBoxLayout(self._statistics_page)
+        self._statistics_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_stack.addWidget(self._statistics_page)   # index 2
+
         right_layout.addWidget(self._right_stack)
         layout.addWidget(right, stretch=1)
 
@@ -558,6 +629,11 @@ class NIRSviewIRWindow(QMainWindow):
         # ---------------------------------------------------------------- status bar
         self._status_bar = QStatusBar(self)
         self.setStatusBar(self._status_bar)
+        self._pipeline_progress = QProgressBar(self)
+        self._pipeline_progress.setFixedWidth(180)
+        self._pipeline_progress.setFormat("GLM %v/%m (%p%)")
+        self._pipeline_progress.hide()
+        self._status_bar.addPermanentWidget(self._pipeline_progress)
         self._status_bar.showMessage("Ready.")
 
         self.file_tree.itemSelectionChanged.connect(self._on_file_selection_changed)
@@ -635,6 +711,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._pipeline_dirty = True
         self._current_stats_df = None
         self._current_stats_obj = None
+        self._clear_statistics_viewer()
         self._stats_condition_filter = None
         self._stats_type_filter = None
         self._mark_data_saved()
@@ -731,7 +808,7 @@ class NIRSviewIRWindow(QMainWindow):
 
     def _update_run_pipeline_enabled(self) -> None:
         self._run_pipeline_action.setEnabled(
-            bool(self._pipeline_modules) and self._pipeline_dirty
+            bool(self._pipeline_modules) and self._pipeline_dirty and not self._pipeline_running
         )
 
     def _show_about(self) -> None:
@@ -874,6 +951,8 @@ class NIRSviewIRWindow(QMainWindow):
             self._set_status("Pipeline load failed.")
 
     def _run_pipeline(self) -> None:
+        if self._pipeline_running:
+            return
         if not self._pipeline_modules:
             QMessageBox.information(self, "Run Pipeline", "No pipeline has been configured.")
             return
@@ -885,7 +964,10 @@ class NIRSviewIRWindow(QMainWindow):
         # Build the linked pipeline tail
         modules_copy = [copy.deepcopy(m) for m in self._pipeline_modules]
         from pyBrainAnalyzIR.pipelines.modules.roi import ROIAverage
+        from pyBrainAnalyzIR.pipelines.modules.glm import GLM
         for module in modules_copy:
+            if isinstance(module, GLM):
+                module.progress_callback = self._show_glm_progress
             if isinstance(module, ROIAverage):
                 selected = module.selected_roi_names or module.options["roi_names"]
                 tables = self.roi_tables or module.roi_tables or module.options["roi_tables"]
@@ -896,9 +978,12 @@ class NIRSviewIRWindow(QMainWindow):
             previous = m
         job = previous
 
+        self._pipeline_running = True
+        self._update_run_pipeline_enabled()
         self._set_status("Running pipeline…")
         try:
-            result = job.run(self.dataset)
+            with _pipeline_status_output(self._show_pipeline_output):
+                result = job.run(self.dataset)
             if result is not None:
                 self.dataset = result
             self._set_status("Pipeline complete. Refreshing display…")
@@ -910,6 +995,22 @@ class NIRSviewIRWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Run Pipeline", f"Pipeline failed:\n{exc}")
             self._set_status("Pipeline run failed.")
+        finally:
+            self._pipeline_progress.hide()
+            self._pipeline_running = False
+            self._update_run_pipeline_enabled()
+
+    def _show_pipeline_output(self, message: str) -> None:
+        self._status_bar.showMessage(message)
+        self._status_bar.setToolTip(message)
+        self._status_bar.repaint()
+        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+
+    def _show_glm_progress(self, completed: int, total: int) -> None:
+        self._pipeline_progress.setRange(0, total)
+        self._pipeline_progress.setValue(completed)
+        self._pipeline_progress.show()
+        self._show_pipeline_output(f"GLM: {completed}/{total} channel/signal fits completed")
 
     def _probe_head_model_registration(self) -> None:
         """Open the registration manager on the loaded data; OK stores the result in it."""
@@ -1261,6 +1362,9 @@ class NIRSviewIRWindow(QMainWindow):
             self._draw(keys[0])
             self._update_summary(row, keys[0])
         else:
+            self._clear_statistics_viewer()
+            self._current_stats_obj = None
+            self._right_stack.setCurrentIndex(0)
             self.figure.clear()
             self.canvas.draw_idle()
             self._update_summary(row, None)
@@ -1371,7 +1475,10 @@ class NIRSviewIRWindow(QMainWindow):
             if self.rec is not None and self.type_selector.currentText():
                 self._draw(self.type_selector.currentText())
         else:
-            self._redraw_stats_figure()
+            if self._statistics_viewer is not None:
+                self._statistics_viewer._set_probe_view(plot_on_scalp)
+            else:
+                self._redraw_stats_figure()
         self._set_status("Probe view: " + ("10-20" if plot_on_scalp else "2D probe") + ".")
 
     # ---------------------------------------------------------------- drawing
@@ -1463,6 +1570,8 @@ class NIRSviewIRWindow(QMainWindow):
             return
 
         # Switch to timeseries page
+        self._clear_statistics_viewer()
+        self._current_stats_obj = None
         self._right_stack.setCurrentIndex(0)
 
         for button in self._roi_buttons:
@@ -1546,28 +1655,37 @@ class NIRSviewIRWindow(QMainWindow):
 
     # ------------------------------------------------------------ statistics view
 
-    def _draw_stats(self, stats: Statistics | Connectivity) -> None:
-        """Render channel maps or ROI beta/SE panels and a filterable results table.
+    def _clear_statistics_viewer(self) -> None:
+        viewer = self._statistics_viewer
+        if viewer is not None:
+            self._statistics_viewer = None
+            viewer.probeViewChanged.disconnect(self._set_probe_view)
+            self._statistics_layout.removeWidget(viewer)
+            viewer.close()
+            viewer.deleteLater()
 
-        ROI figures share ``plot_roi_statistics`` with notebook drawing.
-        Verified by ``tests/test_nirsviewir_gui.py``.
-        """
+    def _draw_stats(self, stats: Statistics | Connectivity) -> None:
+        """Embed the shared statistics GUI; retain the separate connectivity view."""
+        self._clear_statistics_viewer()
+        self._current_stats_obj = stats
+        if isinstance(stats, Statistics):
+            self._current_stats_df = None
+            viewer = StatisticsViewer(stats, parent=self._statistics_page, plot_on_scalp=self.plot_on_scalp)
+            viewer.setWindowFlags(Qt.Widget)
+            viewer.probeViewChanged.connect(self._set_probe_view)
+            self._statistics_layout.addWidget(viewer)
+            self._statistics_viewer = viewer
+            self._right_stack.setCurrentWidget(self._statistics_page)
+            self._set_status("Statistics rendered.")
+            return
+
         self._right_stack.setCurrentIndex(1)
         self._set_status("Rendering statistics…")
 
-        # Store stats object for re-draw on filter change
-        self._current_stats_obj = stats
-        is_connectivity = isinstance(stats, Connectivity)
         self._filter_vartype_combo.blockSignals(True)
         self._filter_vartype_combo.clear()
-        self._filter_vartype_combo.addItems(
-            ["r", "z", "t"] if is_connectivity else ["tstat", "beta"]
-        )
+        self._filter_vartype_combo.addItems(["r", "z", "t"])
         self._filter_vartype_combo.blockSignals(False)
-        is_roi = not is_connectivity and stats.geoROI is not None
-        self._filter_vartype_combo.setEnabled(not is_roi)
-        if is_roi:
-            self._filter_vartype_combo.setCurrentText("beta")
 
         # Reset filters when loading new stats data
         self._stats_condition_filter = None
@@ -1584,9 +1702,8 @@ class NIRSviewIRWindow(QMainWindow):
         # --- table (load full unfiltered data first) --------------------------
         try:
             df = stats.table().reset_index(drop=True)
-            if is_connectivity:
-                df = df.rename(columns={"Pvalue": "P-values", "Qvalue": "Q-values"})
-                df["Type"] = self._connectivity_type_labels(df)
+            df = df.rename(columns={"Pvalue": "P-values", "Qvalue": "Q-values"})
+            df["Type"] = self._connectivity_type_labels(df)
             self._current_stats_df = df
             self._populate_stats_model(df)
             self._export_stats_button.setEnabled(True)
@@ -1664,76 +1781,10 @@ class NIRSviewIRWindow(QMainWindow):
         self._stats_canvas.draw_idle()
 
     def _redraw_stats_figure(self) -> None:
-        """Re-render the stats figure using the current filter state."""
+        """Re-render the legacy connectivity figure using its filters."""
         stats = self._current_stats_obj
-        if stats is None:
-            return
         if isinstance(stats, Connectivity):
             self._redraw_connectivity_figure(stats)
-            return
-
-        # Determine condnames from Condition filter
-        if self._stats_condition_filter is not None:
-            condnames = sorted(list(self._stats_condition_filter))
-        else:
-            condnames = None  # stats.draw() will use all
-
-        # Determine types from Type filter
-        if self._stats_type_filter is not None:
-            types_arg = sorted(list(self._stats_type_filter))
-        else:
-            types_arg = None
-
-        # Determine threshold string: prefer Q if Q is filtered, else P, else none
-        p_thresh = self._filter_p_spin.value()
-        q_thresh = self._filter_q_spin.value()
-        p_filtered = p_thresh < 1.0
-        q_filtered = q_thresh < 1.0
-
-        if q_filtered and not p_filtered:
-            thresh_str = f"q<{q_thresh:.4g}"
-        elif p_filtered and not q_filtered:
-            thresh_str = f"p<{p_thresh:.4g}"
-        elif p_filtered and q_filtered:
-            # Both filtered: derive a p threshold from the max p-value in filtered rows
-            filtered_df = self._get_filtered_df()
-            if filtered_df is not None and "P-values" in filtered_df.columns and len(filtered_df) > 0:
-                max_p = float(filtered_df["P-values"].max())
-                thresh_str = f"p<{max_p:.4g}"
-            else:
-                thresh_str = f"p<{p_thresh:.4g}"
-        else:
-            thresh_str = "p<0.05" if stats.geoROI is not None else "p<1.0"
-
-        vartype = self._filter_vartype_combo.currentText()
-        fdr_full = self._global_fdr_checkbox.isChecked()
-
-        try:
-            if stats.geoROI is not None:
-                plot_roi_statistics(
-                    stats, stats.list_conditions() if condnames is None else condnames,
-                    np.unique(stats.betas.type) if types_arg is None else types_arg,
-                    thresh_str, None, fdr_full, figure=self._stats_figure,
-                    plot_on_scalp=self.plot_on_scalp,
-                )
-                self._stats_canvas.draw_idle()
-                return
-            stats.draw(
-                vartype=vartype,
-                thresh=thresh_str,
-                condnames=condnames,
-                types=types_arg,
-                fdr_correct_full=fdr_full,
-                plot_on_scalp=self.plot_on_scalp,
-            )
-            self._embed_result_figure(plt.gcf())
-        except Exception as exc:
-            self._stats_figure.clear()
-            ax = self._stats_figure.add_subplot(1, 1, 1)
-            ax.text(0.5, 0.5, f"Error rendering stats figure:\n{exc}",
-                    ha="center", va="center", transform=ax.transAxes, wrap=True)
-            ax.axis("off")
-            self._stats_canvas.draw_idle()
 
     def _populate_stats_model(self, df) -> None:
         """Load DataFrame into QStandardItemModel; numeric columns use float user-data for sorting."""

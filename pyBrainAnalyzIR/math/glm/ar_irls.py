@@ -1,13 +1,16 @@
-"""AR-IRLS GLM fitting with time-grid-preserving missing-data handling.
+"""AR-IRLS GLM fitting with robust AR regression and preserved missing-data grids.
 
 The estimator is a port of MATLAB nirs-toolbox ``nirs.math.ar_irls`` (with
 ``nirs.math.ar_fit``, ``nirs.math.stepwise`` and ``nirs.math.robustfit``):
 forward/backward AR fit with BIC order selection, filter offset correction,
 bisquare IRLS with MAD scale, and the same per-channel covariance scale.
+The default additionally robustly refits the selected AR regression; ``ols``
+AR estimation retains the original MATLAB-compatible estimator.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -16,6 +19,7 @@ import scipy.signal
 
 _TUNE = 4.685
 _MAX_OUTER_ITERATIONS = 10
+_MAX_ROBUST_AR_ITERATIONS = 500
 
 
 def _interpolate_missing(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -64,6 +68,7 @@ class ArIrlsResult:
         self.weighted_residual = weighted_residual
         self.sigma2 = sigma2
         self.ar_order = order
+        self.ar_estimator = "ols"
 
     def cov_params(self):
         return self._covariance.copy()
@@ -92,8 +97,15 @@ def _stepwise_bic(design, target):
     return solutions[int(np.nanargmin(criterion))]
 
 
-def _ar_fit(values, pmax):
-    """MATLAB ``nirs.math.ar_fit``: forward/backward least squares, BIC order."""
+def _ar_fit(values, pmax, *, robust=False):
+    """Forward/backward AR regression, optionally robust after BIC selection.
+
+    BIC retains the legacy OLS order-selection policy. The selected regression
+    is refit with leverage-adjusted bisquare IRLS. Rows with extreme lagged
+    predictors are excluded using the residual series' median/MAD: residual
+    weighting alone cannot protect against motion spikes in the predictors.
+    The AR order itself is not robustly selected.
+    """
     n = values.size
     pmax = max(min(int(pmax), n - 1), 1)
     forward = _lag_matrix(values, pmax)
@@ -101,7 +113,24 @@ def _ar_fit(values, pmax):
     design = np.column_stack([np.ones(2 * n), np.vstack([forward, backward])])
     target = np.concatenate([values, values[::-1]])
     keep = ~np.isnan(target) & ~np.isnan(design.sum(axis=1))
-    return _stepwise_bic(design[keep], target[keep])
+    design, target = design[keep], target[keep]
+    coefficients = _stepwise_bic(design, target)
+    if robust:
+        selected = design[:, :len(coefficients)]
+        observed = values[np.isfinite(values)]
+        center = np.median(observed)
+        scale = np.median(np.abs(observed - center)) / 0.6745
+        regular = np.ones(len(target), dtype=bool)
+        if scale > 0 and len(coefficients) > 1:
+            regular = np.all(np.abs(selected[:, 1:] - center) <= _TUNE * scale, axis=1)
+        if regular.sum() <= len(coefficients):
+            raise ValueError("Too few non-outlying lag rows to estimate robust AR coefficients.")
+        coefficients = _robust_fit(
+            selected[regular], target[regular], max_iterations=_MAX_ROBUST_AR_ITERATIONS,
+        )[0]
+        if not np.isfinite(coefficients).all():
+            raise ValueError("Robust AR regression produced nonfinite coefficients.")
+    return coefficients
 
 
 def _my_filter(coefficients, values):
@@ -135,8 +164,13 @@ def _robust_sigma(r, rank, scale, tune, leverage):
     return k * np.sqrt(m2) * scaled / m1
 
 
-def _robust_fit(design, target, tune=_TUNE):
-    """MATLAB ``nirs.math.robustfit`` (bisquare, no added constant)."""
+def _robust_fit(design, target, tune=_TUNE, *, max_iterations=50):
+    """MATLAB bisquare regression; robust AR fits allow more iterations.
+
+    The coefficient-wise relative convergence criterion is unchanged. Correlated
+    lag predictors and near-zero AR coefficients can require more than the
+    legacy 50 iterations even when predictions have already stabilized.
+    """
     n, p = design.shape
     if n <= p:
         raise ValueError("AR-IRLS requires more valid samples than regressors.")
@@ -166,7 +200,11 @@ def _robust_fit(design, target, tune=_TUNE):
         np.abs(b - previous) > step * np.maximum(np.abs(b), np.abs(previous))
     ):
         iteration += 1
-        if iteration > 50:
+        if iteration > max_iterations:
+            warnings.warn(
+                f"Bisquare regression reached {max_iterations} iterations before coefficient convergence.",
+                RuntimeWarning, stacklevel=2,
+            )
             break
         adjusted = (target - design @ b) * adjustment
         scale = _mad_sigma(adjusted, weighted_rank)
@@ -199,12 +237,16 @@ def _robust_fit(design, target, tune=_TUNE):
     return b, weights, residual, robust_s, standard_error
 
 
-def ar_irls_GLM(y, x, pmax=40, valid_mask=None):
-    """Fit the MATLAB nirs-toolbox AR-IRLS model, excluding invalid observations.
+def ar_irls_GLM(y, x, pmax=40, valid_mask=None, *, ar_estimator="robust"):
+    """Fit AR-IRLS with selectable robust or legacy AR coefficient regression.
 
+    ``ar_estimator="robust"`` refits AR coefficients with bisquare regression;
+    ``"ols"`` retains the MATLAB-compatible AR coefficient estimator.
     Missing samples are interpolated only to construct the continuous AR whitening
     filter. The robust regression is fit only at observed, finite samples.
     """
+    if ar_estimator not in ("robust", "ols"):
+        raise ValueError("ar_estimator must be 'robust' or 'ols'.")
     y_values = np.asarray(y, dtype=float).reshape(-1)
     x_values = np.asarray(x, dtype=float)
     if x_values.ndim != 2 or x_values.shape[0] != y_values.size:
@@ -233,7 +275,9 @@ def ar_irls_GLM(y, x, pmax=40, valid_mask=None):
         and iteration < _MAX_OUTER_ITERATIONS
     ):
         previous = coefficients
-        ar_coefficients = _ar_fit(signal - design @ coefficients, np.ceil(pmax))
+        ar_coefficients = _ar_fit(
+            signal - design @ coefficients, np.ceil(pmax), robust=ar_estimator == "robust",
+        )
         whitening = np.concatenate([[1.0], -ar_coefficients[1:]])
         filtered_design = _my_filter(whitening, design)
         filtered_signal = _my_filter(whitening, whitening_signal)
@@ -251,7 +295,7 @@ def ar_irls_GLM(y, x, pmax=40, valid_mask=None):
         np.linalg.pinv(design_valid.T @ design_valid) * robust_s**2,
         index=names, columns=names,
     )
-    return ArIrlsResult(
+    result = ArIrlsResult(
         pd.Series(coefficients, index=names),
         covariance,
         pd.Series(standard_error, index=names),
@@ -264,3 +308,7 @@ def ar_irls_GLM(y, x, pmax=40, valid_mask=None):
         len(ar_coefficients) - 1,
         valid,
     )
+    result.ar_estimator = ar_estimator
+    result.ar_coefficients = ar_coefficients.copy()
+    result.ar_filter = whitening.copy()
+    return result

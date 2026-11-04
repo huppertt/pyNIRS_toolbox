@@ -56,6 +56,8 @@ def test_statistics_pooling_matches_full_contrast_algebra(analysis_recording, we
     stats.covariance = stats.covariance.copy(data=a @ a.T + np.eye(a.shape[0]))
     original = stats.copy()
     pooled = roi_average(stats, table, weighted=weighted)
+    assert pooled.fit_data is None
+    assert stats.fit_data is not None
     projection = pooled.roi_pooling_matrix.values
     np.testing.assert_allclose(pooled.betas, projection @ stats.betas.values)
     np.testing.assert_allclose(pooled.covariance, projection @ stats.covariance.values @ projection.T)

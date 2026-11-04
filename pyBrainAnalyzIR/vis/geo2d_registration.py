@@ -605,7 +605,9 @@ def register_probe_2d(points2d, anchors: dict, attractors=(), head_positions=Non
     attractor_terms = [(tail, tip, head[label]) for tail, tip, label in attractors]
     whole, cost = fit_warp(points2d, anchor_terms, attractor_terms, center, radius,
                            origin=origin)
-    if len(anchor_terms) >= 3:
+    # Three constraints (anchors or attractor headings) can tell the layout's
+    # handedness, e.g. one anchor with left/right attractors.
+    if len(anchor_terms) + len(attractor_terms) >= 3:
         mirrored, mirrored_cost = fit_warp(points2d, anchor_terms, attractor_terms,
                                            center, radius, origin=origin, mirror=True)
         if mirrored_cost < 0.5 * cost:
