@@ -24,8 +24,8 @@ from pyBrainAnalyzIR.dataclasses.statistics import Statistics, _ar_irls_joint_co
 from pyBrainAnalyzIR.math.glm.solve import fit, _recording_quality_mask
 from pyBrainAnalyzIR.pipelines.modules.mixedeffects import MixedEffects
 from pyBrainAnalyzIR.sigproc.roi import roi_average
-from pyBrainAnalyzIR.testing.covariance_fdr import score_family
-from pyBrainAnalyzIR.testing.covariance_validation import (
+from pyBrainAnalyzIR.testing.helpers.covariance_fdr import score_family
+from pyBrainAnalyzIR.testing.helpers.covariance_validation import (
     REGIMES, MODELS, bootstrap_interval, simulate_subject,
 )
 
@@ -74,7 +74,7 @@ def inference(stats, expected, model):
     p = table["P-values"].to_numpy()
     estimates = table.Beta.to_numpy()
     se = table.StdErr.to_numpy()
-    if not len(table) or not np.isfinite(np.column_stack([p, estimates, se, target])).all() or (se <= 0).any():
+    if table.empty or not np.isfinite(np.column_stack([p, estimates, se, target])).all() or (se <= 0).any():
         raise ValueError("Invalid or truth-misaligned scalar inference; no rates were imputed.")
     score = score_family(p, np.abs(target) > 1e-12)
     radius = t.ppf(.975, stats.dof) * se
@@ -104,7 +104,7 @@ def joint_contrasts(stats, truths):
         for term in ("HRF A", "HRF B")
     }
     rows = []
-    for left, left_label in enumerate(labels):
+    for left, left_label in enumerate(labels):  # pylint: disable=too-many-nested-blocks
         for right_label in labels[left + 1:]:
             if left_label[0] != right_label[0] and left_label[1] != right_label[1]:
                 continue
@@ -322,7 +322,7 @@ def summary(rows, seed):
     return aggregate.to_dict("records"), summaries, pairs
 
 
-def run(replicates=100, subjects=12, regimes=REGIMES, seed=20261030):
+def run(replicates=100, subjects=12, regimes=REGIMES, seed=20261030):  # pylint: disable=too-many-nested-blocks
     if replicates < 2 or subjects < 6 or subjects % 2:
         raise ValueError("Use >=2 replicates and an even subject count >=6.")
     rows, diagnostics, failures = [], [], []
@@ -363,7 +363,7 @@ def run(replicates=100, subjects=12, regimes=REGIMES, seed=20261030):
                                     "surface": surface, "level": "first", "model": term,
                                     "robust": True, "variant": variant, **score,
                                 })
-                for surface, paired in datasets.items():
+                for surface, paired in datasets.items():  # pylint: disable=too-many-nested-blocks
                     # The group experiment targets task A; the existing ROC
                     # notebook separately exercises simultaneous A/B group fits.
                     for recordings in paired:

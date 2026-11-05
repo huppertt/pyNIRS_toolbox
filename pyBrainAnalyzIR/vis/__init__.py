@@ -1,4 +1,13 @@
 from importlib import import_module
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .data_masking_manager import DataMaskingManager
+    from .data_quality_manager import DataQualityManager
+    from .demographics_manager import DemographicsManager
+    from .registration_manager import RegistrationManager
+    from .roi_manager import ROIDefinitionDialog
+    from .statistics_viewer import StatisticsViewer, view_statistics
 
 _EXPORT_MODULES = {
     "NIRSviewIR": "NIRSviewIR",

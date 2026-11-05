@@ -1,4 +1,4 @@
-import pyBrainAnalyzIR.testing.simData as simdata
+import pyBrainAnalyzIR.testing.simulations.simData as simdata
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
 import pyBrainAnalyzIR.pipelines.modules.glm as stats
 from pyBrainAnalyzIR.utils.data_selection import condition_stim_name
@@ -235,7 +235,7 @@ class ChannelROC:
         """Type-I error per ``Type``: ``{type: (thresholds, observed FPR)}``, the
         fraction of tests without a true effect with p <= threshold."""
         table = self._select(condition)
-        nulls = table[table['Truth'].fillna(False) == False]  # noqa: E712 (NA = no effect)
+        nulls = table[table['Truth'].fillna(False).eq(False)]  # noqa: E712 (NA = no effect)
         out = {}
         for ty, rows in nulls.groupby('Type', sort=True):
             p = np.sort(rows['P'].dropna().to_numpy())
@@ -253,18 +253,23 @@ class ChannelROC:
             for ty, part in sel.groupby('Type', sort=True):
                 known = part[part['Truth'].notna()]
                 positive = known[known['Truth'].astype(bool)]
-                null = part[part['Truth'].fillna(False) == False]  # noqa: E712
+                null = part[part['Truth'].fillna(False).eq(False)]  # noqa: E712
                 auc = np.nan
                 if len(positive) and len(known) > len(positive):
-                    tpr, fpr, _ = self._roc_values(known['Truth'].to_numpy(dtype=bool),
-                                                   known['P'].to_numpy())
+                    tpr, fpr, _ = self._roc_values(
+                        known['Truth'].to_numpy(dtype=bool),
+                        known['P'].to_numpy(),
+                    )
                     auc = float(np.trapezoid(np.r_[0, tpr], np.r_[0, fpr]))
                 rows.append({
                     'Condition': cond, 'Type': ty,
                     'Simulated': bool(part['Simulated'].any()),
                     'True effects': len(positive), 'Null tests': len(null),
-                    f'Sensitivity (p<{alpha})': (float((positive['P'] < alpha).mean())
-                                                if len(positive) else np.nan),
+                    f'Sensitivity (p<{alpha})': (
+                        float((positive['P'] < alpha).mean())
+                        if len(positive)
+                        else np.nan
+                    ),
                     f'FPR (p<{alpha})': float((null['P'] < alpha).mean()) if len(null) else np.nan,
                     'AUC': auc,
                 })

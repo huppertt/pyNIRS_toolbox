@@ -11,7 +11,7 @@ from pyBrainAnalyzIR.dataclasses.statistics import Statistics  # noqa: E402
 from pyBrainAnalyzIR.math.glm import ar_irls as estimator  # noqa: E402
 from pyBrainAnalyzIR.math.glm.solve import _fit_ar_irls, fit  # noqa: E402
 from pyBrainAnalyzIR.pipelines.modules.glm import GLM  # noqa: E402
-from pyBrainAnalyzIR.testing.raw_null_calibration import simulate, traced_fit  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.raw_null_calibration import simulate, traced_fit  # noqa: E402
 from tests.test_model_fit_data import small_model  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
@@ -150,7 +150,7 @@ def test_invalid_method_and_nonfinite_robust_estimate_raise(monkeypatch):
 
 
 def test_slow_robust_ar_fit_converges_with_larger_budget(monkeypatch):
-    from pyBrainAnalyzIR.testing import simData
+    from pyBrainAnalyzIR.testing.simulations import simData
     from pyBrainAnalyzIR.pipelines.modules import preproccessing as prep
 
     recording, _ = simData.Data(snr=5, random_seed=0)

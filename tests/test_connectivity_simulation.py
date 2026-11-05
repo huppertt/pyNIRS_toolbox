@@ -15,7 +15,7 @@ from pyBrainAnalyzIR.forward import ApproxSlab, slab_mesh  # noqa: E402
 from pyBrainAnalyzIR.math.connectivity import compute_connectivity  # noqa: E402
 from pyBrainAnalyzIR.math.corrcoef_robust import corrcoef as robust_corrcoef  # noqa: E402
 from pyBrainAnalyzIR.media import getspectra, tissues  # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simData  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simData  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

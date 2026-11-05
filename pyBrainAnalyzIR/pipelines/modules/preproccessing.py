@@ -138,7 +138,7 @@ class opticaldensity_intensity(cedalion_module):
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``.
     Direct callers: simulated-data construction in
-    ``pyBrainAnalyzIR.testing.simData.Data`` and notebook users.
+    ``pyBrainAnalyzIR.testing.simulations.simData.Data`` and notebook users.
     Direct dependency: ``cedalion.nirs.cw.od2int``.
     Tests: ``tests/test_pipeline_modules.py``.
     """
@@ -179,7 +179,7 @@ class conc2od(cedalion_module):
     """Convert hemoglobin concentration changes into optical density.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``.
-    Direct callers: ``pyBrainAnalyzIR.testing.simData.Data`` and notebook
+    Direct callers: ``pyBrainAnalyzIR.testing.simulations.simData.Data`` and notebook
     users.
     Direct dependency: ``cedalion.nirs.cw.conc2od``.
     Tests: ``tests/test_pipeline_modules.py``.

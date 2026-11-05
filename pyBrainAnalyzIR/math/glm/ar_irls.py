@@ -69,6 +69,8 @@ class ArIrlsResult:
         self.sigma2 = sigma2
         self.ar_order = order
         self.ar_estimator = "ols"
+        self.ar_coefficients = None
+        self.ar_filter = None
 
     def cov_params(self):
         return self._covariance.copy()
@@ -237,7 +239,7 @@ def _robust_fit(design, target, tune=_TUNE, *, max_iterations=50):
     return b, weights, residual, robust_s, standard_error
 
 
-def ar_irls_GLM(y, x, pmax=40, valid_mask=None, *, ar_estimator="robust"):
+def ar_irls_GLM(y, x, pmax=50, valid_mask=None, *, ar_estimator="robust"):
     """Fit AR-IRLS with selectable robust or legacy AR coefficient regression.
 
     ``ar_estimator="robust"`` refits AR coefficients with bisquare regression;

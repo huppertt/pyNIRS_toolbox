@@ -15,8 +15,8 @@ import cedalion.math.ar_model
 import pyBrainAnalyzIR.pipelines
 import pyBrainAnalyzIR.pipelines.modules
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
-import pyBrainAnalyzIR.testing.simEvents
-from pyBrainAnalyzIR.testing._random import get_rng
+import pyBrainAnalyzIR.testing.simulations.simEvents
+from pyBrainAnalyzIR.testing.helpers._random import get_rng
 import pyBrainAnalyzIR.dataclasses.dataset as dataset
 from pyBrainAnalyzIR.forward import ApproxSlab, slab_mesh
 from pyBrainAnalyzIR.media import tissues
@@ -181,7 +181,7 @@ def _register_probe_on_forehead(labels, kinds, positions):
 
     positions = np.asarray(positions, dtype=float)
     detectors = positions[np.asarray(kinds) == "DETECTOR"]
-    if not len(detectors):
+    if not detectors.size:
         raise ValueError("the probe has no detectors to place on the forehead")
     row_y = detectors[:, 1].min()
     row = detectors[np.isclose(detectors[:, 1], row_y)]
@@ -196,8 +196,7 @@ def _register_probe_on_forehead(labels, kinds, positions):
                                   attractors, template, _template_scalp(),
                                   probe_rows=np.arange(len(positions)))
     head = [(name, "LANDMARK", template[name]) for name in REGISTERED3D_HEAD_LANDMARKS]
-    points = [(label, kind, xyz) for label, kind, xyz
-              in zip(labels, kinds, result.positions[:len(positions)])] + head
+    points = list(zip(labels, kinds, result.positions[:positions.shape[0]])) + head
     return tuple(points)
 
 
@@ -364,11 +363,11 @@ def Data(noise=None, stim=None, snr=0.5,
     # this should be the same as calling on the function definition
     rng = get_rng(random_seed)
     if noise is None:
-        noise = pyBrainAnalyzIR.testing.simData.ARnoise(random_seed=rng, registered3D=registered3D)
+        noise = pyBrainAnalyzIR.testing.simulations.simData.ARnoise(random_seed=rng, registered3D=registered3D)
     elif registered3D:
         noise.geo3d = registeredProbe3D(noise.geo2d)
     if stim is None:
-        stim = pyBrainAnalyzIR.testing.simEvents.rand_stim_design(random_seed=rng)
+        stim = pyBrainAnalyzIR.testing.simulations.simEvents.rand_stim_design(random_seed=rng)
 
     # We will add the HRF in chromo space, convert back to raw, and then copy the raw
     # back to the recording.
@@ -665,7 +664,7 @@ def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
     The truth is then a table with one row per ``Channel``, ``Type``
     (``'HbO'``/``'HbR'``) and model term (``Condition``, named as in the group
     statistics), with ``Truth`` (the term is non-zero) and its ``Effect``.
-    :class:`pyBrainAnalyzIR.testing.channelROC.ChannelROC` scores either form.
+    :class:`pyBrainAnalyzIR.testing.roc.channelROC.ChannelROC` scores either form.
 
     Notebook examples: ``examples/01_SimulatingData.ipynb``,
     ``examples/03_ROC_Analysis.ipynb``, ``examples/08_GroupAnalysis.ipynb`` and
@@ -718,7 +717,7 @@ def simdataset(num_files=5, noise=None, stim=None, snr=0.5,
                 amp = amp + random_effect_sd * rng.standard_normal(amp.shape)
             amplitudes[cond] = amp
         file_stim = (copy.deepcopy(stim) if stim is not None
-                     else pyBrainAnalyzIR.testing.simEvents.rand_stim_design(
+                     else pyBrainAnalyzIR.testing.simulations.simEvents.rand_stim_design(
                          ncond=len(conditions), random_seed=rng))
         data, _ = Data(noise=None if noise is None else copy.deepcopy(noise), stim=file_stim,
                        snr=snr, basis=basis, modifiers=modifiers, random_seed=rng,

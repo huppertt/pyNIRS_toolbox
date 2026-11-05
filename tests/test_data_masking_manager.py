@@ -17,7 +17,7 @@ from PySide6.QtCore import QEvent, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QInputDialog, QToolButton  # noqa: E402
 
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
-from pyBrainAnalyzIR.testing import simData  # noqa: E402
+from pyBrainAnalyzIR.testing.simulations import simData  # noqa: E402
 from pyBrainAnalyzIR.vis.NIRSviewIR import NIRSviewIR  # noqa: E402
 from pyBrainAnalyzIR.vis.data_quality_manager import (  # noqa: E402
     data_quality_manager,

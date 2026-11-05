@@ -14,7 +14,7 @@ import pandas as pd
 import xarray as xr
 from scipy.io import loadmat, savemat
 
-from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable
+from pyBrainAnalyzIR.testing.helpers.matlab_comparison import find_matlab_executable
 
 
 _MATLAB_DRIVER = Path(__file__).parent / "matlab" / "run_roi_glm_comparison.m"
@@ -543,9 +543,13 @@ def _error_metrics(left: np.ndarray, right: np.ndarray) -> dict[str, float | int
     if not valid.any():
         raise ValueError("Cannot report comparison errors without finite paired values.")
     difference = left[valid] - right[valid]
+    scale = max(float(np.max(np.abs(left[valid]))), float(np.max(np.abs(right[valid]))))
     return {
         "count": int(difference.size),
         "mean_absolute_error": float(np.mean(np.abs(difference))),
         "max_absolute_error": float(np.max(np.abs(difference))),
         "root_mean_square_error": float(np.sqrt(np.mean(difference**2))),
+        "max_error_relative_to_output_scale": (
+            float(np.max(np.abs(difference)) / scale) if scale else 0.0
+        ),
     }

@@ -61,11 +61,15 @@ def _solve(x, y, z):
                 RuntimeWarning, stacklevel=2,
             )
     likelihood, beta, gamma, covariance, variance = solveLME(x, y, z, theta if theta is not None else 0.)
-    if (
-        not np.isfinite(likelihood) or not np.isfinite(beta).all()
-        or not np.isfinite(gamma).all() or not np.isfinite(covariance).all()
-        or not np.isfinite(variance) or variance <= 0
-    ):
+    valid_solution = all((
+        np.isfinite(likelihood),
+        np.isfinite(beta).all(),
+        np.isfinite(gamma).all(),
+        np.isfinite(covariance).all(),
+        np.isfinite(variance),
+        variance > 0,
+    ))
+    if not valid_solution:
         raise ValueError("Experimental LME returned invalid coefficients or working-model variance.")
     return beta.ravel(), gamma.ravel(), covariance, float(variance), theta
 

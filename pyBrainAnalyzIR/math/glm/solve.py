@@ -36,7 +36,7 @@ class _MissingFitResult:
         return pd.DataFrame(np.nan, index=self.params.index, columns=self.params.index)
 
 
-def _channel_fit(y, x, noise_model="ols", ar_order=30, valid_mask=None, ar_estimator="robust"):
+def _channel_fit(y, x, noise_model="ols", ar_order=50, valid_mask=None, ar_estimator="robust"):
     """Fit one channel with estimator-specific handling of missing observations."""
     y_values = np.asarray(y, dtype=float).reshape(-1)
     x_values = np.asarray(x, dtype=float)
@@ -248,7 +248,7 @@ def fit(
     ts: cdt.NDTimeSeries,
     design_matrix: DesignMatrix,
     noise_model: str = "ols",
-    ar_order: int = 30,
+    ar_order: int = 50,
     max_jobs: int = -1,
     verbose: bool = False,
     quality_mask: xr.DataArray | None = None,

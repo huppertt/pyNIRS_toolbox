@@ -7,7 +7,7 @@ from scipy.linalg import block_diag
 
 pytest.importorskip("cedalion")
 from pyBrainAnalyzIR.math.mixed_effects import solveLME  # noqa: E402
-from pyBrainAnalyzIR.testing.mixed_effects_irls import covariance_inflation_irls  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.mixed_effects_irls import covariance_inflation_irls  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 
@@ -84,7 +84,7 @@ def test_original_space_update_and_covariance_inflation_match_returned_fit():
 
 
 def test_each_iteration_uses_original_covariance_and_unwhitened_residuals(monkeypatch):
-    import pyBrainAnalyzIR.testing.mixed_effects_irls as experiment
+    import pyBrainAnalyzIR.testing.helpers.mixed_effects_irls as experiment
 
     y, x, z, blocks = example(contaminated=True)
     calls = []
@@ -195,7 +195,7 @@ def test_iteration_limit_preserves_last_solved_weights_and_warns():
 
 
 def test_degenerate_residual_scale_is_not_silently_replaced(monkeypatch):
-    import pyBrainAnalyzIR.testing.mixed_effects_irls as experiment
+    import pyBrainAnalyzIR.testing.helpers.mixed_effects_irls as experiment
 
     y, x, z, blocks = example()
     y[:] = 0

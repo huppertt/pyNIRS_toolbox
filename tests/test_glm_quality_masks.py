@@ -21,7 +21,7 @@ from pyBrainAnalyzIR.pipelines.modules.motion_correction import (  # noqa: E402
     _time_inclusion_mask,
 )
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simdata  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simdata  # noqa: E402
 from pyBrainAnalyzIR.dataclasses.statistics import Statistics  # noqa: E402
 from pyBrainAnalyzIR.math.resampling import resample_with_quality_masks  # noqa: E402
 

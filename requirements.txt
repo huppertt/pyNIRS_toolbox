@@ -3,7 +3,7 @@
 pytest>=7.0
 numpy
 pandas
-scipy
+scipy>=1.12
 xarray
 matplotlib
 statsmodels

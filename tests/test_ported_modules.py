@@ -18,7 +18,7 @@ import pyBrainAnalyzIR.dataclasses.dataset as dataset  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.events as events  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.utilities as util  # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simData  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simData  # noqa: E402
 from pyBrainAnalyzIR.pipelines.modules.connectivity import resting_state_connectivity  # noqa: E402
 from pyBrainAnalyzIR.pipelines.modules.glm import GLM  # noqa: E402
 

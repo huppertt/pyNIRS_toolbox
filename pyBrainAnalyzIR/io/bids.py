@@ -163,7 +163,7 @@ def write_bids_data(data, path: str | Path,
         'filedescription': data.meta_data.get('filedescription', 'unknown'),
     }
     snirffilejson = folder / (filename + "_nirs.json")
-    with open(snirffilejson, 'w') as f:
+    with open(snirffilejson, 'w', encoding="utf-8") as f:
         json.dump(info, f, indent=4)
     (folder / (filename + "_fnirs.json")).unlink(missing_ok=True)
 
@@ -376,14 +376,14 @@ def _write_bids_nirs_sidecars(
         columns=["name", "type", "x", "y", "z", "description"],
     ).to_csv(folder / f"{sidecar_prefix}_optodes.tsv", sep="\t", index=False)
 
-    with open(folder / f"{filename}_channels.json", "w") as f:
+    with open(folder / f"{filename}_channels.json", "w", encoding="utf-8") as f:
         json.dump({
             "Description": (
                 "fNIRS channels defined by source-detector pairs and nominal "
                 "wavelengths."
             )
         }, f, indent=4)
-    with open(folder / f"{sidecar_prefix}_optodes.json", "w") as f:
+    with open(folder / f"{sidecar_prefix}_optodes.json", "w", encoding="utf-8") as f:
         json.dump({
             "Description": (
                 "fNIRS source and detector optode positions in the coordinate "
@@ -399,7 +399,7 @@ def _write_bids_nirs_sidecars(
             "coordinate frame. A standardized reference system is not inferred."
         ),
     }
-    with open(folder / f"{sidecar_prefix}_coordsystem.json", "w") as f:
+    with open(folder / f"{sidecar_prefix}_coordsystem.json", "w", encoding="utf-8") as f:
         json.dump(coordsystem, f, indent=4)
 
 
@@ -597,7 +597,7 @@ def read_bids_dataset(folder: str | Path, include_derivatives: bool = True):
         "dataset_description": {},
     }
     if description_path.exists():
-        with open(description_path) as f:
+        with open(description_path, encoding="utf-8") as f:
             dataset_description = json.load(f)
         if isinstance(dataset_description, dict):
             descriptors["dataset_description"] = dataset_description.copy()
@@ -733,7 +733,7 @@ def _bids_entities_match(candidate_entities: dict, target_entities: dict) -> boo
 def _apply_bids_fnirs_json_metadata(rec, snirf_file: Path, root: Path, entities: dict) -> None:
     for suffix in ("fnirs", "nirs"):
         for sidecar in _bids_sidecars_for_suffix(snirf_file, root, suffix, ".json", entities):
-            with open(sidecar) as f:
+            with open(sidecar, encoding="utf-8") as f:
                 rec.meta_data.update(json.load(f))
 
 
@@ -775,7 +775,7 @@ def _bids_participants_json(snirf_file: Path, root: Path) -> dict:
     for candidate in _bids_ancestor_folders(snirf_file.parent, root):
         path = candidate / "participants.json"
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 participants_json.update(json.load(f))
     return participants_json
 
@@ -789,7 +789,7 @@ def _bids_participant_row(participants: pd.DataFrame, participant_id: str):
             continue
         for _, row in participants.iterrows():
             value = str(row[column])
-            if value == participant_id or value == f"sub-{participant_id}":
+            if value in (participant_id, f"sub-{participant_id}"):
                 return row
     if len(participants) == 1:
         return participants.iloc[0]
@@ -832,7 +832,7 @@ def _apply_bids_events_json_metadata(
 
     metadata = {}
     for sidecar in event_sidecars:
-        with open(sidecar) as f:
+        with open(sidecar, encoding="utf-8") as f:
             current = json.load(f)
         if not isinstance(current, dict):
             raise ValueError(f"Events JSON sidecar must contain an object: {sidecar}")
@@ -890,7 +890,7 @@ def _apply_bids_probe_metadata(
     for sidecar in _bids_sidecars_for_suffix(
         snirf_file, root, "coordsystem", ".json", entities
     ):
-        with open(sidecar) as f:
+        with open(sidecar, encoding="utf-8") as f:
             values = json.load(f)
         if not isinstance(values, dict):
             raise ValueError(f"Coordinate-system sidecar must contain an object: {sidecar}")
@@ -1083,7 +1083,7 @@ def write_bids_stim(
         if stimulus_presentation is None
         else stimulus_presentation
     )
-    with open(stimfile_json, "w") as f:
+    with open(stimfile_json, "w", encoding="utf-8") as f:
         json.dump(info, f, indent=4)
 
 
@@ -1235,7 +1235,7 @@ def write_bids_readme(path: str | Path, readme: dict):
     readme_path = Path(path) / 'README.md'
     readme_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(readme_path, 'w') as f:
+    with open(readme_path, 'w', encoding="utf-8") as f:
         for key in key_order:
             if key in readme:
                 f.write(f"### {key}\n")
@@ -1250,7 +1250,7 @@ def _read_bids_readme(path: Path) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
     preamble: list[str] = []
     current_section = None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             heading = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line.rstrip())
             if heading:
@@ -1282,7 +1282,7 @@ def write_bids_dataset_description(path: str | Path, description: dict):
     description_path = Path(path) / 'dataset_description.json'
     description_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(description_path, 'w') as f:
+    with open(description_path, 'w', encoding="utf-8") as f:
         json.dump(description, f, indent=4)
 
 
@@ -1556,7 +1556,7 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
             description = bids_descriptions.get(source_column, bids_descriptions.get(col, description))
 
         first_value = demographics[source_column].iloc[0] if not demographics.empty else None
-        if type(first_value) == units.Quantity:  # noqa: E721
+        if isinstance(first_value, units.Quantity):
             demo_info[col] = {
                 "Description": description,
                 "Units": str(first_value.units)
@@ -1564,5 +1564,5 @@ def save_bids_demographics(demographics: pd.DataFrame, path: str | Path, bids_de
         else:
             demo_info[col] = {"Description": description}
 
-    with open(demofileJSON, 'w') as f:
+    with open(demofileJSON, 'w', encoding="utf-8") as f:
         json.dump(demo_info, f, indent=4)

@@ -4,7 +4,7 @@ import sys
 
 import pyBrainAnalyzIR
 import pandas as pd
-import pyBrainAnalyzIR.testing
+import pyBrainAnalyzIR.testing.simulations.simData
 
 # All the processing modules are in pipelines.modules
 import pyBrainAnalyzIR
@@ -14,12 +14,12 @@ import pyBrainAnalyzIR.dataclasses.dataset as dataset
 
 def main():
     dset = dataset.DataSet()
-    data1, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
-    data2, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
-    data3, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
-    data4, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
-    data5, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
-    data6, _ = pyBrainAnalyzIR.testing.simData.Data(snr=5)
+    data1, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
+    data2, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
+    data3, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
+    data4, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
+    data5, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
+    data6, _ = pyBrainAnalyzIR.testing.simulations.simData.Data(snr=5)
 
     dset.import_data(data1)
     dset.import_data(data2)

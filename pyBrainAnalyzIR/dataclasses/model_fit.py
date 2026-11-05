@@ -15,10 +15,16 @@ def _factor_uses_name(factor, name: str) -> bool:
     for node in ast.walk(ast.parse(factor.name(), mode="eval")):
         if isinstance(node, ast.Name) and node.id == name:
             return True
+        is_quoted_name = (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Q"
+            and bool(node.args)
+        )
         if (
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            and node.func.id == "Q" and node.args
-            and isinstance(node.args[0], ast.Constant) and node.args[0].value == name
+            is_quoted_name
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == name
         ):
             return True
     return False

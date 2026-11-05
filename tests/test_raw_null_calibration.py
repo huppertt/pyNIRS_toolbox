@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("cedalion")
-from pyBrainAnalyzIR.testing.raw_null_calibration import (  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.raw_null_calibration import (  # noqa: E402
     compare_matlab, filtered_fit, oracle_fit, robust_sandwich, rows_for_fit,
     run, simulate, summarize, traced_fit,
 )

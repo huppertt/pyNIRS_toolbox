@@ -15,7 +15,7 @@ pytest.importorskip("cedalion")
 import cedalion.sigproc.quality as quality  # noqa: E402
 from cedalion import units  # noqa: E402
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
-from pyBrainAnalyzIR.testing import simData  # noqa: E402
+from pyBrainAnalyzIR.testing.simulations import simData  # noqa: E402
 from pyBrainAnalyzIR.vis.data_quality_manager import (  # noqa: E402
     DataQualityManager,
     compute_quality_metric,

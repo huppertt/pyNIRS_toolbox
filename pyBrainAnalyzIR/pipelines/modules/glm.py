@@ -70,7 +70,7 @@ class GLM(cedalion_module):
     ``examples/07_StatisticsDataClass_Format.ipynb``, and
     ``examples/14_Data_Quality_masking.ipynb``.
     Direct callers: notebook users, analysis pipelines, and
-    ``pyBrainAnalyzIR.testing.channelROC``.
+    ``pyBrainAnalyzIR.testing.roc.channelROC``.
     Direct dependencies: local :func:`pyBrainAnalyzIR.math.glm.fit` and
     :class:`pyBrainAnalyzIR.dataclasses.statistics.Statistics`.
     Tests: ``tests/test_glm_quality_masks.py``,
@@ -101,7 +101,7 @@ class GLM(cedalion_module):
                                              'Recording quality masks are applied '
                                              'automatically; masked samples are omitted '
                                              'from each channel fit.'),
-            'ar_order': NumericOption(30, minimum=0, integer_only=True,
+            'ar_order': NumericOption(50, minimum=0, integer_only=True,
                                       description='Autoregressive model order',
                                       help='Maximum order of the autoregressive noise '
                                            "model. Only used when noise_model='ar_irls'. "

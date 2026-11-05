@@ -291,11 +291,11 @@ def test_categorical_fit_whiskers_with_subject_errorbars(small_dataset, category
 
 
 def test_public_launcher_exports_and_window_lifecycle(qt_app):
-    from pyBrainAnalyzIR.vis import StatisticsViewer as PublicViewer, view_statistics
+    from pyBrainAnalyzIR.vis.statistics_viewer import view_statistics
     from pyBrainAnalyzIR.vis.statistics_viewer import _OPEN_WINDOWS
 
     window = view_statistics(_first_level())
-    assert isinstance(window, PublicViewer)
+    assert isinstance(window, StatisticsViewer)
     assert window in _OPEN_WINDOWS
     window.close()
     from PySide6.QtCore import QCoreApplication, QEvent

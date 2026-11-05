@@ -28,7 +28,7 @@ from pyBrainAnalyzIR.io.bids import (  # noqa: E402
     write_bids_stim,
     write_bids_dataset,
 )
-from pyBrainAnalyzIR.testing import simData  # noqa: E402
+from pyBrainAnalyzIR.testing.simulations import simData  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

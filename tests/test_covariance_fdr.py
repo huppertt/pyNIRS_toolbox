@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("cedalion")
 from pyBrainAnalyzIR.math.glm.solve import fit  # noqa: E402
-from pyBrainAnalyzIR.testing.covariance_fdr import (  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.covariance_fdr import (  # noqa: E402
     covariance_variants, score_covariance, score_family, summarize_rows,
 )
 from tests.test_model_fit_data import small_model  # noqa: E402

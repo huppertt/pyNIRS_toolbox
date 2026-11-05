@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("cedalion")
 from pyBrainAnalyzIR.dataclasses.dataset import DataSet  # noqa: E402
-from pyBrainAnalyzIR.testing.downstream_covariance import (  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.downstream_covariance import (  # noqa: E402
     SURFACES, inference, paired_subject, floor_task_covariances,
     population_truth, selected_table, summary,
     joint_contrasts, run_first_level, summarize_joint,
@@ -52,7 +52,7 @@ def test_within_signal_contrast_and_missing_covariance_not_fabricated(surfaces):
         stats.ttest(["HRF A-HRF B"])
         outputs.append(stats.table())
         assert np.isfinite(list(inference(stats, truths[index]["HRF A-HRF B"], "HRF A-HRF B").values())).all()
-    pd.testing.assert_frame_equal(*outputs)
+    pd.testing.assert_frame_equal(outputs[0], outputs[1])
     stats.covariance.values[0, 0] = np.nan
     with pytest.raises(ValueError, match="Invalid"):
         inference(stats, truths[0]["HRF A-HRF B"], "HRF A-HRF B")
@@ -61,7 +61,7 @@ def test_within_signal_contrast_and_missing_covariance_not_fabricated(surfaces):
 def test_inverse_variance_roi_truth_uses_condition_specific_pooling_weights(surfaces):
     records, truths = surfaces["roi_stats_iv"]
     source = surfaces["channel"][0][0]["stats"]
-    from pyBrainAnalyzIR.testing.downstream_covariance import coefficient_truth
+    from pyBrainAnalyzIR.testing.helpers.downstream_covariance import coefficient_truth
     expected_coefficients = coefficient_truth(source, surfaces["channel"][1][0]["HRF A"])
     for rec, truth in zip(records, truths):
         stats = rec["stats"]
@@ -78,7 +78,7 @@ def test_legacy_group_floor_is_study_only_and_preserves_non_task_blocks(surfaces
     indices = np.flatnonzero(stats.betas.conditions.values == "HRF A")
     stats.covariance.values[np.ix_(indices, indices)] = np.ones((8, 8))
     template = surfaces["channel"][0][0]
-    from pyBrainAnalyzIR.testing.downstream_covariance import record
+    from pyBrainAnalyzIR.testing.helpers.downstream_covariance import record
     rec = record(stats, template)
     before = stats.covariance.copy()
     assert floor_task_covariances(DataSet([rec])) == 1
@@ -183,7 +183,7 @@ def test_joint_summary_estimates_variance_across_independent_recordings():
                 "model": "HRF A", "contrast": contrast, "replicate": replicate,
                 "error": replicate / 10, "variance": .1, "coverage": 1., "fpr": 0.,
             })
-    entry, = summarize_joint(rows, 42)
+    entry = summarize_joint(rows, 42)[0]
     assert entry["replicates"] == 10 and entry["contrasts"] == 2
     assert entry["coverage"]["replicates"] == 10
     assert entry["empirical_to_estimated_variance"] == pytest.approx(np.var(np.arange(10) / 10, ddof=1) / .1)

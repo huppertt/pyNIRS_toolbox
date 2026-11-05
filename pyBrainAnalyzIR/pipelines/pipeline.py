@@ -13,7 +13,7 @@ def PipelineList(steps):
     :meth:`cedalion_module.run`.
 
     Notebook examples: ``examples/03_ROC_Analysis.ipynb``.
-    Direct toolbox callers: ``pyBrainAnalyzIR.testing.channelROC`` uses this
+    Direct toolbox callers: ``pyBrainAnalyzIR.testing.roc.channelROC`` uses this
     helper to configure simulation analyses.
     Direct dependency: :class:`cedalion_module`.
     Tests: ``tests/test_analysis_pipeline.py``.
@@ -96,7 +96,7 @@ class cedalion_module:
         Notebook examples: ``examples/02_PipelineCreation.ipynb`` and
         ``examples/14_Data_Quality_masking.ipynb``.
         Direct callers: notebooks and
-        ``pyBrainAnalyzIR.testing.channelROC`` call this method on a module.
+        ``pyBrainAnalyzIR.testing.roc.channelROC`` call this method on a module.
         Direct dependencies: the previous module's :meth:`run`, followed by
         this module's :meth:`_runlocal`.
         Tests: ``tests/test_pipeline_modules.py`` and

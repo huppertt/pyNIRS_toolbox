@@ -12,7 +12,7 @@ import xarray as xr
 
 pytest.importorskip("cedalion")
 
-from pyBrainAnalyzIR.testing.matlab_comparison import (  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.matlab_comparison import (  # noqa: E402
     ROCCurve,
     find_matlab_executable,
     _matlab_canonical_basis,

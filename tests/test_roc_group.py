@@ -22,9 +22,9 @@ pytest.importorskip("cedalion")
 import pyBrainAnalyzIR.pipelines.modules.glm as glm              # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.mixedeffects as mixed   # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
-import pyBrainAnalyzIR.testing.channelROC as roc                 # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simdata                # noqa: E402
-import pyBrainAnalyzIR.testing.simEvents as simevents            # noqa: E402
+import pyBrainAnalyzIR.testing.roc.channelROC as roc                 # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simdata                # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simEvents as simevents            # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

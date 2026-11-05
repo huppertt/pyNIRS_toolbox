@@ -13,7 +13,7 @@ pytest.importorskip("cedalion")
 
 import pyBrainAnalyzIR.dataclasses.dataset as dataset  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep  # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simData  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simData  # noqa: E402
 from pyBrainAnalyzIR.pipelines.modules.connectivity import (  # noqa: E402
     hyperscanning, resting_state_connectivity)
 from pyBrainAnalyzIR.pipelines.modules.filters import ShortSeparationFilter  # noqa: E402

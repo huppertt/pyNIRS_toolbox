@@ -49,7 +49,7 @@ def pytest_collection_modifyitems(config, items):
         if os.environ.get("GITHUB_ACTIONS") == "true":
             matlab_skip_reason = "Local MATLAB comparison tests are not run on GitHub Actions"
         else:
-            from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable
+            from pyBrainAnalyzIR.testing.helpers.matlab_comparison import find_matlab_executable
 
             try:
                 find_matlab_executable()
@@ -103,7 +103,7 @@ def _simulated_recording_source():
     autoregressive simulation is comparatively expensive.
     """
     pytest.importorskip("cedalion")
-    import pyBrainAnalyzIR.testing.simData as simdata
+    import pyBrainAnalyzIR.testing.simulations.simData as simdata
 
     import numpy as np
 
@@ -132,7 +132,7 @@ def _simulated_dataset_source():
     import pandas as pd
 
     import pyBrainAnalyzIR.dataclasses.dataset as dataset
-    import pyBrainAnalyzIR.testing.simData as simdata
+    import pyBrainAnalyzIR.testing.simulations.simData as simdata
 
     np.random.seed(1)
     dset = dataset.DataSet()

@@ -1,6 +1,6 @@
 """Paired Monte Carlo validation of the interim AR-IRLS covariance repair.
 
-Run with ``python -m pyBrainAnalyzIR.testing.covariance_validation --help``.
+Run with ``python -m pyBrainAnalyzIR.testing.helpers.covariance_validation --help``.
 The legacy eigenvalue floor is reproduced ONLY here, never in production fits.
 Intervals resample independent simulation replicates, not correlated channels.
 """
@@ -173,7 +173,7 @@ def legacy_floor_for_study(dataset):
 def bootstrap_interval(values, rng, bounded=False):
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
-    if not len(values):
+    if not values.size:
         return {"mean": None, "ci95": [None, None], "replicates": 0}
     # A percentile bootstrap cannot express uncertainty when every replicate is
     # zero/one. Exact binomial event bounds conservatively bound a [0,1] mean:
@@ -252,7 +252,8 @@ def run_study(replicates=100, subjects=12, seed=20260901, regimes=REGIMES):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 for subject in range(subjects):
-                    records, truth = simulate_subject(rng, subject, subjects, regime)
+                    simulation = simulate_subject(rng, subject, subjects, regime)
+                    records, truth = simulation[:2]
                     legacy_records.append(records[0])
                     repaired_records.append(records[1])
                     info = records[1]["stats"].covariance.attrs
@@ -296,7 +297,7 @@ def run_study(replicates=100, subjects=12, seed=20260901, regimes=REGIMES):
                                 index=truth.index,
                             )
 
-                            def selector(table):
+                            def selector(table, model=model):
                                 if model == "age":
                                     return table.Condition.str.contains("age", regex=False)
                                 if model == "categorical":

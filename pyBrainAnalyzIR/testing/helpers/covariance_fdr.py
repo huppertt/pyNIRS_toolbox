@@ -1,6 +1,6 @@
 """Paired example-03 ROC/FDR ablation; production estimators are not modified.
 
-Run ``python -m pyBrainAnalyzIR.testing.covariance_fdr --output results.json``.
+Run ``python -m pyBrainAnalyzIR.testing.helpers.covariance_fdr --output results.json``.
 All variants share simulated data, GLM coefficients, degrees of freedom, and BH
 families. The raw/marginal-only variants are diagnostic, potentially indefinite
 matrices; they must not be used as full-covariance group inputs.
@@ -24,9 +24,9 @@ from pyBrainAnalyzIR.dataclasses.statistics import Statistics, _ar_irls_joint_co
 from pyBrainAnalyzIR.math.glm.covariance import regularize_joint_covariance
 from pyBrainAnalyzIR.math.glm.solve import fit
 from pyBrainAnalyzIR.pipelines.modules import glm, preproccessing as prep
-from pyBrainAnalyzIR.testing import simData
-from pyBrainAnalyzIR.testing.channelROC import PipelineList
-from pyBrainAnalyzIR.testing.covariance_validation import bootstrap_interval
+from pyBrainAnalyzIR.testing.simulations import simData
+from pyBrainAnalyzIR.testing.roc.channelROC import PipelineList
+from pyBrainAnalyzIR.testing.helpers.covariance_validation import bootstrap_interval
 
 
 VARIANTS = ("legacy_raw", "marginals_only", "individual_blocks_psd", "legacy_blocks_psd", "current_repaired")
@@ -81,7 +81,7 @@ def score_family(pvalues, positive, qvalues=None):
     """Realized FDP=V/max(R,1); its replicate average estimates FDR."""
     pvalues = np.asarray(pvalues)
     positive = np.asarray(positive, dtype=bool)
-    if not len(pvalues) or not np.isfinite(pvalues).all() or pvalues.shape != positive.shape:
+    if not pvalues.size or not np.isfinite(pvalues).all() or pvalues.shape != positive.shape:
         raise ValueError("A nonempty finite, truth-aligned test family is required.")
     qvalues = multipletests(pvalues, method="fdr_bh")[1] if qvalues is None else np.asarray(qvalues)
     reject = qvalues < .05

@@ -13,7 +13,7 @@ from scipy.signal import lfilter
 pytest.importorskip("cedalion")
 
 import pyBrainAnalyzIR.dataclasses.dataset as dataset  # noqa: E402
-import pyBrainAnalyzIR.testing.simData as simData  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simData  # noqa: E402
 from pyBrainAnalyzIR.math.connectivity import compute_connectivity, event_windows  # noqa: E402
 from pyBrainAnalyzIR.pipelines.modules.connectivity import (  # noqa: E402
     hyperscanning, resting_state_connectivity)

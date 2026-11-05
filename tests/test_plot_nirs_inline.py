@@ -17,7 +17,7 @@ from matplotlib.colors import to_rgb  # noqa: E402
 
 from cedalion import units  # noqa: E402
 from cedalion.dataclasses.geometry import PointType  # noqa: E402
-from pyBrainAnalyzIR.testing import simData  # noqa: E402
+from pyBrainAnalyzIR.testing.simulations import simData  # noqa: E402
 from pyBrainAnalyzIR.vis.plot_nirs_inline import draw_probe, plot  # noqa: E402
 from pyBrainAnalyzIR.sigproc.roi import roi_average  # noqa: E402
 
@@ -215,7 +215,7 @@ def test_roi_probe_retains_physical_layout(scalp, monkeypatch):
     monkeypatch.setattr(plt, "show", lambda: None)
     physical_fig, physical_ax = plt.subplots()
     expected = draw_probe(rec, rec["amp"], physical_ax)
-    fig = plot(rec, type="amp_roi", show_stim=False)
+    fig = plot(rec, type="amp_roi", show_stim=False, return_figure=True)
     probe = fig.axes[0]
     lines = probe.lines[1:] if scalp else probe.lines
     assert len(lines) == len(expected)
@@ -232,7 +232,7 @@ def test_roi_buttons_blend_definition_weights_and_toggle(monkeypatch):
     rec, _ = simData.Data(snr=10)
     roi_average(rec, _overlapping_roi_table(rec))
     monkeypatch.setattr(plt, "show", lambda: None)
-    fig = plot(rec, type="amp_roi", show_stim=False)
+    fig = plot(rec, type="amp_roi", show_stim=False, return_figure=True)
     probe, signals = fig.axes[:2]
     buttons = fig._roi_buttons
     np.testing.assert_allclose(to_rgb(probe.lines[0].get_color()), [1, 0, 0])
@@ -264,9 +264,9 @@ def test_roi_colors_ignore_variance_weights_and_survive_missing_source(monkeypat
     roi_average(rec, table)
     roi_average(rec, table, output_name="amp_equal", roi_name="equal", weighted=False)
     monkeypatch.setattr(plt, "show", lambda: None)
-    weighted_fig = plot(rec, type="amp_roi", show_stim=False)
+    weighted_fig = plot(rec, type="amp_roi", show_stim=False, return_figure=True)
     del rec.timeseries["amp"]
-    equal_fig = plot(rec, type="amp_equal", show_stim=False)
+    equal_fig = plot(rec, type="amp_equal", show_stim=False, return_figure=True)
     for fig in (weighted_fig, equal_fig):
         _click(fig, fig._roi_buttons[1].ax)
     assert len(equal_fig.axes[0].lines) == 16
@@ -283,7 +283,7 @@ def test_roi_overlap_blends_unequal_definition_contributions(monkeypatch):
     table.loc[0, "weight"] = 0.5
     roi_average(rec, table)
     monkeypatch.setattr(plt, "show", lambda: None)
-    fig = plot(rec, type="amp_roi", show_stim=False)
+    fig = plot(rec, type="amp_roi", show_stim=False, return_figure=True)
     _click(fig, fig._roi_buttons[1].ax)
     np.testing.assert_allclose(
         to_rgb(fig.axes[0].lines[0].get_color()), [1 / 3, 0, 2 / 3],
@@ -294,7 +294,7 @@ def test_roi_overlap_blends_unequal_definition_contributions(monkeypatch):
 def test_physical_channel_click_selection_is_preserved(monkeypatch):
     rec, _ = simData.Data(snr=10)
     monkeypatch.setattr(plt, "show", lambda: None)
-    fig = plot(rec, show_stim=False, plot_on_scalp=False)
+    fig = plot(rec, show_stim=False, plot_on_scalp=False, return_figure=True)
     probe, signals = fig.axes
     fig.canvas.draw()
     x, y = probe.transData.transform(probe.lines[3].get_xydata().mean(axis=0))
@@ -305,3 +305,15 @@ def test_physical_channel_click_selection_is_preserved(monkeypatch):
     assert to_rgb(probe.lines[3].get_color()) == to_rgb("red")
     assert not hasattr(fig, "_roi_buttons")
     plt.close(fig)
+
+
+def test_plot_shows_inline_figure_without_returning_a_second_result(monkeypatch):
+    rec, _ = simData.Data(snr=10)
+    shown = []
+    monkeypatch.setattr(plt, "show", lambda: shown.append(True))
+
+    result = plot(rec, show_stim=False, plot_on_scalp=False)
+
+    assert result is None
+    assert shown == [True]
+    plt.close("all")

@@ -19,8 +19,8 @@ from scipy.stats import gamma, t
 from pyBrainAnalyzIR.dataclasses.statistics import _ar_irls_joint_covariance
 from pyBrainAnalyzIR.math.glm import ar_irls as estimator
 from pyBrainAnalyzIR.math.glm.solve import _fit_ar_irls, _satterthwaite_dof
-from pyBrainAnalyzIR.testing.covariance_validation import bootstrap_interval
-from pyBrainAnalyzIR.testing.matlab_comparison import find_matlab_executable
+from pyBrainAnalyzIR.testing.helpers.covariance_validation import bootstrap_interval
+from pyBrainAnalyzIR.testing.helpers.matlab_comparison import find_matlab_executable
 
 
 MOTION = ("none", "impulses", "shifts", "both")
@@ -219,7 +219,7 @@ def run(replicates=400, orders=(1, 8, 30), seed=20261032, *, filter_transfer_onl
                     if filter_transfer_only:
                         fitted = filtered_fit(values[:, channel], design, clean_filters[channel])
                     elif method.startswith("estimated_"):
-                        fitted = traced_fit(values[:, channel], design, int(method.split("_")[-1]),
+                        fitted = traced_fit(values[:, channel], design, int(method.rsplit("_", maxsplit=1)[-1]),
                                             ar_estimator=ar_estimator)
                     else:
                         fitted = oracle_fit(values[:, channel], design)

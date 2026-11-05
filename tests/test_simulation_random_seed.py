@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("cedalion")
 
-import pyBrainAnalyzIR.testing.simData as simdata  # noqa: E402
-import pyBrainAnalyzIR.testing.simEvents as simevents  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simData as simdata  # noqa: E402
+import pyBrainAnalyzIR.testing.simulations.simEvents as simevents  # noqa: E402
 
 pytestmark = pytest.mark.requires_cedalion
 

@@ -35,6 +35,8 @@ class StatisticsViewer(QMainWindow):
 
     def __init__(self, statistics: Statistics, parent=None, plot_on_scalp: bool = True):
         super().__init__(parent)
+        self.map_ax = None
+        self.fit_ax = None
         if not isinstance(statistics, Statistics):
             raise TypeError("StatisticsViewer requires a single Statistics object.")
         if not isinstance(getattr(statistics, "betas", None), xr.DataArray) or not statistics.betas.size:
@@ -465,9 +467,6 @@ class StatisticsViewer(QMainWindow):
         )
         if numeric:
             x = points[covariate].to_numpy()
-        if not numeric:
-            self._draw_categorical_group(points, curve, covariate, term)
-        else:
             ax.errorbar(x, points["Beta"], yerr=points["StdErr"], fmt="o",
                         capsize=3, label="Partial beta +/- 1 SE", zorder=5)
             self._draw_weight_errors(points, x)
@@ -489,6 +488,8 @@ class StatisticsViewer(QMainWindow):
                                 color="C3", alpha=0.15, label="95% population mean CI")
             ax.plot(x, points["ConditionalFit"], "x", color="red", markersize=8,
                     label="Individual fit (fixed + random)", zorder=5)
+        else:
+            self._draw_categorical_group(points, curve, covariate, term)
         ax.set_xlabel(covariate or "Condition intercept")
         ax.set_ylabel("Partial first-level beta (original units)")
         ax.set_title(f"{channel} | {signal_type} | {term}")

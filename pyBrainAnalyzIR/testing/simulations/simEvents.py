@@ -1,7 +1,7 @@
 
 import pandas as pd
 import numpy as np
-from pyBrainAnalyzIR.testing._random import get_rng
+from pyBrainAnalyzIR.testing.helpers._random import get_rng
 
 """
 This is a collection of functions for generating stimulus stiming information used in the simData function

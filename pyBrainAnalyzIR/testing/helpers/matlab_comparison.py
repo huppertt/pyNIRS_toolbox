@@ -187,7 +187,7 @@ def _compare_python_results(
 
     import pyBrainAnalyzIR.pipelines.modules.glm as glm
     import pyBrainAnalyzIR.pipelines.modules.preproccessing as prep
-    import pyBrainAnalyzIR.testing.channelROC as channel_roc
+    import pyBrainAnalyzIR.testing.roc.channelROC as channel_roc
 
     reference = pd.read_csv(work_dir / "matlab_statistics.csv")
     required_columns = {
@@ -244,6 +244,8 @@ def _compare_python_results(
         python_pvalues = model._condition_pvalues(statistics, truth)
         model._pvals.append(python_pvalues)
         model._truth.append(np.asarray(truth.data))
+        scored = model.score(statistics, truth)
+        model._records.append(scored.assign(Iteration=model.iterations))
         model.iterations += 1
         python_estimates.append(_condition_estimates(statistics, model, iteration))
 

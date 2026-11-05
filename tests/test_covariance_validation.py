@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("cedalion")
-from pyBrainAnalyzIR.testing.covariance_validation import (  # noqa: E402
+from pyBrainAnalyzIR.testing.helpers.covariance_validation import (  # noqa: E402
     DataSet, MixedEffects, bootstrap_interval, calibration_flags, legacy_floor_for_study, metrics,
     run_study, simulate_subject, summarize,
 )
@@ -16,7 +16,8 @@ pytestmark = pytest.mark.requires_cedalion
 
 
 def test_simulation_truth_matches_beta_order_and_legacy_comparison_is_paired():
-    records, truth = simulate_subject(np.random.default_rng(42), 4, 12, "correlated_ar")
+    simulation = simulate_subject(np.random.default_rng(42), 4, 12, "correlated_ar")
+    records, truth = simulation[:2]
     legacy, repaired = [rec["stats"] for rec in records]
     np.testing.assert_array_equal(legacy.betas, repaired.betas)
     np.testing.assert_array_equal(legacy.fit_data.data.fitted, repaired.fit_data.data.fitted)
@@ -41,7 +42,8 @@ def test_simulation_truth_matches_beta_order_and_legacy_comparison_is_paired():
 
 def test_stress_simulation_exercises_projection_not_just_marginal_replacement():
     with pytest.warns(UserWarning, match="substantial regularization"):
-        records, truth = simulate_subject(np.random.default_rng(42), 0, 12, "ar_stress")
+        simulation = simulate_subject(np.random.default_rng(42), 0, 12, "ar_stress")
+        records, truth = simulation[:2]
     legacy, repaired = [rec["stats"] for rec in records]
     np.testing.assert_array_equal(legacy.betas, repaired.betas)
     assert np.linalg.eigvalsh(legacy.covariance)[0] < 0
@@ -102,7 +104,8 @@ def test_boundary_rates_do_not_have_falsely_zero_monte_carlo_uncertainty():
 
 
 def test_scoring_fails_instead_of_silently_discarding_unknown_truth():
-    records, truth = simulate_subject(np.random.default_rng(42), 0, 12, "iid")
+    simulation = simulate_subject(np.random.default_rng(42), 0, 12, "iid")
+    records, truth = simulation[:2]
     with pytest.raises(ValueError, match="Nonfinite inference"):
         metrics(records[1]["stats"], pd.Series(dtype=float), lambda table: table.Condition == "HRF A")
 

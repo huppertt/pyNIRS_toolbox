@@ -397,7 +397,7 @@ def plot_roi_statistics(
     return fig
 
 
-def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
+def plot(rec, type='amp', show_stim=True, plot_on_scalp=True, return_figure=False):
     """Plot a recording's probe and selected channel time series interactively.
 
     Clicking a channel selects it; right-clicking adds or removes channels from
@@ -411,7 +411,8 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
     ``examples/02_PipelineCreation.ipynb``, ``examples/10_BIDS_Formats.ipynb``,
     ``examples/11_Loading_CedalionExampleData.ipynb``, and
     ``examples/13_Demonstrating_Data_Properties.ipynb``.
-    Returns the Matplotlib figure, keeping interactive buttons alive on it.
+    Displays the interactive figure. Set ``return_figure=True`` to also return
+    the Matplotlib figure when retaining a handle is needed.
     See ``examples/15_ROI_Analysis.ipynb`` for an interactive ROI example.
 
     Direct callers: notebook users.
@@ -561,4 +562,6 @@ def plot(rec, type='amp', show_stim=True, plot_on_scalp=True):
     fig.canvas.mpl_connect('button_press_event', on_click)
 
     plt.show()
-    return fig
+    if return_figure:
+        return fig
+    return None

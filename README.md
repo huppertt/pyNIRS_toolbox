@@ -26,6 +26,30 @@ pyBrainAnalyzIR provides:
 - Statistical models for first-level and group-level GLM analysis.
 - Compatibility with the [cedalion](https://github.com/ibs-lab/cedalion) data format and processing engine.
 
+## Empirical first-level power
+
+[Notebook 18](examples/18_PowerAnalysis_SampleSizes.ipynb) demonstrates
+`pyBrainAnalyzIR.testing.power_analysis.power_analysis`: inject known
+micromolar HRF coefficients into intact noise-only pilot recordings, run a
+proposed pipeline, and retain per-channel/chromophore ROC and power curves in
+a `PowerCalibration` object. The object supports measured-coefficient power
+lookups, 80%-power minimum detectable changes, and pickle persistence.
+Pass a saved calibration as `initial_calibration` to add iterations; its
+random-generator state resumes the original simulation stream, and the inputs
+must match the initial run. Pickles created before resume metadata was added
+can be inspected but cannot be safely extended.
+
+Detection uses null-calibrated **per-channel false-positive rate**, not FDR.
+Out-of-range lookups are not extrapolated. Results are conditional on the
+pilot population, stimulus/HRF convention, spatial activation pattern, and
+pipeline; fitted experimental betas are uncertain plug-in effect estimates.
+The notebook discusses Monte Carlo resolution and independent-null validation.
+It also includes a one-channel illustrative sample-size comparison using
+simulated IID versus AR noise, the same AR-IRLS first-level pipeline, and a
+fixed-effects one-sample t-test on participant coefficients. This is a
+no-random-effects demonstration with an IID normal-theory benchmark, not a
+general group-level calibration API.
+
 ## Installation
 
 ```bash
@@ -237,7 +261,7 @@ Neither choice changes which covariates are included in the formula.
 
 ### Experimental outer covariance-inflation IRLS
 
-`pyBrainAnalyzIR.testing.mixed_effects_irls.covariance_inflation_irls` is an
+`pyBrainAnalyzIR.testing.helpers.mixed_effects_irls.covariance_inflation_irls` is an
 isolated test function; it does **not** change `MixedEffects` or its defaults.
 It takes unwhitened `y`, fixed design `x`, random design `z`, and a list of
 first-level covariance blocks. Stack all three arrays **subject/recording
@@ -247,7 +271,7 @@ Construct the full channel-specific fixed design before calling the function;
 no formula expansion or automatic reordering happens inside it.
 
 ```python
-from pyBrainAnalyzIR.testing.mixed_effects_irls import covariance_inflation_irls
+from pyBrainAnalyzIR.testing.helpers.mixed_effects_irls import covariance_inflation_irls
 
 trial = covariance_inflation_irls(
     y, x, z, subject_covariances, max_iterations=100, tolerance=1e-5,
@@ -469,7 +493,7 @@ for ROC or raw channel calibration.
 Run the paired Monte Carlo study with the selected project interpreter:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.covariance_validation \
+python -m pyBrainAnalyzIR.testing.helpers.covariance_validation \
   --replicates 100 --subjects 12 --output covariance-roc.json
 ```
 
@@ -585,7 +609,7 @@ not FDR. For actual FDR and ROC comparisons on the example-03 intensity
 simulation and preprocessing, run:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.covariance_fdr \
+python -m pyBrainAnalyzIR.testing.helpers.covariance_fdr \
   --replicates 200 --snrs 0 1 10 --output example03-covariance-fdr.json
 ```
 
@@ -670,7 +694,7 @@ measurements of the new production estimator.
 #### Legacy-block-preserving ROI and group validation
 
 ```bash
-python -m pyBrainAnalyzIR.testing.downstream_covariance \
+python -m pyBrainAnalyzIR.testing.helpers.downstream_covariance \
   --replicates 20 --subjects 12 --output roi-group-covariance.json
 ```
 
@@ -714,7 +738,7 @@ the run is a breadth/stress evaluation, not certification at a precise 5% bound.
 For first-level ROI discrimination, run the companion experiment:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.downstream_covariance \
+python -m pyBrainAnalyzIR.testing.helpers.downstream_covariance \
   --first-level-only --replicates 100 --output first-level-roi-covariance.json
 ```
 
@@ -807,11 +831,11 @@ The matched diagnostic study isolates AR-order limits, covariance formulas,
 degrees of freedom, and motion components without changing production:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.raw_null_calibration \
+python -m pyBrainAnalyzIR.testing.helpers.raw_null_calibration \
   --replicates 400 --orders 1 8 30 --output raw-null.json
-python -m pyBrainAnalyzIR.testing.raw_null_calibration \
+python -m pyBrainAnalyzIR.testing.helpers.raw_null_calibration \
   --replicates 400 --filter-transfer-only --output clean-filter-transfer.json
-python -m pyBrainAnalyzIR.testing.raw_null_calibration \
+python -m pyBrainAnalyzIR.testing.helpers.raw_null_calibration \
   --replicates 100 --matlab-reference --output matlab-raw-null.json
 ```
 
@@ -962,9 +986,9 @@ the artificially high sensitivity of an anticonservative test.
 Reproduce the robust runs with:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.raw_null_calibration \
+python -m pyBrainAnalyzIR.testing.helpers.raw_null_calibration \
   --ar-estimator robust --replicates 400 --orders 1 8 30 --output robust-ar-null.json
-python -m pyBrainAnalyzIR.testing.raw_null_calibration \
+python -m pyBrainAnalyzIR.testing.helpers.raw_null_calibration \
   --ar-estimator robust --active-effects --replicates 200 --orders 8 \
   --output robust-ar-active.json
 ```
@@ -1091,13 +1115,13 @@ not precise certification of a 5% rate.
 Reproduce the robust-AR downstream validation with:
 
 ```bash
-python -m pyBrainAnalyzIR.testing.downstream_covariance \
+python -m pyBrainAnalyzIR.testing.helpers.downstream_covariance \
   --replicates 20 --subjects 12 --regimes iid correlated_ar ar_outliers \
   --output robust-roi-group-main.json
-python -m pyBrainAnalyzIR.testing.downstream_covariance \
+python -m pyBrainAnalyzIR.testing.helpers.downstream_covariance \
   --replicates 20 --subjects 12 --regimes ar_global_null ar_stress \
   --output robust-roi-group-null-stress.json
-python -m pyBrainAnalyzIR.testing.downstream_covariance \
+python -m pyBrainAnalyzIR.testing.helpers.downstream_covariance \
   --first-level-only --replicates 100 --output robust-first-joint.json
 ```
 

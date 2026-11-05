@@ -1,3 +1,1 @@
-import pyBrainAnalyzIR.testing.simData
-import pyBrainAnalyzIR.testing.simEvents
-import pyBrainAnalyzIR.testing.channelROC
+"""Simulation, ROC, power-analysis, and validation utilities."""

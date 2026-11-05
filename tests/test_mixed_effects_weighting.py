@@ -322,7 +322,7 @@ def test_shared_intercept_reduces_random_design_rank_not_measurement_whitening(m
     job.options["RE_formula"] = "subject:cond:channel:chromo"
     job.options["group_by"] = "fileIdx"
     job.run(copy.deepcopy(data))
-    shared, legacy = captured
+    shared, legacy = captured[0], captured[1]
     np.testing.assert_array_equal(shared[0], legacy[0])
     np.testing.assert_array_equal(shared[1], legacy[1])
     assert shared[2].shape[1] == np.linalg.matrix_rank(shared[2]) == 8

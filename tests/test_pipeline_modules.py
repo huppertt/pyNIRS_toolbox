@@ -16,7 +16,7 @@ from pyBrainAnalyzIR.dataclasses.options_variables import (  # noqa: E402
     OptionsDict,
     OptionVariable,
 )
-from pyBrainAnalyzIR.testing import simData  # noqa: E402
+from pyBrainAnalyzIR.testing.simulations import simData  # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.events as events        # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.filters as filters      # noqa: E402
 import pyBrainAnalyzIR.pipelines.modules.glm as glm              # noqa: E402
