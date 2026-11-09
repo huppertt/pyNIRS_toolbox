@@ -7,3 +7,4 @@ import pyBrainAnalyzIR.pipelines.modules.mixedeffects
 import pyBrainAnalyzIR.pipelines.modules.utilities
 import pyBrainAnalyzIR.pipelines.modules.data_masking
 import pyBrainAnalyzIR.pipelines.modules.roi
+import pyBrainAnalyzIR.pipelines.modules.nonparametric_statistics

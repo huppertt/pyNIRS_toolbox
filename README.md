@@ -26,6 +26,28 @@ pyBrainAnalyzIR provides:
 - Statistical models for first-level and group-level GLM analysis.
 - Compatibility with the [cedalion](https://github.com/ibs-lab/cedalion) data format and processing engine.
 
+## Reading DotNIRS and NIRx data
+
+The I/O helpers return a `DataSet`, whose individual Cedalion recordings are
+available in its `.dataset` list:
+
+```python
+from pyBrainAnalyzIR.io import loadDirectory, loadDotNIRS, loadNIRx
+
+pilot = loadDotNIRS("/data/pilot.nirs")
+nirx = loadNIRx("/data/nirx-run")  # prefers SNIRF when available
+study = loadDirectory("/data/study", folder_hierarchy=["participant", "session"])
+```
+
+DotNIRS loading preserves amplitude, probe geometry, stimulus events,
+auxiliary channels, and demographics. NIRx loading retains supported JSON,
+MATLAB, and text sidecars under each recording's
+`aux_obj["nirx_sidecars"]`; matching `.nirs` files can supply missing event and
+auxiliary data. `loadDirectory` scans recursively and avoids importing a
+same-stem `.nirs` export twice when its SNIRF file is present. NIRx folders
+containing only raw `.wl1`/`.wl2` files without SNIRF or `.nirs` are not yet
+supported.
+
 ## Empirical first-level power
 
 [Notebook 18](examples/18_PowerAnalysis_SampleSizes.ipynb) demonstrates
