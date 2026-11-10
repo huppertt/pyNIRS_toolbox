@@ -259,6 +259,11 @@ class hyperscanning(cedalion_module):
                     False,
                     description='Treat as unordered pairs',
                     help='if false, then the order of the subjects in the dyad will be used to determine which subject is "from" and which is "to". If true, then the subjects will be treated as unordered pairs.'),  # noqa: E501
+                'verbose': BooleanOption(
+                    True,
+                    description='Report dyad progress',
+                    help='If True, print a progress message for each dyad.',
+                ),
             })
         self.inputName = 'last'
         self.outputName = 'hyperconn'
@@ -287,7 +292,8 @@ class hyperscanning(cedalion_module):
 
         upairs = demo[grouping_variable].unique()
         for upair in upairs:
-            print(f'Computing connectivity for {grouping_variable}={upair}')
+            if self.options['verbose']:
+                print(f'Computing connectivity for {grouping_variable}={upair}')
             lst = np.where(demo[grouping_variable] == upair)[0]
             dyad = {}
             if len(lst) > 1:

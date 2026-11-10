@@ -138,6 +138,7 @@ class GroupModelFit:
         return any(_factor_uses_name(factor, name)
                    for term in description.rhs_termlist for factor in term.factors)
 
+
     def _training_design(self) -> pd.DataFrame:
         training = self.observations.copy()
         for name, offset in self.centers.items():
@@ -337,3 +338,18 @@ class GroupModelFit:
         variance = np.einsum("ij,jk,ik->i", x, covariance, x)
         original_grid["FitSE"] = np.sqrt(np.maximum(variance, 0))
         return original_grid
+
+
+@dataclass
+class ConnectivityGroupFit:
+    """First-level edge observations and fitted group means for connectivity."""
+
+    observations: pd.DataFrame
+    coefficients: pd.DataFrame
+    covariance: dict[tuple, np.ndarray]
+    formula: str
+    random_effects_formula: str
+    grouping_column: str
+    centers: dict[str, float]
+    hyperscanning: bool
+    participant_roles: dict[str, dict[str, str]]

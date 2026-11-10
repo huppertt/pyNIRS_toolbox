@@ -19,7 +19,7 @@ import scipy.signal
 
 _TUNE = 4.685
 _MAX_OUTER_ITERATIONS = 10
-_MAX_ROBUST_AR_ITERATIONS = 500
+_MAX_ROBUST_AR_ITERATIONS = 1000
 
 
 def _interpolate_missing(values: np.ndarray, valid: np.ndarray) -> np.ndarray:

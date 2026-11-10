@@ -176,12 +176,12 @@ def test_slow_robust_ar_fit_converges_with_larger_budget(monkeypatch):
     with warnings.catch_warnings():
         warnings.filterwarnings("error", message="Bisquare regression")
         job.run(recording)
-    assert slow and budgets and set(budgets) == {500}
+    assert slow and budgets and set(budgets) == {1000}
     design, target = slow[0]
     with pytest.warns(RuntimeWarning, match="reached 50 iterations"):
         original(design, target)
-    converged = original(design, target, max_iterations=500)
-    reference = original(design, target, max_iterations=1000)
+    converged = original(design, target, max_iterations=1000)
+    reference = original(design, target, max_iterations=2000)
     for actual, expected in zip(converged, reference):
         np.testing.assert_array_equal(actual, expected)
 

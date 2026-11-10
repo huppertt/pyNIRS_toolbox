@@ -4,6 +4,7 @@ import pyBrainAnalyzIR.pipelines.modules.motion_correction
 import pyBrainAnalyzIR.pipelines.modules.preproccessing
 import pyBrainAnalyzIR.pipelines.modules.events
 import pyBrainAnalyzIR.pipelines.modules.mixedeffects
+import pyBrainAnalyzIR.pipelines.modules.mixedeffects_connectivity
 import pyBrainAnalyzIR.pipelines.modules.utilities
 import pyBrainAnalyzIR.pipelines.modules.data_masking
 import pyBrainAnalyzIR.pipelines.modules.roi

@@ -998,3 +998,125 @@ def connectivity_shortsep(truth=None, lags=None, sigma=150, snr=1, pmax=10, t=No
     truth = xr.DataArray(truth, dims=['channel_to', 'channel_from'],
                          coords={'channel_to': long_labels, 'channel_from': long_labels})
     return rec, truth
+
+
+def simdataset_connectivity(num_files=5, t=None, truth=None, sigma=0, snr=1,
+                            pmax=10, warped=False, random_seed=None):
+    """Simulate independent recordings with the same known zero-lag connectivity graph.
+
+    Unlike :func:`connectivity`, which returns a lagged directed MVAR model,
+    this function returns truth aligned with the undirected correlations tested
+    by ``resting_state_connectivity``. Each recording is an independent draw
+    from the same sparse graph and is stored in a :class:`DataSet`.
+
+    Returns ``(dataset, truth)`` where ``truth`` is a symmetric, labeled
+    ``(channel_to, channel_from)`` array.
+    """
+    if not isinstance(num_files, (int, np.integer)) or num_files < 1:
+        raise ValueError("num_files must be a positive integer.")
+    rng = get_rng(random_seed)
+    dset = dataset.DataSet()
+    dset.description = "Simulated resting-state connectivity"
+    for index in range(num_files):
+        recording, generated_truth = connectivity_shortsep(
+            truth=truth, sigma=sigma, snr=snr, pmax=pmax, t=t,
+            warped=warped, random_seed=rng,
+        )
+        if truth is None:
+            truth = generated_truth
+        recording.meta_data["subject"] = f"sub-{index + 1:03d}"
+        dset.import_data(recording)
+    dset.add_demographics_by_index(pd.DataFrame({
+        "subject": [recording.meta_data["subject"] for recording in dset.dataset]
+    }))
+    return dset, truth
+
+
+def simdataset_hyperscanning(num_dyads=3, t=None, effect_size=1.0, sigma=0,
+                             snr=1, pmax=10, warped=False, random_seed=None):
+    """Simulate dyads with one known between-brain channel connection.
+
+    Each dyad has two independent resting-state recordings. A shared, colored
+    driver is added to one long-separation channel in each participant; all
+    other participant/channel time courses remain independently generated.
+    ``effect_size`` is the shared-driver amplitude in units of each target
+    channel/wavelength's baseline log-intensity standard deviation. It is a
+    standardized signal amplitude, not a target correlation or a guarantee of
+    a particular ROC sensitivity.
+    The returned truth table labels the injected cross-participant connection
+    for HbO and HbR after the usual optical-density and MBLL preprocessing.
+
+    Returns ``(dataset, truth)`` with ``pair`` and ``subject`` demographics.
+    """
+    if not isinstance(num_dyads, (int, np.integer)) or num_dyads < 1:
+        raise ValueError("num_dyads must be a positive integer.")
+    if not np.isfinite(effect_size) or effect_size < 0:
+        raise ValueError("effect_size must be finite and nonnegative.")
+
+    rng = get_rng(random_seed)
+    dset = dataset.DataSet()
+    dset.description = "Simulated hyperscanning connectivity"
+    truth_rows = []
+    demo_rows = []
+    target_channels = None
+
+    for dyad_index in range(num_dyads):
+        pair = f"dyad-{dyad_index + 1:03d}"
+        subjects = (f"{pair}-A", f"{pair}-B")
+        recordings = []
+        for subject in subjects:
+            recording, _ = connectivity_shortsep(
+                sigma=sigma, snr=snr, pmax=pmax, t=t, warped=warped,
+                random_seed=rng,
+            )
+            recordings.append(recording)
+
+        channels = list(map(str, recordings[0]["amp"].channel.values))
+        if target_channels is None:
+            long_channels = list(map(str, recordings[0]["amp"].channel.values))
+            target_channels = long_channels[:2]
+            if len(target_channels) < 2:
+                raise ValueError("Hyperscanning simulation requires at least two channels.")
+
+        n_time = recordings[0]["amp"].sizes["time"]
+        driver = scipy.signal.lfilter(
+            [1.0], [1.0, -0.8], rng.standard_normal(n_time)
+        )
+        driver = driver / max(driver.std(ddof=1), np.finfo(float).eps)
+        for subject_index, (subject, recording) in enumerate(zip(subjects, recordings)):
+            amp = recording["amp"]
+            values = np.asarray(amp.pint.magnitude, dtype=float).copy()
+            channel = target_channels[subject_index]
+            channel_index = channels.index(channel)
+            log_intensity = np.log(values[:, channel_index, :])
+            baseline_sd = log_intensity.std(axis=0, ddof=1)
+            values[:, channel_index, :] *= np.exp(
+                -effect_size * baseline_sd[None, :] * driver[:, None]
+            )
+            recording["amp"] = (
+                amp.pint.dequantify().copy(data=values).pint.quantify()
+            )
+            recording.meta_data["subject"] = subject
+            recording.meta_data["pair"] = pair
+            dset.import_data(recording)
+            demo_rows.append({"subject": subject, "pair": pair})
+
+        signal_types = (
+            "HbO", "HbR",
+            *map(str, recordings[0]["amp"].wavelength.values),
+        )
+        for chromophore in signal_types:
+            truth_rows.append({
+                "Pair": pair,
+                "Subject_to": subjects[1],
+                "Channel_to": target_channels[1],
+                "Type_to": chromophore,
+                "Subject_from": subjects[0],
+                "Channel_from": target_channels[0],
+                "Type_from": chromophore,
+                "Condition": "rest",
+                "Truth": bool(effect_size > 0),
+            })
+
+    dset.add_demographics_by_index(pd.DataFrame(demo_rows))
+    return dset, pd.DataFrame(truth_rows)

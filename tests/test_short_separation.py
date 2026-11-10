@@ -150,6 +150,7 @@ def test_utilities_modules_are_discovered_by_the_pipeline_manager():
     assert ('utilities', 'Discard Data') in specs
     assert ('utilities', 'Remove Short Separation Channels') in specs
     assert ('filters', 'Short Separation Filter') in specs
+    assert ('mixedeffects_connectivity', 'Mixed Effects Connectivity') in specs
 
 
 def test_warped_shortsep_probe_keeps_all_long_channels():

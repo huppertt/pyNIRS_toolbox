@@ -77,6 +77,7 @@ class Connectivity:
 
     head_model: Optional[Any] = None
     meta_data: OrderedDict[str, Any] = field(default_factory=OrderedDict)
+    fit_data: Optional[Any] = None
 
     def __repr__(self):
         """Return a string representation of the Recording object."""
@@ -94,6 +95,7 @@ class Connectivity:
         self.geo3d_rotation_data = OrderedDict()
         self.head_model = None
         self.meta_data = OrderedDict()
+        self.fit_data = None
 
         return
 
