@@ -46,6 +46,8 @@ class StatisticsViewer(QMainWindow):
         self._channel_artists = {}
         self.plot_on_scalp = bool(plot_on_scalp)
         self._table_frame = pd.DataFrame()
+        self._sort_column = None
+        self._sort_ascending = True
         self.setWindowTitle("Statistics Viewer")
         self.resize(1250, 700)
 
@@ -88,6 +90,10 @@ class StatisticsViewer(QMainWindow):
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.results_table.verticalHeader().setVisible(False)
+        self.results_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_table.horizontalHeader().customContextMenuRequested.connect(
+            self._sort_results_from_header
+        )
         self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self._show_table_menu)
         self.results_table.itemSelectionChanged.connect(self._on_table_selection)
@@ -169,6 +175,11 @@ class StatisticsViewer(QMainWindow):
             self.channel_combo.setCurrentText(previous)
         self.channel_combo.blockSignals(False)
         self._table_frame = self._condition_results(table)
+        if self._sort_column in self._table_frame:
+            self._table_frame = self._table_frame.sort_values(
+                self._sort_column, ascending=self._sort_ascending,
+                na_position="last", kind="mergesort",
+            ).reset_index(drop=True)
         self._populate_table()
         self._draw_map()
         self._select_channel()
@@ -209,6 +220,26 @@ class StatisticsViewer(QMainWindow):
                 table.setItem(row, column, item)
         table.resizeColumnsToContents()
         table.blockSignals(False)
+
+    def _sort_results_from_header(self, position):
+        column = self.results_table.horizontalHeader().logicalIndexAt(position)
+        if column >= 0:
+            self._sort_table_column(column)
+
+    def _sort_table_column(self, column):
+        if not 0 <= column < len(self._table_frame.columns):
+            return
+        name = self._table_frame.columns[column]
+        if name == self._sort_column:
+            self._sort_ascending = not self._sort_ascending
+        else:
+            self._sort_column = name
+            self._sort_ascending = True
+        self._table_frame = self._table_frame.sort_values(
+            name, ascending=self._sort_ascending, na_position="last",
+            kind="mergesort",
+        ).reset_index(drop=True)
+        self._populate_table()
 
     def _sync_table_selection(self):
         frame = self._table_frame

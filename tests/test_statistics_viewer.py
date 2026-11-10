@@ -506,6 +506,19 @@ def test_results_table_copies_excel_text_and_saves_xlsx(qt_app, small_dataset, t
     window.close()
 
 
+def test_results_table_header_right_click_sort_toggles_direction(small_dataset):
+    job = MixedEffects()
+    job.options["robust"] = False
+    stats = _geometry(job.run(small_dataset)["groupstats"])
+    window = StatisticsViewer(stats)
+    column = window._table_frame.columns.get_loc("Beta")
+    window._sort_table_column(column)
+    assert window._table_frame.Beta.is_monotonic_increasing
+    window._sort_table_column(column)
+    assert window._table_frame.Beta.is_monotonic_decreasing
+    window.close()
+
+
 def _right_click(window, point, coords="axes"):
     canvas, ax = window.map_canvas, window.map_ax
     canvas.draw()

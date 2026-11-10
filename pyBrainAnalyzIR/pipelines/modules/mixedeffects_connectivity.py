@@ -5,6 +5,8 @@ Connectivity estimation is performed at the individual or dyad level.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import numpy as np
 import pandas as pd
 import patsy
@@ -373,6 +375,11 @@ class MixedEffectsConnectivity(cedalion_module):
                     else np.nan
                 )
                 row = dict(edge)
+                for geometry_column in ("geo_to", "geo_from"):
+                    if geometry_column in design_data:
+                        row[geometry_column] = design_data[
+                            geometry_column
+                        ].iloc[0]
                 row.update(
                     {
                         "Condition": str(effect),
@@ -390,15 +397,31 @@ class MixedEffectsConnectivity(cedalion_module):
         result.coef = pd.DataFrame(output_rows)
         result.description = "Mixed-effects connectivity: " + fixed_formula
         first_recording = dataset.dataset[0]
-        result.geo2d = first_recording[input_name].geo2d.copy()
-        result.geo3d = first_recording[input_name].geo3d.copy()
-        result.geoROI = first_recording[input_name].geoROI.copy()
-        result.geo2d_rotation_data = first_recording[
-            input_name
-        ].geo2d_rotation_data.copy()
-        result.geo3d_rotation_data = first_recording[
-            input_name
-        ].geo3d_rotation_data.copy()
+        source_connectivity = first_recording[input_name]
+        role_mapping = next(iter(roles.values()), {}) if hyperscanning else {}
+
+        def rekey_geometry(geometry):
+            if not role_mapping:
+                return geometry.copy()
+            rekeyed = OrderedDict()
+            for subject, role in role_mapping.items():
+                source_key = next(
+                    (key for key in geometry if str(key) == str(subject)),
+                    None,
+                )
+                if source_key is not None:
+                    rekeyed[role] = geometry[source_key]
+            return rekeyed or geometry.copy()
+
+        result.geo2d = rekey_geometry(source_connectivity.geo2d)
+        result.geo3d = rekey_geometry(source_connectivity.geo3d)
+        result.geoROI = rekey_geometry(source_connectivity.geoROI)
+        result.geo2d_rotation_data = rekey_geometry(
+            source_connectivity.geo2d_rotation_data
+        )
+        result.geo3d_rotation_data = rekey_geometry(
+            source_connectivity.geo3d_rotation_data
+        )
         result.meta_data = first_recording[input_name].meta_data.copy()
         result.head_model = first_recording[input_name].head_model
         result.fit_data = ConnectivityGroupFit(

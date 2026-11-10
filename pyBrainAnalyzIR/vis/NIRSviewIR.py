@@ -93,6 +93,7 @@ import pyBrainAnalyzIR.dataclasses.dataset as dataset_module
 from pyBrainAnalyzIR.io.bids import read_bids_dataset, write_bids_dataset
 from pyBrainAnalyzIR.dataclasses.statistics import Statistics
 from pyBrainAnalyzIR.vis.statistics_viewer import StatisticsViewer
+from pyBrainAnalyzIR.vis.connectivity_viewer import ConnectivityViewer
 from cedalion.io.snirf import read_snirf
 from statsmodels.stats.multitest import multipletests
 
@@ -371,6 +372,7 @@ class NIRSviewIRWindow(QMainWindow):
         self._current_stats_df = None       # last drawn statistics DataFrame (for export)
         self._current_stats_obj = None      # the Statistics object currently displayed
         self._statistics_viewer = None
+        self._connectivity_viewer = None
         self._registration_window = None    # open Probe-Head Model Registration window
         self._stats_condition_filter: Optional[set] = None  # None = all
         self._stats_type_filter: Optional[set] = None        # None = all
@@ -1477,6 +1479,9 @@ class NIRSviewIRWindow(QMainWindow):
         else:
             if self._statistics_viewer is not None:
                 self._statistics_viewer._set_probe_view(plot_on_scalp)
+            elif self._connectivity_viewer is not None:
+                mode = "3d" if plot_on_scalp and self._connectivity_viewer.probe_3d_available else "2d"
+                self._connectivity_viewer._set_map_mode(mode)
             else:
                 self._redraw_stats_figure()
         self._set_status("Probe view: " + ("10-20" if plot_on_scalp else "2D probe") + ".")
@@ -1566,7 +1571,7 @@ class NIRSviewIRWindow(QMainWindow):
 
         # Dispatch to the statistics viewer when the data object is a Statistics instance.
         if isinstance(data, (Statistics, Connectivity)):
-            self._draw_stats(data)
+            self._draw_stats(data, input_name=key)
             return
 
         # Switch to timeseries page
@@ -1656,16 +1661,22 @@ class NIRSviewIRWindow(QMainWindow):
     # ------------------------------------------------------------ statistics view
 
     def _clear_statistics_viewer(self) -> None:
-        viewer = self._statistics_viewer
-        if viewer is not None:
-            self._statistics_viewer = None
-            viewer.probeViewChanged.disconnect(self._set_probe_view)
+        viewers = (
+            ("_statistics_viewer", self._statistics_viewer),
+            ("_connectivity_viewer", self._connectivity_viewer),
+        )
+        for attribute, viewer in viewers:
+            if viewer is None:
+                continue
+            setattr(self, attribute, None)
+            if isinstance(viewer, StatisticsViewer):
+                viewer.probeViewChanged.disconnect(self._set_probe_view)
             self._statistics_layout.removeWidget(viewer)
             viewer.close()
             viewer.deleteLater()
 
-    def _draw_stats(self, stats: Statistics | Connectivity) -> None:
-        """Embed the shared statistics GUI; retain the separate connectivity view."""
+    def _draw_stats(self, stats: Statistics | Connectivity, input_name=None) -> None:
+        """Embed the shared statistics or connectivity viewer for the selected result."""
         self._clear_statistics_viewer()
         self._current_stats_obj = stats
         if isinstance(stats, Statistics):
@@ -1677,6 +1688,20 @@ class NIRSviewIRWindow(QMainWindow):
             self._statistics_viewer = viewer
             self._right_stack.setCurrentWidget(self._statistics_page)
             self._set_status("Statistics rendered.")
+            return
+
+        if isinstance(stats, Connectivity):
+            self._current_stats_df = None
+            input_name = self._connectivity_input_name(stats, input_name)
+            viewer = ConnectivityViewer(
+                stats, data=self.dataset, input_name=input_name,
+                parent=self._statistics_page, plot_on_scalp=self.plot_on_scalp,
+            )
+            viewer.setWindowFlags(Qt.Widget)
+            self._statistics_layout.addWidget(viewer)
+            self._connectivity_viewer = viewer
+            self._right_stack.setCurrentWidget(self._statistics_page)
+            self._set_status("Connectivity results rendered.")
             return
 
         self._right_stack.setCurrentIndex(1)
@@ -1719,6 +1744,36 @@ class NIRSviewIRWindow(QMainWindow):
         # --- figure (no filter active yet, draw all) -------------------------
         self._apply_stats_filter()
         self._set_status("Statistics rendered.")
+
+    def _connectivity_input_name(self, connectivity: Connectivity, result_name=None) -> str:
+        """Find the pipeline input series matching the displayed connectivity channels."""
+        recordings = list(getattr(self.dataset, "dataset", []))
+        if not recordings:
+            return "conc"
+        recording = recordings[0]
+        if result_name and not str(result_name).startswith("Group:"):
+            producer = next(
+                (
+                    module for module in self._pipeline_modules
+                    if getattr(module, "outputName", None) == result_name
+                ),
+                None,
+            )
+            configured_input = getattr(producer, "inputName", None)
+            if configured_input and configured_input != "last":
+                if configured_input in recording.timeseries:
+                    return configured_input
+        channels = set(connectivity.coef.get("Channel_to", pd.Series(dtype=str)).astype(str))
+        channels.update(connectivity.coef.get("Channel_from", pd.Series(dtype=str)).astype(str))
+        best_name, best_score = "conc", 0
+        for name, series in recording.timeseries.items():
+            if name == result_name or not hasattr(series, "coords") or "channel" not in series.coords:
+                continue
+            labels = set(np.asarray(series.channel.values).astype(str))
+            score = len(channels & labels)
+            if score > best_score or (score == best_score and name == "conc"):
+                best_name, best_score = name, score
+        return best_name
 
     @staticmethod
     def _connectivity_type_labels(df):

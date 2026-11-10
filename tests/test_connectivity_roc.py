@@ -230,8 +230,44 @@ def test_mixed_effects_connectivity_fits_group_edges(
     assert result.fit_data.grouping_column == (
         "pair" if input_name == "hyperconn" else "subject"
     )
+    assert {"geo_to", "geo_from"} <= set(result.coef.columns)
     assert {"Beta", "FixedFit", "ConditionalFit", "RobustWeight"} <= set(
         result.fit_data.observations.columns
     )
     if input_name == "hyperconn":
         assert len(result.fit_data.participant_roles) == 3
+        assert {"participant-1", "participant-2"} == set(result.geo2d)
+        assert set(result.coef.geo_to) <= set(result.geo2d)
+        assert set(result.coef.geo_from) <= set(result.geo2d)
+
+
+def test_hyperscanning_preserves_explicit_participant_order():
+    data, _ = simdataset_hyperscanning(
+        num_dyads=2,
+        t=np.arange(240) * 0.1,
+        sigma=0,
+        warped=True,
+        random_seed=94,
+    )
+    demographics = data.get_demographics()
+    demographics["role"] = demographics["subject"].str.rsplit("-", n=1).str[-1]
+    data.add_demographics_by_index(demographics)
+
+    pipeline = PipelineList([
+        prep.intensity_opticaldensity,
+        prep.mbll,
+        prep.resample,
+        hyperscanning,
+    ])
+    pipeline.set_all_options({
+        "Fs": 2,
+        "AR": 0,
+        "robust": False,
+        "short_separation_correction": False,
+        "grouping_variable": "pair",
+        "order_variable": "role",
+        "symmetric": False,
+        "verbose": False,
+    })
+    result = pipeline.run(data)
+    assert not result.dataset[0]["hyperconn"].coef.empty

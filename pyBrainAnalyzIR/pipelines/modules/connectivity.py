@@ -248,6 +248,15 @@ class hyperscanning(cedalion_module):
                     'pair',
                     description='Dyad grouping variable',
                     help='The name of the variable in the demographics that indicates which subjects are in a dyad. This is used to compute hyperscanning connectivity between subjects in the same dyad.'),  # noqa: E501
+                'order_variable': StringOption(
+                    '',
+                    description='Participant order variable',
+                    help=(
+                        'Optional demographic variable that orders participants '
+                        'within each pair (e.g. parent/child role). Must be unique '
+                        'within each pair when symmetry is disabled.'
+                    ),
+                ),
                 'short_separation_correction': BooleanOption(
                     True,
                     description='Short Separation Correction',
@@ -257,8 +266,22 @@ class hyperscanning(cedalion_module):
                          'correction off gives the same result.'),  # noqa: E501
                 'unordered': BooleanOption(
                     False,
-                    description='Treat as unordered pairs',
-                    help='if false, then the order of the subjects in the dyad will be used to determine which subject is "from" and which is "to". If true, then the subjects will be treated as unordered pairs.'),  # noqa: E501
+                    description='Legacy unordered-pair option',
+                    help=(
+                        'Deprecated compatibility option. Use symmetric to control '
+                        'whether participant order is treated as arbitrary.'
+                    ),
+                ),
+                'symmetric': BooleanOption(
+                    True,
+                    description='Treat participant order as arbitrary',
+                    help=(
+                        'Permute participant order and average the resulting '
+                        'connectivity estimates in Fisher-Z space. Disable for '
+                        'role-ordered designs, and set order_variable to specify '
+                        'the participant ordering within each pair.'
+                    ),
+                ),
                 'verbose': BooleanOption(
                     True,
                     description='Report dyad progress',
@@ -280,6 +303,17 @@ class hyperscanning(cedalion_module):
 
         outtype = self.outputName
         grouping_variable = self.options['grouping_variable']
+        order_variable = self.options['order_variable'].strip()
+        if grouping_variable not in demo:
+            raise ValueError(
+                f"Hyperscanning pairing variable {grouping_variable!r} "
+                "is missing from demographics."
+            )
+        if order_variable and order_variable not in demo:
+            raise ValueError(
+                f"Hyperscanning order variable {order_variable!r} "
+                "is missing from demographics."
+            )
 
         dataName = {}
         if self.options['short_separation_correction']:
@@ -295,6 +329,21 @@ class hyperscanning(cedalion_module):
             if self.options['verbose']:
                 print(f'Computing connectivity for {grouping_variable}={upair}')
             lst = np.where(demo[grouping_variable] == upair)[0]
+            if order_variable:
+                order_values = demo.iloc[lst][order_variable]
+                if order_values.isna().any() or (
+                    not (self.options['symmetric'] or self.options['unordered'])
+                    and order_values.astype(str).duplicated().any()
+                ):
+                    raise ValueError(
+                        f"Order variable {order_variable!r} must have distinct, "
+                        f"non-missing values within pair {upair!r} when symmetric=False."
+                    )
+                lst = np.asarray(
+                    demo.iloc[lst].sort_values(
+                        order_variable, kind='stable'
+                    ).index.to_numpy(dtype=int)
+                )
             dyad = {}
             if len(lst) > 1:
                 for i in lst:
@@ -336,7 +385,10 @@ class hyperscanning(cedalion_module):
                     robust=self.options['robust'],
                     AR=self.options['AR'],
                     windows=windows,
-                    unordered=self.options['unordered'])
+                    unordered=(
+                        self.options['symmetric']
+                        or self.options['unordered']
+                    ))
                 df['geo_to'] = df.Subject_to
                 df['geo_from'] = df.Subject_from
 

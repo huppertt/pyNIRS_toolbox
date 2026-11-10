@@ -40,6 +40,51 @@ def _fisher_z(r):
     return np.clip(z, -Z_MAX, Z_MAX)
 
 
+def _is_symmetric_connectivity(frame):
+    """Whether rows have a reciprocal edge with matching condition and estimate."""
+    required = {
+        "Condition", "Channel_to", "Channel_from", "Type_to", "Type_from",
+        "Coeff", "Pvalue",
+    }
+    if not required.issubset(frame.columns) or frame.empty:
+        return False
+    identity = ["Condition"]
+    for column in ("Subject_to", "Subject_from"):
+        if column in frame:
+            identity.append(column)
+    index = frame.set_index(identity + [
+        "Channel_to", "Type_to", "Channel_from", "Type_from"
+    ])
+    reverse = frame.rename(columns={
+        "Channel_to": "Channel_from",
+        "Channel_from": "Channel_to",
+        "Type_to": "Type_from",
+        "Type_from": "Type_to",
+        "Subject_to": "Subject_from",
+        "Subject_from": "Subject_to",
+    })
+    reverse_index = reverse.set_index(identity + [
+        "Channel_to", "Type_to", "Channel_from", "Type_from"
+    ])
+    if not index.index.is_unique or not reverse_index.index.is_unique:
+        return False
+    common = index.index.intersection(reverse_index.index)
+    if len(common) != len(index):
+        return False
+    return bool(
+        np.allclose(
+            index.loc[common, "Coeff"].to_numpy(dtype=float),
+            reverse_index.loc[common, "Coeff"].to_numpy(dtype=float),
+            rtol=1e-8, atol=1e-10, equal_nan=True,
+        )
+        and np.allclose(
+            index.loc[common, "Pvalue"].to_numpy(dtype=float),
+            reverse_index.loc[common, "Pvalue"].to_numpy(dtype=float),
+            rtol=1e-8, atol=1e-10, equal_nan=True,
+        )
+    )
+
+
 @dataclass
 class Connectivity:
     """Main container for connectivity results.
@@ -264,8 +309,42 @@ class Connectivity:
         for cond in self.conditions:
             lst = (tbl['Condition'] == cond).to_numpy() & tbl['Pvalue'].notna().to_numpy()
             if lst.any():
-                _, q, _, _ = multipletests(tbl.loc[lst, 'Pvalue'], alpha=0.05, method='fdr_bh')
-                tbl.loc[lst, 'Qvalue'] = q
+                condition = tbl.loc[lst]
+                symmetric = _is_symmetric_connectivity(condition)
+                if symmetric:
+                    endpoints = [
+                        column for column in (
+                            "Subject_to", "Channel_to", "Type_to",
+                            "Subject_from", "Channel_from", "Type_from",
+                        )
+                        if column in condition
+                    ]
+                    reverse = condition.rename(columns={
+                        "Channel_to": "Channel_from",
+                        "Channel_from": "Channel_to",
+                        "Type_to": "Type_from",
+                        "Type_from": "Type_to",
+                        "Subject_to": "Subject_from",
+                        "Subject_from": "Subject_to",
+                    })
+                    forward_key = condition[endpoints].astype(str).agg("\x1f".join, axis=1)
+                    reverse_key = reverse[endpoints].astype(str).agg("\x1f".join, axis=1)
+                    canonical = np.minimum(forward_key.to_numpy(), reverse_key.to_numpy())
+                    unique = condition.assign(_canonical=canonical).drop_duplicates(
+                        "_canonical", keep="first"
+                    )
+                    _, q, _, _ = multipletests(
+                        unique["Pvalue"].astype(float), alpha=0.05, method="fdr_bh"
+                    )
+                    q_by_key = dict(zip(unique["_canonical"], q))
+                    tbl.loc[condition.index, "Qvalue"] = [
+                        q_by_key[key] for key in canonical
+                    ]
+                else:
+                    _, q, _, _ = multipletests(
+                        condition["Pvalue"].astype(float), alpha=0.05, method="fdr_bh"
+                    )
+                    tbl.loc[condition.index, "Qvalue"] = q
         return tbl
 
     def matrix(self, condition=None, type_to=None, type_from=None, value='Coeff'):

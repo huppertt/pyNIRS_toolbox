@@ -662,10 +662,12 @@ def test_nirsview_displays_roi_timecourses_and_connectivity(roi_dataset):
     assert window._right_stack.currentWidget() is window._statistics_page
     assert window._current_stats_obj is rec["stats_roi"]
     window.type_selector.setCurrentText("conn")
-    assert window._statistics_viewer is None
-    assert window._right_stack.currentIndex() == 1
+    assert window._connectivity_viewer is not None
+    assert window._right_stack.currentWidget() is window._statistics_page
     assert window._current_stats_obj is rec["conn"]
-    assert window._stats_figure.axes
+    assert window._connectivity_viewer.connectivity is rec["conn"]
+    assert window._connectivity_viewer.input_name == "amp_roi"
+    assert window._connectivity_viewer.results_tabs.tabText(1) == "Results Table"
 
 
 def test_edit_data_quality_mask_launches_manager(monkeypatch):
@@ -899,27 +901,23 @@ def test_connectivity_display_and_filters(simulated_recording, roi, group):
     window = nirsview.NIRSviewIRWindow(dataset)
     window.type_selector.setCurrentText("Group: connections" if group else "conn")
     assert window._current_stats_obj is connection
-    assert window._right_stack.currentIndex() == 1
-    assert {"P-values", "Q-values", "Type"}.issubset(window._current_stats_df.columns)
-    assert window._filter_vartype_combo.currentText() == "r"
-    assert window._stats_figure.axes[0].images, [
-        text.get_text() for ax in window._stats_figure.axes for text in ax.texts
-    ]
-    window._filter_vartype_combo.setCurrentText("z")
-    window._filter_p_spin.setValue(0.01)
-    filtered = window._get_filtered_df()
-    assert (filtered["P-values"] < 0.01).all()
-    window._stats_type_filter = set()
-    window._apply_stats_filter()
-    assert window._stats_proxy.rowCount() == 0
-    assert "No connectivity results" in window._stats_figure.axes[0].texts[0].get_text()
-    window._stats_type_filter = None
-    window._stats_condition_filter = set()
-    window._apply_stats_filter()
-    assert "No connectivity results" in window._stats_figure.axes[0].texts[0].get_text()
+    viewer = window._connectivity_viewer
+    assert viewer is not None
+    assert window._right_stack.currentWidget() is window._statistics_page
+    assert viewer.results_tabs.tabText(0) == "Results Plot"
+    assert viewer.results_tabs.tabText(1) == "Results Table"
+    assert viewer.results_table.rowCount() == len(viewer.results_frame())
+    assert viewer.input_name == ("amp_roi" if roi else "amp")
+    viewer._set_show_only_significant(False)
+    all_edges = viewer.results_frame()
+    viewer.threshold_type.setCurrentText("p-value")
+    viewer.threshold.setValue(0.01)
+    assert viewer.results_frame().Significant.sum() <= all_edges.Significant.sum()
+    assert viewer.map_ax.get_title().endswith("edges")
     pd.testing.assert_frame_equal(connection.coef, original)
     window.type_selector.setCurrentText("amp")
     assert window._right_stack.currentIndex() == 0
+    assert window._connectivity_viewer is None
 
 
 def test_hyperscanning_connectivity_is_displayed(simulated_recording):
@@ -938,9 +936,9 @@ def test_hyperscanning_connectivity_is_displayed(simulated_recording):
     window = nirsview.NIRSviewIRWindow(dataset)
     window.type_selector.setCurrentText("hyperconn")
     assert window._current_stats_obj is first["hyperconn"]
-    assert window._stats_figure.axes[0].images, [
-        text.get_text() for ax in window._stats_figure.axes for text in ax.texts
-    ]
+    assert window._connectivity_viewer is not None
+    assert not window._connectivity_viewer.endpoint_combo.isHidden()
+    assert window._connectivity_viewer.connectivity is first["hyperconn"]
 
 
 def test_new_session_clears_loaded_dataset(monkeypatch):

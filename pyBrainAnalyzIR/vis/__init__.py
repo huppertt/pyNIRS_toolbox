@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .demographics_manager import DemographicsManager
     from .registration_manager import RegistrationManager
     from .roi_manager import ROIDefinitionDialog
+    from .connectivity_viewer import ConnectivityViewer, view_connectivity
     from .statistics_viewer import StatisticsViewer, view_statistics
 
 _EXPORT_MODULES = {
@@ -25,6 +26,8 @@ _EXPORT_MODULES = {
     "registration_manager": "registration_manager",
     "StatisticsViewer": "statistics_viewer",
     "view_statistics": "statistics_viewer",
+    "ConnectivityViewer": "connectivity_viewer",
+    "view_connectivity": "connectivity_viewer",
 }
 
 __all__ = list(_EXPORT_MODULES)
