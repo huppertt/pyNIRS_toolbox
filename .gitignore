@@ -16,6 +16,7 @@ dist/
 htmlcov/
 .tox/
 matlab-comparison-results/
+documentation/pyNIRS_Toolbox_User_Manual.docx
 
 # Caches from the linters / type checkers
 .mypy_cache/
